@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safe-tests:
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # python-rtmidi publishes binary wheels only up to cp312, so 3.13+ builds
+      # it from source. That needs a MIDI backend's headers. macOS runners
+      # already have CoreMIDI via the Xcode SDK; Linux runners do not ship the
+      # ALSA development headers, and without them the build fails with a
+      # missing alsa/asoundlib.h rather than anything that names the cause.
+      - name: Install ALSA headers for the python-rtmidi source build
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
+      - name: Check public tree
+        run: python scripts/check_public_tree.py
+
+      - name: Install test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable ".[test]"
+
+      # The suite is hermetic: a fake FL API, synthetic audio, no MIDI. Say so
+      # explicitly rather than relying on the runner having no CoreMIDI, so a
+      # future transport change cannot quietly start touching a real device.
+      - name: Run hermetic safe suite
+        env:
+          FL_BRIDGE_SANDBOXED: "1"
+        run: python scripts/run_safe_tests.py
+
+  package:
+    name: Build and inspect distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      # The license metadata needs setuptools>=77 for PEP 639. An older
+      # setuptools drops it silently, producing a wheel that claims no license
+      # at all, so assert on the built metadata instead of trusting the build.
+      - name: Verify distribution metadata
+        run: |
+          python - <<'PY'
+          import pathlib, sys, tarfile, zipfile
+
+          dist = pathlib.Path("dist")
+          wheel = next(iter(dist.glob("*.whl")))
+          sdist = next(iter(dist.glob("*.tar.gz")))
+          print(f"wheel: {wheel.name}\nsdist: {sdist.name}")
+
+          with zipfile.ZipFile(wheel) as archive:
+              names = archive.namelist()
+              metadata = next(n for n in names if n.endswith(".dist-info/METADATA"))
+              text = archive.read(metadata).decode("utf-8")
+              entry_points = next(
+                  (n for n in names if n.endswith(".dist-info/entry_points.txt")), None
+              )
+              scripts = archive.read(entry_points).decode("utf-8") if entry_points else ""
+
+          failures = []
+          if "License-Expression: Apache-2.0" not in text:
+              failures.append("wheel METADATA is missing the Apache-2.0 license expression")
+          for required in ("LICENSE", "NOTICE"):
+              if not any(n.endswith(f".dist-info/licenses/{required}") for n in names):
+                  failures.append(f"wheel does not carry {required}")
+          if "fl-studio-mcp = fl_studio_mcp.mcp_server:main" not in scripts:
+              failures.append("the fl-studio-mcp console entry point is missing")
+          if any(n.startswith("fl_studio_mcp/") and "prototype" in n for n in names):
+              failures.append("a prototype module leaked into the wheel")
+          for gone in ("fl_studio_mcp/server.py", "fl_studio_mcp/models.py",
+                       "fl_studio_mcp/project_file.py"):
+              if gone in names:
+                  failures.append(f"{gone} leaked into the wheel")
+
+          with tarfile.open(sdist) as archive:
+              members = archive.getnames()
+          for required in ("LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md"):
+              if not any(m.endswith("/" + required) for m in members):
+                  failures.append(f"sdist does not carry {required}")
+
+          if failures:
+              print("\nDistribution check failed:")
+              for failure in failures:
+                  print(f"  - {failure}")
+              sys.exit(1)
+          print("\nDistribution metadata OK")
+          PY
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@v5
+        with:
+          name: distributions
+          path: dist/

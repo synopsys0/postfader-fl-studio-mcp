@@ -1,0 +1,32 @@
+{
+  "boundary_impulse_sample_indices": [
+    0,
+    48000,
+    96000,
+    144000,
+    191999
+  ],
+  "candidate_expected_delay_samples": 480,
+  "candidate_expected_gain_db": -6.0,
+  "channels": 2,
+  "duration_seconds": 4.0,
+  "files": {
+    "boundary_impulses.wav": {
+      "bytes": 768044,
+      "sha256": "ba96c9d0ee9f09040f7386e77ec60fc453592b469bcb32cb2dce3cd9a9789187"
+    },
+    "candidate_delayed_minus6db.wav": {
+      "bytes": 768044,
+      "sha256": "c04cd63c2d9cec098e5e4ed28296539d7a3899ebc9fb19cb5f0210ef8b6c8785"
+    },
+    "reference_mix.wav": {
+      "bytes": 768044,
+      "sha256": "6fd033b2cb07e1388dddafccfbc4e9665d5c67864397c6acd13587dcc849c3e3"
+    }
+  },
+  "frame_count": 192000,
+  "generator": "scripts/generate_audio_fixtures.py",
+  "sample_rate_hz": 48000,
+  "sample_width_bytes": 2,
+  "schema_version": "1.0"
+}

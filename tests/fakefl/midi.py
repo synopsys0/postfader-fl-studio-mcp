@@ -1,0 +1,11 @@
+PEAK_L, PEAK_R, PEAK_LR, PEAK_LR_INV = 0, 1, 2, 3
+TN_Master, TN_FirstIns, TN_LastIns, TN_Sel = 0, 1, 2, 3
+PIM_None = -1
+GC_BackgroundColor = 0
+FPN_Param = 0
+UF_None, UF_EE, UF_PR, UF_PL = 0, 1, 2, 4
+UF_Knob, UF_AudioRec, UF_AutoClip = 32, 256, 512
+UF_PRMarker, UF_PLMarker, UF_Plugin = 1024, 2048, 4096
+SONGLENGTH_MS, SONGLENGTH_S, SONGLENGTH_ABSTICKS = 0, 1, 2
+SONGLENGTH_BARS, SONGLENGTH_STEPS, SONGLENGTH_TICKS = 3, 4, 5
+GT_All = 15
