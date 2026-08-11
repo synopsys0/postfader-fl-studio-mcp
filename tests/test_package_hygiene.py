@@ -48,13 +48,36 @@ class PackageHygieneTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse((package / name).is_file())
 
-    def test_only_entry_point_is_the_supported_server(self) -> None:
+    def test_entry_points_are_exactly_the_supported_three(self) -> None:
+        # Pinned as a set, not merely checked for presence: a stray console
+        # script is a public surface, and this file is where that gets caught.
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        scripts = project["project"]["scripts"]
         self.assertEqual(
-            scripts,
-            {"fl-studio-mcp": "fl_studio_mcp.mcp_server:main"},
+            project["project"]["scripts"],
+            {
+                "fl-studio-mcp": "fl_studio_mcp.mcp_server:main",
+                "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
+                "postfader-doctor": "fl_studio_mcp.diagnostics:main",
+            },
         )
+
+    def test_an_install_can_deploy_the_bridge_without_the_repository(self) -> None:
+        # The whole reason the bridge is package data. If it stops shipping,
+        # `pip install` silently produces a server that can never reach FL
+        # Studio, and the failure only shows up on a user's machine.
+        package = files("fl_studio_mcp")
+        self.assertTrue((package / "_bridge" / "device_UniversalBridge.py").is_file())
+
+        declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        self.assertIn(
+            "_bridge/device_UniversalBridge.py",
+            declared["tool"]["setuptools"]["package-data"]["fl_studio_mcp"],
+        )
+
+    def test_the_packaged_bridge_is_data_rather_than_a_module(self) -> None:
+        # It calls FL Studio's embedded API at import time, so it must not be
+        # reachable by `import fl_studio_mcp._bridge...`.
+        self.assertFalse((ROOT / "fl_studio_mcp" / "_bridge" / "__init__.py").exists())
 
     def test_public_metadata_and_direct_test_dependencies_are_declared(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[

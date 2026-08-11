@@ -33,7 +33,7 @@ after FL Studio is already running does not enable writes.
 FL Studio loads the MIDI controller script through an ASCII code path. A smart
 quote, typographic dash, or other non-ASCII byte can stop the script before it
 runs. `tests/test_bridge.py` checks every byte in
-`bridge/device_UniversalBridge.py`.
+`fl_studio_mcp/_bridge/device_UniversalBridge.py`.
 
 This restriction applies to the FL-side bridge file, not to the MCP server or
 documentation.

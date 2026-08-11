@@ -7,8 +7,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$ROOT/.venv"
 FL_USER_DATA="${FL_STUDIO_USER_DATA_DIR:-$HOME/Documents/Image-Line/FL Studio}"
-HARDWARE="$FL_USER_DATA/Settings/Hardware"
-TARGET="$HARDWARE/Universal Bridge"
 
 echo "FL Studio MCP — install"
 echo "FL Studio user data: $FL_USER_DATA"
@@ -26,39 +24,16 @@ echo "Installing Python packages"
 echo "  done"
 
 # --- bridge script ---------------------------------------------------------
-if [ ! -d "$HARDWARE" ]; then
-  echo
-  echo "ERROR: FL Studio's Hardware folder was not found at:"
-  echo "  $HARDWARE"
-  echo "Launch FL Studio once so it creates its settings folders, then re-run."
-  echo "For a custom location, set FL_STUDIO_USER_DATA_DIR to FL Studio's user data folder."
-  exit 1
-fi
-
+# Deployment lives in fl_studio_mcp.bridge_install so that this script and the
+# postfader-install-bridge command a pip user gets cannot drift apart. That
+# module owns the stamping, the same-bytes comparison that avoids a needless
+# backup on every re-run, and the Hardware-folder error message.
 echo
 echo "Installing bridge script into FL Studio"
-mkdir -p "$TARGET"
-
-# Build the exact stamped bytes first. Comparing the installed bridge with the
-# unstamped repository source would make every correct deployment look stale
-# and would create a needless backup every time the installer was re-run.
-STAGED_BRIDGE="$(mktemp "${TMPDIR:-/tmp}/flmcp-bridge.XXXXXX")"
-trap 'rm -f "$STAGED_BRIDGE"' EXIT
-BRIDGE_SHA="$(
-  "$VENV/bin/python" -m fl_studio_mcp.bridge_stamp \
-    "$ROOT/bridge/device_UniversalBridge.py" "$STAGED_BRIDGE"
-)"
-if [ -f "$TARGET/device_UniversalBridge.py" ] && \
-   ! cmp -s "$STAGED_BRIDGE" "$TARGET/device_UniversalBridge.py"; then
-  BACKUP="$TARGET/device_UniversalBridge.py.bak-$(date +%Y%m%d-%H%M%S)"
-  cp "$TARGET/device_UniversalBridge.py" "$BACKUP"
-  echo "  backed up previous bridge to $BACKUP"
+if ! "$VENV/bin/python" -m fl_studio_mcp.bridge_install \
+      --user-data-dir "$FL_USER_DATA"; then
+  exit 1
 fi
-cp "$STAGED_BRIDGE" "$TARGET/device_UniversalBridge.py"
-chmod 0644 "$TARGET/device_UniversalBridge.py"
-rm -f "$STAGED_BRIDGE"
-trap - EXIT
-echo "  $TARGET/device_UniversalBridge.py (stamped $BRIDGE_SHA)"
 
 # --- client config ---------------------------------------------------------
 cat > "$ROOT/.mcp.json" <<JSON

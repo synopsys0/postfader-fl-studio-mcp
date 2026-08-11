@@ -13,7 +13,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
-sys.path.insert(0, os.path.join(ROOT, "bridge"))
+sys.path.insert(0, os.path.join(ROOT, "fl_studio_mcp", "_bridge"))
 
 # The lean verified write surface is a separate opt-in read once at module
 # load. Load the bridge with it unset so the default really is the default;
@@ -106,7 +106,7 @@ def _load_bridge_with_writes():
     """
     import importlib.util
 
-    path = os.path.join(ROOT, "bridge", "device_UniversalBridge.py")
+    path = os.path.join(ROOT, "fl_studio_mcp", "_bridge", "device_UniversalBridge.py")
     saved = dict(os.environ)
     os.environ["FL_BRIDGE_ENABLE_WRITES"] = "1"
     try:
@@ -129,7 +129,7 @@ def _load_bridge_read_only():
     """
     import importlib.util
 
-    path = os.path.join(ROOT, "bridge", "device_UniversalBridge.py")
+    path = os.path.join(ROOT, "fl_studio_mcp", "_bridge", "device_UniversalBridge.py")
     saved = dict(os.environ)
     os.environ.pop("FL_BRIDGE_ENABLE_WRITES", None)
     try:
@@ -215,7 +215,7 @@ def check_source_is_ascii():
     bridge that never answers.
     """
     print("\n-- source encoding --")
-    path = os.path.join(ROOT, "bridge", "device_UniversalBridge.py")
+    path = os.path.join(ROOT, "fl_studio_mcp", "_bridge", "device_UniversalBridge.py")
     raw = open(path, "rb").read()
     try:
         raw.decode("ascii")

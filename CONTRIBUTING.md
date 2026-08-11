@@ -77,7 +77,12 @@ the documentation.
 
 ## Bridge requirements
 
-Changes to `bridge/device_UniversalBridge.py` must preserve these properties:
+The bridge lives at `fl_studio_mcp/_bridge/device_UniversalBridge.py` and ships
+as package data so an installed copy can deploy it without a clone. It must
+never gain an `__init__.py`: it calls FL Studio's embedded API at import time
+and is not importable anywhere else.
+
+Changes to it must preserve these properties:
 
 - ASCII-only source;
 - no exception escaping an FL Studio callback;

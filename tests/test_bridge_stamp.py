@@ -23,7 +23,7 @@ from fl_studio_mcp.bridge_stamp import (  # noqa: E402
 )
 
 
-BRIDGE_SOURCE = ROOT / "bridge" / "device_UniversalBridge.py"
+BRIDGE_SOURCE = ROOT / "fl_studio_mcp" / "_bridge" / "device_UniversalBridge.py"
 
 
 class BridgeStampTests(unittest.TestCase):

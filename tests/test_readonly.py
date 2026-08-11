@@ -14,7 +14,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
-sys.path.insert(0, os.path.join(ROOT, "bridge"))
+sys.path.insert(0, os.path.join(ROOT, "fl_studio_mcp", "_bridge"))
 sys.path.insert(0, ROOT)
 
 import _state  # noqa: E402

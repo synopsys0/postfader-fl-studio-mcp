@@ -53,7 +53,7 @@ relied on the response says so instead of assuming.
 | **Read-only by default** | Writes need a flag set on the FL Studio process itself |
 | **Narrow on purpose** | 24 tools, each with a defined contract, not a generic API bridge |
 | **No plug-in database** | Parameters are discovered at runtime; nothing to add per plug-in |
-| **Hermetic tests** | 533 checks with a fake FL API — no DAW, no MIDI device, no user audio |
+| **Hermetic tests** | 550 checks with a fake FL API — no DAW, no MIDI device, no user audio |
 
 ## Status
 
@@ -124,7 +124,19 @@ and how to add your own plug-in to the validated-against table.
 
 Launch FL Studio once before installing so its user settings folders exist.
 
-## Quick start
+## Install
+
+Two paths. Both put the same bridge in the same place — `scripts/install.sh`
+calls the same installer the console command does, so they cannot drift.
+
+**From PyPI**, if you just want to use it:
+
+```bash
+pip install postfader-fl-studio-mcp
+postfader-install-bridge
+```
+
+**From a clone**, if you want the test suite and the validation scripts:
 
 ```bash
 git clone https://github.com/synopsys0/postfader-fl-studio-mcp.git
@@ -132,14 +144,18 @@ cd postfader-fl-studio-mcp
 ./scripts/install.sh
 ```
 
-If FL Studio uses a custom user-data folder, pass it to both setup checks:
+If FL Studio's user-data folder is somewhere other than
+`~/Documents/Image-Line/FL Studio`, say so — every entry point honours it:
+
+```bash
+postfader-install-bridge --user-data-dir "/absolute/path/to/FL Studio"
+```
 
 ```bash
 FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./scripts/install.sh
-FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./.venv/bin/python scripts/doctor.py
 ```
 
-Then:
+Then, in FL Studio:
 
 1. Open **Audio MIDI Setup → Window → Show MIDI Studio**.
 2. Open **IAC Driver**, enable **Device is online**, and apply the change.
@@ -154,9 +170,12 @@ Then:
 7. Verify the installation:
 
    ```bash
-   ./.venv/bin/python scripts/doctor.py
-   ./scripts/inspect_readonly.py --capabilities
+   postfader-doctor
    ```
+
+   From a clone, `./.venv/bin/python scripts/doctor.py` runs the same checks,
+   and `./scripts/inspect_readonly.py --capabilities` prints what the server
+   can currently see.
 
 See [Setup and usage](docs/setup.md) for detailed client configuration and
 troubleshooting.
@@ -287,3 +306,5 @@ FL Studio is a trademark of Image-Line Software. Postfader is an
 independent, unofficial project and is not affiliated with, endorsed by, or
 sponsored by Image-Line Software. FL Studio is not distributed with this
 repository.
+
+<!-- mcp-name: io.github.synopsys0/postfader-fl-studio-mcp -->
