@@ -137,8 +137,20 @@ def main():
 
     print("\n-- mailbox hygiene --")
     # The liveness marker is meant to persist; nothing else should.
-    leftovers = [n for n in os.listdir(MAILBOX)
-                 if n.startswith(bridge.PREFIX) and n != bridge.ALIVE_NAME]
+    #
+    # The pump thread is still running and still refreshing that marker, and
+    # _write_atomic legitimately creates PREFIX + "tmp-" + name before renaming
+    # it into place. A single listdir can catch that rename window and see a
+    # file that is transient by design, which fails here on a loaded machine
+    # for no real reason. Poll instead: anything genuinely stranded is still
+    # present a moment later, while the temp file is not.
+    deadline = time.time() + 2
+    while True:
+        leftovers = [n for n in os.listdir(MAILBOX)
+                     if n.startswith(bridge.PREFIX) and n != bridge.ALIVE_NAME]
+        if not leftovers or time.time() >= deadline:
+            break
+        time.sleep(0.01)
     check("no request or reply files left behind", not leftovers, leftovers)
 
     print("\n-- concurrent clients --")
