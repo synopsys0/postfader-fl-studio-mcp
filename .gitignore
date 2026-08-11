@@ -1,0 +1,44 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+clbr-*
+.pytest_cache/
+*.egg-info/
+.claude/
+.idea/
+.vscode/
+build/
+dist/
+artifacts/
+bounces/
+renders/
+.fl-studio-mcp-locks/
+
+# Local MCP/client configuration and credentials.
+.mcp.json
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+
+# User projects and media never belong in this source repository. The only
+# media exceptions are deterministic, hash-pinned synthetic test fixtures.
+*.flp
+*.fst
+*.mid
+*.midi
+*.wav
+*.wave
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.oga
+!tests/fixtures/audio/*.wav

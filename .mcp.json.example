@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "fl-studio": {
+      "command": "./.venv/bin/python",
+      "args": ["-m", "fl_studio_mcp.mcp_server"],
+      "cwd": ".",
+      "env": {
+        "FL_BRIDGE_ENABLE_MIDI": "1"
+      }
+    }
+  }
+}
