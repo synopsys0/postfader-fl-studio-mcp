@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.synopsys0/postfader-fl-studio-mcp",
+  "title": "Postfader",
+  "description": "Inspect a running FL Studio 2026 project, measure bounced audio, and apply read-back-verified mixer and plug-in changes. macOS only.",
+  "version": "0.9.0",
+  "repository": {
+    "url": "https://github.com/synopsys0/postfader-fl-studio-mcp",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "postfader-fl-studio-mcp",
+      "version": "0.9.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "FL_BRIDGE_ENABLE_MIDI",
+          "description": "Set to 1 to build the MIDI SysEx transport. Without it the server cannot reach FL Studio.",
+          "isRequired": true,
+          "default": "1"
+        },
+        {
+          "name": "FL_STUDIO_USER_DATA_DIR",
+          "description": "FL Studio's user-data folder, if it is not ~/Documents/Image-Line/FL Studio.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
