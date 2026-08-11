@@ -1,6 +1,6 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "0.8.0"
+version = "0.9.0"
 description = "Unofficial local MCP bridge for verified FL Studio mixer and plug-in control on macOS"
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,6 +34,8 @@ dependencies = [
 
 [project.scripts]
 fl-studio-mcp = "fl_studio_mcp.mcp_server:main"
+postfader-install-bridge = "fl_studio_mcp.bridge_install:main"
+postfader-doctor = "fl_studio_mcp.diagnostics:main"
 
 [project.optional-dependencies]
 test = [
@@ -58,3 +60,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["fl_studio_mcp"]
+
+# The bridge ships as package data, not as a module. It is written against FL
+# Studio's embedded API and cannot be imported anywhere else, so it must stay
+# unreachable by `import` while still being installed for
+# postfader-install-bridge to deploy.
+[tool.setuptools.package-data]
+fl_studio_mcp = ["_bridge/device_UniversalBridge.py"]

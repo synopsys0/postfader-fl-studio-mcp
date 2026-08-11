@@ -96,7 +96,7 @@ canonical paths and file hashes but no audio samples.
 
 ### FL Studio bridge
 
-`bridge/device_UniversalBridge.py` runs on FL Studio's main scripting thread.
+`fl_studio_mcp/_bridge/device_UniversalBridge.py` runs on FL Studio's main scripting thread.
 It is ASCII-only, catches errors at callback boundaries, limits work per idle
 tick, and implements long scans as generators resumed over later ticks.
 

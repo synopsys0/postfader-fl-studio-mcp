@@ -34,6 +34,7 @@ def count_checks(relative: str, output: str) -> int:
 ROOT = Path(__file__).resolve().parents[1]
 SAFE_TESTS = (
     "tests/test_bridge_stamp.py",
+    "tests/test_bridge_install.py",
     "tests/test_bridge.py",
     "tests/test_audio.py",
     "tests/test_advisory.py",

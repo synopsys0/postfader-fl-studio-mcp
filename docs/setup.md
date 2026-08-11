@@ -24,11 +24,25 @@ to prevent accidental duplicate clients, but that lock is not authentication.
 
 ## 2. Clone and install
 
+Either install the published package:
+
+```bash
+pip install postfader-fl-studio-mcp
+postfader-install-bridge
+```
+
+or work from a clone, which additionally gives you the test suite and the
+read-only validation scripts:
+
 ```bash
 git clone https://github.com/synopsys0/postfader-fl-studio-mcp.git
 cd postfader-fl-studio-mcp
 ./scripts/install.sh
 ```
+
+Both deploy identical bytes: `install.sh` shells out to the same
+`fl_studio_mcp.bridge_install` module that backs `postfader-install-bridge`,
+so there is one implementation of what "installed" means.
 
 The default user-data folder is `~/Documents/Image-Line/FL Studio`. If yours
 is elsewhere, use the same absolute override for installation and diagnosis:
@@ -38,10 +52,10 @@ FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./scripts/install.sh
 FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./.venv/bin/python scripts/doctor.py
 ```
 
-The installer:
+`scripts/install.sh`:
 
 - creates `.venv` and installs the `postfader-fl-studio-mcp` distribution into it;
-- copies `bridge/device_UniversalBridge.py` into FL Studio's
+- deploys the packaged bridge into FL Studio's
   `Settings/Hardware/Universal Bridge/` folder;
 - backs up a different bridge script already present at that destination;
 - stamps the source hash into the deployed copy; and
