@@ -281,12 +281,21 @@ def main():
     d = Client(port)
     d.sock.sendall((json.dumps(
         {"id": 1, "cmd": "mixer.list", "args": {"only_used": False}}) + "\n").encode())
-    bridge.OnIdle()
-    bridge.OnIdle()
+    # Registering the job needs the request bytes to have arrived on the
+    # server side, which sendall returning does not guarantee. A fixed pair of
+    # ticks is a race that a loaded machine loses, so wait for the condition
+    # instead of assuming two ticks are enough.
+    deadline = time.time() + 3
+    while time.time() < deadline and not bridge._jobs:
+        bridge.OnIdle()
+        time.sleep(0.002)
     check("job registered", len(bridge._jobs) >= 1, len(bridge._jobs))
     d.sock.close()
-    for _ in range(20):
+    # Reaping likewise waits on the kernel surfacing the close to this side.
+    deadline = time.time() + 3
+    while time.time() < deadline and bridge._jobs:
         bridge.OnIdle()
+        time.sleep(0.002)
     check("abandoned job dropped", len(bridge._jobs) == 0, len(bridge._jobs))
     check("bridge still healthy", c.call("ping")[0]["ok"])
 
