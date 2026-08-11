@@ -65,6 +65,22 @@ SYSEX_CHUNK = 1024
 MIDI_PORT = os.environ.get("FL_BRIDGE_MIDI_PORT", "IAC Driver")
 MIDI_ENABLED = os.environ.get("FL_BRIDGE_ENABLE_MIDI", "").strip() == "1"
 MAX_WIRE_ID = (1 << 14) - 1
+MAX_SYSEX_REQUEST_BYTES = 256 * 1024
+MAX_SYSEX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SYSEX_HELLO_BYTES = 4 * 1024
+MAX_SYSEX_REQUEST_PARTS = (
+    MAX_SYSEX_REQUEST_BYTES + SYSEX_CHUNK - 1
+) // SYSEX_CHUNK
+MAX_SYSEX_RESPONSE_PARTS = (
+    MAX_SYSEX_RESPONSE_BYTES + SYSEX_CHUNK - 1
+) // SYSEX_CHUNK
+MAX_SYSEX_HELLO_PARTS = (
+    MAX_SYSEX_HELLO_BYTES + SYSEX_CHUNK - 1
+) // SYSEX_CHUNK
+MAX_SYSEX_FRAME_BYTES = 10 + SYSEX_CHUNK
+MAX_SYSEX_PARTIAL_MESSAGES = 2  # one heartbeat plus one serialized request
+MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_RESPONSE_BYTES
+SYSEX_PARTIAL_TTL_SECONDS = 10.0
 _MIDI_PREFLIGHT: dict[str, tuple[float, bool]] = {}
 
 # Only commands independently locked read-only by bridge protocol 2 may be
@@ -465,8 +481,10 @@ class _MidiTransport:
         self.resolved_output_name = None
         self.resolved_port_identity = None
         self.partial = {}
+        self.partial_bytes = 0
         self.replies = {}
         self.hello_seen = False
+        self._active_request_id = None
 
     # -- ports ------------------------------------------------------------
 
@@ -568,62 +586,161 @@ class _MidiTransport:
 
     # -- framing ----------------------------------------------------------
 
+    def _drop_partial(self, mid: int) -> dict | None:
+        slot = self.partial.pop(mid, None)
+        if slot is not None:
+            self.partial_bytes = max(
+                0, self.partial_bytes - int(slot.get("bytes", 0))
+            )
+        return slot
+
+    def _expire_partial(self, now: float) -> None:
+        expired = [
+            mid
+            for mid, slot in self.partial.items()
+            if now - float(slot.get("updated", now)) > SYSEX_PARTIAL_TTL_SECONDS
+        ]
+        for mid in expired:
+            self._drop_partial(mid)
+
+    def _message_limit(self, mid: int) -> tuple[int, int] | None:
+        if mid == 0:
+            return MAX_SYSEX_HELLO_PARTS, MAX_SYSEX_HELLO_BYTES
+        if mid == self._active_request_id:
+            return MAX_SYSEX_RESPONSE_PARTS, MAX_SYSEX_RESPONSE_BYTES
+        return None
+
     def _drain(self):
+        now = time.monotonic()
+        self._expire_partial(now)
         while True:
             msg = self.midi_in.get_message()
             if not msg:
                 return
             data = msg[0]
-            if len(data) < 10 or data[0] != 0xF0 or data[1] != SYSEX_ID:
+            if (
+                len(data) < 10
+                or len(data) > MAX_SYSEX_FRAME_BYTES
+                or data[0] != 0xF0
+                or data[1] != SYSEX_ID
+            ):
                 continue
             if data[2] != TAG_RESPONSE:
                 continue                      # our own request echoing back
+            try:
+                header = [int(value) for value in data[1:9]]
+            except (TypeError, ValueError):
+                continue
+            if any(value < 0 or value > 0x7F for value in header):
+                continue
             end = len(data) - 1 if data[-1] == 0xF7 else len(data)
-            mid = (data[3] << 7) | data[4]
-            seq = (data[5] << 7) | data[6]
-            total = (data[7] << 7) | data[8]
+            mid = (header[2] << 7) | header[3]
+            seq = (header[4] << 7) | header[5]
+            total = (header[6] << 7) | header[7]
+            limits = self._message_limit(mid)
+            if limits is None:
+                continue
+            max_parts, max_bytes = limits
+            if total < 1 or total > max_parts or seq < 0 or seq >= total:
+                continue
             try:
                 text = bytes(data[9:end]).decode("ascii")
             except Exception:
                 continue
-            slot = self.partial.setdefault(mid, {})
-            slot[seq] = text
-            if len(slot) < total:
+
+            slot = self.partial.get(mid)
+            if slot is None:
+                if len(self.partial) >= MAX_SYSEX_PARTIAL_MESSAGES:
+                    continue
+                slot = {
+                    "total": total,
+                    "parts": {},
+                    "bytes": 0,
+                    "updated": now,
+                }
+                self.partial[mid] = slot
+            elif slot["total"] != total:
+                self._drop_partial(mid)
                 continue
-            del self.partial[mid]
-            body = "".join(slot[i] for i in sorted(slot))
+
+            previous = slot["parts"].get(seq)
+            if previous is not None:
+                if previous != text:
+                    self._drop_partial(mid)
+                else:
+                    slot["updated"] = now
+                continue
+
+            added = len(text)
+            if (
+                slot["bytes"] + added > max_bytes
+                or self.partial_bytes + added > MAX_SYSEX_PARTIAL_BYTES
+            ):
+                self._drop_partial(mid)
+                continue
+            slot["parts"][seq] = text
+            slot["bytes"] += added
+            slot["updated"] = now
+            self.partial_bytes += added
+            if len(slot["parts"]) < total:
+                continue
+
+            if not all(i in slot["parts"] for i in range(total)):
+                self._drop_partial(mid)
+                continue
+            slot = self._drop_partial(mid)
+            body = "".join(slot["parts"][i] for i in range(total))
             try:
                 payload = json.loads(body)
             except Exception:
                 continue
-            if payload.get("hello"):
+            if not isinstance(payload, dict):
+                continue
+            if mid == 0 and payload.get("hello") is True:
                 self.hello_seen = True
-            else:
+            elif mid == self._active_request_id:
                 self.replies[mid] = payload
 
     def request(self, rid: int, payload: dict) -> dict:
         if not self._open():
             raise OSError("MIDI port %r unavailable" % self.port_name)
         text = json.dumps(payload)
+        if len(text) > MAX_SYSEX_REQUEST_BYTES:
+            raise ValueError(
+                "MIDI request exceeds the %d-byte size limit"
+                % MAX_SYSEX_REQUEST_BYTES
+            )
         chunks = [text[i:i + SYSEX_CHUNK]
                   for i in range(0, len(text), SYSEX_CHUNK)] or [""]
         total = len(chunks)
-        for seq, chunk in enumerate(chunks):
-            frame = [0xF0, SYSEX_ID, TAG_REQUEST,
-                     (rid >> 7) & 0x7F, rid & 0x7F,
-                     (seq >> 7) & 0x7F, seq & 0x7F,
-                     (total >> 7) & 0x7F, total & 0x7F]
-            frame.extend(ord(c) & 0x7F for c in chunk)
-            frame.append(0xF7)
-            self.midi_out.send_message(frame)
+        if total > MAX_SYSEX_REQUEST_PARTS:
+            raise ValueError("MIDI request has too many SysEx chunks")
 
-        deadline = time.monotonic() + self.timeout
-        while time.monotonic() < deadline:
-            self._drain()
-            if rid in self.replies:
-                return self.replies.pop(rid)
-            time.sleep(0.002)
-        raise TimeoutError("no reply within %ss" % self.timeout)
+        self._drop_partial(rid)
+        self.replies.pop(rid, None)
+        self._active_request_id = rid
+        try:
+            for seq, chunk in enumerate(chunks):
+                frame = [0xF0, SYSEX_ID, TAG_REQUEST,
+                         (rid >> 7) & 0x7F, rid & 0x7F,
+                         (seq >> 7) & 0x7F, seq & 0x7F,
+                         (total >> 7) & 0x7F, total & 0x7F]
+                frame.extend(ord(c) & 0x7F for c in chunk)
+                frame.append(0xF7)
+                self.midi_out.send_message(frame)
+
+            deadline = time.monotonic() + self.timeout
+            while time.monotonic() < deadline:
+                self._drain()
+                if rid in self.replies:
+                    return self.replies.pop(rid)
+                time.sleep(0.002)
+            raise TimeoutError("no reply within %ss" % self.timeout)
+        finally:
+            self._drop_partial(rid)
+            self.replies.pop(rid, None)
+            if self._active_request_id == rid:
+                self._active_request_id = None
 
     def close(self):
         for port in (self.midi_in, self.midi_out):
@@ -634,8 +751,10 @@ class _MidiTransport:
                 pass
         self.midi_in = self.midi_out = None
         self.partial.clear()
+        self.partial_bytes = 0
         self.replies.clear()
         self.hello_seen = False
+        self._active_request_id = None
         ownership, self._ownership = self._ownership, None
         if ownership is not None:
             ownership.release()

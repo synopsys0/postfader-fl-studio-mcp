@@ -101,6 +101,28 @@ TAG_RESPONSE = 0x02
 SYSEX_CHUNK = 1024
 MAX_SYSEX_PER_TICK = 8
 
+# A request contains only one command and its bounded arguments. Responses can
+# be much larger (a full mixer or de-padded parameter scan), but both directions
+# need a hard ceiling before any chunks are retained. The bridge is normally
+# driven by one serialized MCP client; the extra partial/ready capacity absorbs
+# harmless delivery overlap without allowing a shared IAC sender to grow FL's
+# embedded interpreter without bound.
+MAX_SYSEX_REQUEST_BYTES = 256 * 1024
+MAX_SYSEX_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_SYSEX_REQUEST_PARTS = (
+    MAX_SYSEX_REQUEST_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
+MAX_SYSEX_RESPONSE_PARTS = (
+    MAX_SYSEX_RESPONSE_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
+MAX_SYSEX_FRAME_BYTES = 10 + SYSEX_CHUNK
+MAX_SYSEX_PARTIAL_MESSAGES = 8
+MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_REQUEST_BYTES
+MAX_SYSEX_READY_MESSAGES = 16
+MAX_SYSEX_OUTBOX_FRAMES = MAX_SYSEX_RESPONSE_PARTS + MAX_SYSEX_PER_TICK
+# OnIdle is normally about 50 Hz, making this roughly a ten-second deadline.
+# Tick time is used instead of wall time so the FL callback never depends on a
+# clock call and deterministic tests can advance it directly.
+SYSEX_PARTIAL_TTL_TICKS = 500
+
 PROTOCOL_VERSION = 2
 
 
@@ -149,6 +171,7 @@ LEAN_WRITE_COMMANDS = frozenset({
     "plugin.set_param_option",
 })
 
+MAX_PENDING_JOBS = 32
 _jobs = []     # list of _Job, chunked commands still running
 
 # Where the file transport exchanges messages. Both sides derive it the
@@ -1991,7 +2014,10 @@ class _MidiTransport:
     name = "midi"
 
     def __init__(self):
-        self.partial = {}       # msg id -> {"total": n, "parts": {seq: text}}
+        # msg id -> {total, parts, bytes, updated_tick}. Both the number of
+        # slots and their aggregate retained payload are independently capped.
+        self.partial = {}
+        self.partial_bytes = 0
         self.ready = []         # assembled (handle, request) pairs
         self.outbox = []        # frames still to go out
         self.ticks = 0
@@ -2016,39 +2042,105 @@ class _MidiTransport:
 
     def close(self):
         self.partial = {}
+        self.partial_bytes = 0
         self.ready = []
         self.outbox = []
 
     # -- receiving --------------------------------------------------------
 
+    def _drop_partial(self, mid):
+        slot = self.partial.pop(mid, None)
+        if slot is not None:
+            self.partial_bytes = max(
+                0, self.partial_bytes - int(slot.get("bytes", 0)))
+        return slot
+
+    def _expire_partial(self):
+        expired = [
+            mid for mid, slot in self.partial.items()
+            if self.ticks - int(slot.get("updated_tick", self.ticks))
+            > SYSEX_PARTIAL_TTL_TICKS
+        ]
+        for mid in expired:
+            self._drop_partial(mid)
+
     def feed(self, data):
         """Called from OnSysEx with the raw bytes of one message."""
-        if len(data) < 10 or data[0] != 0xF0 or data[1] != SYSEX_ID:
+        self._expire_partial()
+        if (len(data) < 10 or len(data) > MAX_SYSEX_FRAME_BYTES
+                or data[0] != 0xF0 or data[1] != SYSEX_ID):
             return
         if data[2] != TAG_REQUEST:
             return                      # our own echo, or someone else's
+        try:
+            header = [int(value) for value in data[1:9]]
+        except Exception:
+            return
+        if any(value < 0 or value > 0x7F for value in header):
+            return
         end = len(data) - 1 if data[-1] == 0xF7 else len(data)
-        mid = (data[3] << 7) | data[4]
-        seq = (data[5] << 7) | data[6]
-        total = (data[7] << 7) | data[8]
+        mid = (header[2] << 7) | header[3]
+        seq = (header[4] << 7) | header[5]
+        total = (header[6] << 7) | header[7]
+        if (mid < 1 or total < 1 or total > MAX_SYSEX_REQUEST_PARTS
+                or seq < 0 or seq >= total):
+            return
         try:
             text = bytes(data[9:end]).decode("ascii")
         except Exception:
             return
 
-        slot = self.partial.setdefault(mid, {"total": total, "parts": {}})
-        slot["total"] = total
+        slot = self.partial.get(mid)
+        if slot is None:
+            if len(self.partial) >= MAX_SYSEX_PARTIAL_MESSAGES:
+                return
+            slot = {"total": total, "parts": {}, "bytes": 0,
+                    "updated_tick": self.ticks}
+            self.partial[mid] = slot
+        elif slot["total"] != total:
+            self._drop_partial(mid)
+            return
+
+        previous = slot["parts"].get(seq)
+        if previous is not None:
+            if previous != text:
+                self._drop_partial(mid)
+            else:
+                slot["updated_tick"] = self.ticks
+            return
+
+        added = len(text)
+        if (slot["bytes"] + added > MAX_SYSEX_REQUEST_BYTES
+                or self.partial_bytes + added > MAX_SYSEX_PARTIAL_BYTES):
+            self._drop_partial(mid)
+            return
         slot["parts"][seq] = text
+        slot["bytes"] += added
+        slot["updated_tick"] = self.ticks
+        self.partial_bytes += added
         if len(slot["parts"]) < total:
             return
 
-        del self.partial[mid]
-        body = "".join(slot["parts"][i] for i in sorted(slot["parts"]))
+        if not all(i in slot["parts"] for i in range(total)):
+            self._drop_partial(mid)
+            return
+        slot = self._drop_partial(mid)
+        body = "".join(slot["parts"][i] for i in range(total))
         try:
-            self.ready.append((mid, json.loads(body)))
+            request = json.loads(body)
         except Exception as e:
             self.respond(mid, {"id": None, "ok": False,
                                "error": "bad JSON over sysex: %s" % e})
+            return
+        if not isinstance(request, dict):
+            self.respond(mid, {"id": None, "ok": False,
+                               "error": "SysEx request must be a JSON object"})
+            return
+        if len(self.ready) >= MAX_SYSEX_READY_MESSAGES:
+            self.respond(mid, {"id": request.get("id"), "ok": False,
+                               "error": "bridge MIDI request queue is full"})
+            return
+        self.ready.append((mid, request))
 
     def poll(self):
         out = self.ready[:MAX_COMMANDS_PER_TICK]
@@ -2062,12 +2154,23 @@ class _MidiTransport:
 
     def respond(self, handle, resp):
         text = json.dumps(resp, default=str)
+        if len(text) > MAX_SYSEX_RESPONSE_BYTES:
+            rid = resp.get("id") if isinstance(resp, dict) else None
+            text = json.dumps({
+                "id": rid,
+                "ok": False,
+                "error": "bridge response exceeds the MIDI size limit",
+            })
         chunks = [text[i:i + SYSEX_CHUNK]
                   for i in range(0, len(text), SYSEX_CHUNK)] or [""]
         self._send(TAG_RESPONSE, handle, chunks)
 
     def _send(self, tag, mid, chunks):
         total = len(chunks)
+        if (total < 1 or total > MAX_SYSEX_RESPONSE_PARTS
+                or any(len(chunk) > SYSEX_CHUNK for chunk in chunks)
+                or len(self.outbox) + total > MAX_SYSEX_OUTBOX_FRAMES):
+            return False
         for seq, chunk in enumerate(chunks):
             frame = [0xF0, SYSEX_ID, tag,
                      (mid >> 7) & 0x7F, mid & 0x7F,
@@ -2076,6 +2179,7 @@ class _MidiTransport:
             frame.extend(ord(c) & 0x7F for c in chunk)
             frame.append(0xF7)
             self.outbox.append(bytes(frame))
+        return True
 
     def flush(self):
         sent = 0
@@ -2091,6 +2195,7 @@ class _MidiTransport:
 
         # Heartbeat, so the MCP server can tell a live bridge from a dead one.
         self.ticks += 1
+        self._expire_partial()
         if self.ticks % 50 == 0 and not self.outbox:
             self._send(TAG_RESPONSE, 0, [self._hello()])
 
@@ -2138,8 +2243,19 @@ def _pump():
     for handle, req in _transport.poll():
         resp = _dispatch(req)
         if isinstance(resp, _Job):
-            resp.handle = handle
-            _jobs.append(resp)      # first chunk runs on the next tick
+            if len(_jobs) >= MAX_PENDING_JOBS:
+                try:
+                    resp.gen.close()
+                except Exception:
+                    pass
+                _queue(handle, {
+                    "id": resp.rid,
+                    "ok": False,
+                    "error": "bridge command queue is full",
+                })
+            else:
+                resp.handle = handle
+                _jobs.append(resp)  # first chunk runs on the next tick
         else:
             _queue(handle, resp)
     _transport.flush()
