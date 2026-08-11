@@ -78,6 +78,13 @@ lock prevents accidental duplicate ownership by cooperating client processes;
 it does not authenticate the sender or protect against another local process
 with MIDI access.
 
+Every SysEx frame, assembled request or response, incomplete-message pool, and
+bridge queue has a hard size or count ceiling. Fragments must use a consistent
+non-zero total, an in-range sequence number, and contiguous parts; incomplete
+messages expire after roughly ten seconds. The client accepts response fragments
+only for its current serialized request ID, plus the small heartbeat on ID zero.
+Malformed or excess traffic is discarded rather than retained indefinitely.
+
 The MIDI transport is opt-in. It is constructed only when `FL_BRIDGE_ENABLE_MIDI=1`
 is set for the process, so a process that has not asked for MIDI never opens
 the shared bus. Every supported entry point sets it; omitting it is how a
