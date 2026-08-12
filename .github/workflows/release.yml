@@ -1,0 +1,152 @@
+name: Release
+
+# Publishes to PyPI when a version tag is pushed, using PyPI Trusted
+# Publishing. No API token exists anywhere: GitHub mints a short-lived OIDC
+# credential for this specific workflow in this specific repository, and PyPI
+# accepts it only because it was told to expect exactly that. Nothing to store,
+# nothing to rotate, nothing to leak.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # A tag that disagrees with the version in the package is the one
+      # mistake that cannot be taken back once it reaches PyPI, so refuse
+      # before building rather than discovering it afterwards.
+      - name: Refuse a tag that disagrees with the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          python - <<'PY'
+          import os, sys, tomllib, pathlib
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          declared = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          expected = f"v{declared}"
+          print(f"tag={tag}  pyproject={declared}")
+          if tag != expected:
+              print(f"::error::tag {tag} does not match pyproject version "
+                    f"{declared}; expected {expected}")
+              sys.exit(1)
+
+          manifest = pathlib.Path("server.json")
+          if manifest.is_file():
+              import json
+              data = json.loads(manifest.read_text(encoding="utf-8"))
+              versions = {data.get("version")} | {
+                  package.get("version") for package in data.get("packages", [])
+              }
+              if versions != {declared}:
+                  print(f"::error::server.json declares {sorted(versions)}, "
+                        f"expected {declared}")
+                  sys.exit(1)
+              print("server.json agrees")
+          print("versions agree")
+          PY
+
+      - name: Build wheel and sdist
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Verify distribution metadata
+        run: |
+          python - <<'PY'
+          import pathlib, sys, tarfile, zipfile
+
+          dist = pathlib.Path("dist")
+          wheel = next(iter(dist.glob("*.whl")))
+          sdist = next(iter(dist.glob("*.tar.gz")))
+          print(f"wheel: {wheel.name}\nsdist: {sdist.name}")
+
+          with zipfile.ZipFile(wheel) as archive:
+              names = archive.namelist()
+              metadata = next(n for n in names if n.endswith(".dist-info/METADATA"))
+              text = archive.read(metadata).decode("utf-8")
+              entry_points = next(
+                  (n for n in names if n.endswith(".dist-info/entry_points.txt")), None
+              )
+              scripts = archive.read(entry_points).decode("utf-8") if entry_points else ""
+
+          failures = []
+          if "License-Expression: Apache-2.0" not in text:
+              failures.append("wheel METADATA is missing the Apache-2.0 license expression")
+          for required in ("LICENSE", "NOTICE"):
+              if not any(n.endswith(f".dist-info/licenses/{required}") for n in names):
+                  failures.append(f"wheel does not carry {required}")
+          # Without the bridge, an installed copy can never reach FL Studio.
+          if "fl_studio_mcp/_bridge/device_UniversalBridge.py" not in names:
+              failures.append("the packaged bridge script is missing from the wheel")
+          for command in ("fl-studio-mcp = fl_studio_mcp.mcp_server:main",
+                          "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
+                          "postfader-doctor = fl_studio_mcp.diagnostics:main"):
+              if command not in scripts:
+                  failures.append(f"missing console entry point: {command}")
+          # The MCP Registry reads this out of the PyPI description to verify
+          # that whoever publishes the package controls it.
+          if "mcp-name: io.github.synopsys0/postfader-fl-studio-mcp" not in text:
+              failures.append("METADATA is missing the mcp-name ownership marker")
+
+          with tarfile.open(sdist) as archive:
+              members = archive.getnames()
+          for required in ("LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md"):
+              if not any(m.endswith("/" + required) for m in members):
+                  failures.append(f"sdist does not carry {required}")
+
+          if failures:
+              print("\nDistribution check failed:")
+              for failure in failures:
+                  print(f"  - {failure}")
+              sys.exit(1)
+          print("\nDistribution metadata OK")
+          PY
+
+      - name: Upload distributions for the publish job
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-distributions
+          path: dist/
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only ever publishes for a version tag, never for a manual run on a
+    # branch. `workflow_dispatch` above exists to rehearse the build job.
+    if: startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/postfader-fl-studio-mcp
+    permissions:
+      # The OIDC token that stands in for an API key. Scoped to this job only.
+      id-token: write
+    steps:
+      - name: Fetch the verified distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-distributions
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
