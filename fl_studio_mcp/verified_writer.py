@@ -35,12 +35,15 @@ Three things are worth reading before changing anything here:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any, cast
 
 from .bridge_client import BridgeError, get_client
 from .contracts import (
     ConnectionInfo,
     EqBandObservation,
+    ExpectedEqBandState,
+    ExpectedPluginParameterState,
     PluginParameterObservation,
     PluginVerificationBasis,
     VerifiedMixerEqWrite,
@@ -105,6 +108,14 @@ MASTER_REFUSAL = (
     "nothing here decides on its own that the master bus is what was meant"
 )
 
+PROVENANCE_REFUSAL = (
+    "refusing to write through an unverified FL bridge: provenance is {status!r}. "
+    "Install this package's bridge with postfader-install-bridge, reload the "
+    "script in FL Studio, and read the connection state again"
+)
+
+SESSION_FINGERPRINT_RE = re.compile(r"[0-9a-f]{32}")
+
 
 class VerifiedWritesUnavailable(RuntimeError):
     """The running bridge will not dispatch the verified write commands."""
@@ -141,6 +152,68 @@ def _strict_bool(payload: dict[str, Any], field: str) -> bool:
             "outcome is unknown"
         )
     return value
+
+
+def _session_precondition(value: Any) -> str | None:
+    """Validate an optional bridge-lifetime guard before any dispatch."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or SESSION_FINGERPRINT_RE.fullmatch(value) is None:
+        raise ValueError(
+            "session_fingerprint must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def _precondition_arguments(
+    session_fingerprint: str | None, expected_before: Any
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {}
+    if session_fingerprint is not None:
+        arguments["session_fingerprint"] = session_fingerprint
+    if expected_before is not None:
+        arguments["expected_before"] = (
+            expected_before.model_dump(exclude_none=True)
+            if hasattr(expected_before, "model_dump")
+            else expected_before
+        )
+    return arguments
+
+
+def _precondition_result(
+    payload: dict[str, Any],
+    connection: ConnectionInfo,
+    *,
+    session_requested: bool,
+    expected_requested: bool,
+) -> dict[str, Any]:
+    """Validate bridge proof metadata instead of coercing it into success."""
+    echoed = payload.get("session_fingerprint")
+    if (
+        not isinstance(echoed, str)
+        or SESSION_FINGERPRINT_RE.fullmatch(echoed) is None
+    ):
+        raise ValueError(
+            "FL bridge did not echo a valid session fingerprint, so this write's "
+            "session is unknown"
+        )
+    if connection.session_fingerprint is None or echoed != connection.session_fingerprint:
+        raise ValueError(
+            "FL bridge session changed between the pre-write handshake and the "
+            "write reply; re-read project state before deciding what happened"
+        )
+    session_applied = _strict_bool(payload, "session_precondition_applied")
+    expected_applied = _strict_bool(payload, "expected_before_applied")
+    if session_applied != session_requested or expected_applied != expected_requested:
+        raise ValueError(
+            "FL bridge reported precondition metadata that contradicts the request, "
+            "so this write's safety checks are unknown"
+        )
+    return {
+        "session_fingerprint": echoed,
+        "session_precondition_applied": session_applied,
+        "expected_before_applied": expected_applied,
+    }
 
 
 def _plugin_verification_basis(
@@ -187,6 +260,12 @@ def _index(value: Any, label: str, *, low: int, high: int | None = None) -> int:
     if value < low or (high is not None and value > high):
         bound = f"{low}..{high}" if high is not None else f"{low} or greater"
         raise ValueError(f"{label} must be {bound} (got {value})")
+    return value
+
+
+def _boolean(value: Any, label: str) -> bool:
+    if type(value) is not bool:
+        raise ValueError(f"{label} must be true or false")
     return value
 
 
@@ -286,8 +365,11 @@ class VerifiedWriter:
             )
         return connection_from_ping(ping, self.gateway.transport)
 
-    def _require_writable(self) -> ConnectionInfo:
+    def _require_writable(
+        self, session_fingerprint: str | None = None
+    ) -> ConnectionInfo:
         """Refuse before touching the project, with the actionable reason."""
+        session_fingerprint = _session_precondition(session_fingerprint)
         connection = self.connection_info()
         if not connection.connected or not connection.compatible:
             raise IncompatibleFLStudio(
@@ -300,6 +382,22 @@ class VerifiedWriter:
                     enabled=connection.verified_writes_enabled,
                 )
             )
+        if not connection.bridge_provenance_verified:
+            raise VerifiedWritesUnavailable(
+                PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
+            )
+        if session_fingerprint is not None:
+            if connection.session_fingerprint is None:
+                raise VerifiedWritesUnavailable(
+                    "refusing the session-guarded write because the running bridge "
+                    "did not report a valid session fingerprint; reload the packaged "
+                    "bridge and re-read project state"
+                )
+            if session_fingerprint != connection.session_fingerprint:
+                raise VerifiedWritesUnavailable(
+                    "session precondition failed before dispatch: FL Studio reloaded "
+                    "the bridge since the observed state; re-read before writing"
+                )
         return connection
 
     def _target(self, track_index: Any, allow_master: bool) -> int:
@@ -309,6 +407,28 @@ class VerifiedWriter:
             raise ValueError(MASTER_REFUSAL)
         return index
 
+    def _call_guarded(
+        self,
+        command: str,
+        arguments: dict[str, Any],
+        *,
+        session_fingerprint: str | None,
+        expected_before: Any,
+    ) -> tuple[dict[str, Any], ConnectionInfo, dict[str, Any]]:
+        """Handshake, dispatch once, and validate the bridge's guard report."""
+        session = _session_precondition(session_fingerprint)
+        connection = self._require_writable(session)
+        guarded = dict(arguments)
+        guarded.update(_precondition_arguments(session, expected_before))
+        raw = self.gateway.call(command, **guarded)
+        metadata = _precondition_result(
+            raw,
+            connection,
+            session_requested=session is not None,
+            expected_requested=expected_before is not None,
+        )
+        return raw, connection, metadata
+
     # -- the verified writes ---------------------------------------------
 
     def set_mixer_volume(
@@ -317,13 +437,22 @@ class VerifiedWriter:
         track_index: int,
         volume_normalized: float,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: float | None = None,
     ) -> VerifiedMixerVolumeWrite:
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         value = _normalized(volume_normalized, "volume_normalized", low=0.0, high=1.0)
-        self._require_writable()
-        raw = self.gateway.call(
-            "mixer.set_volume", track=index, value=value, allow_master=allow_master
+        expected = (
+            None
+            if expected_before is None
+            else _normalized(expected_before, "expected_before", low=0.0, high=1.0)
+        )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_volume",
+            {"track": index, "value": value, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
         )
         verified = _strict_bool(raw, "verified")
         after = _optional_float(raw.get("after"))
@@ -346,7 +475,8 @@ class VerifiedWriter:
             after_volume_normalized=after,
             before_volume_db=_optional_float(raw.get("before_db")),
             after_volume_db=_optional_float(raw.get("after_db")),
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_mixer_pan(
@@ -355,13 +485,22 @@ class VerifiedWriter:
         track_index: int,
         pan: float,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: float | None = None,
     ) -> VerifiedMixerPanWrite:
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         value = _normalized(pan, "pan", low=-1.0, high=1.0)
-        self._require_writable()
-        raw = self.gateway.call(
-            "mixer.set_pan", track=index, value=value, allow_master=allow_master
+        expected = (
+            None
+            if expected_before is None
+            else _normalized(expected_before, "expected_before", low=-1.0, high=1.0)
+        )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_pan",
+            {"track": index, "value": value, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
         )
         verified = _strict_bool(raw, "verified")
         after = _optional_float(raw.get("after"))
@@ -382,7 +521,8 @@ class VerifiedWriter:
             requested_pan=value,
             before_pan=_optional_float(raw.get("before")),
             after_pan=after,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_mixer_name(
@@ -391,9 +531,11 @@ class VerifiedWriter:
         track_index: int,
         name: str,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: str | None = None,
     ) -> VerifiedMixerNameWrite:
         """Name one mixer track. The empty string restores FL's default."""
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         if not isinstance(name, str):
             raise ValueError("name must be a string")
@@ -401,9 +543,18 @@ class VerifiedWriter:
             raise ValueError(
                 f"name must be at most {MAX_TRACK_NAME_LENGTH} characters"
             )
-        self._require_writable()
-        raw = self.gateway.call(
-            "mixer.set_name", track=index, name=name, allow_master=allow_master
+        if expected_before is not None:
+            if not isinstance(expected_before, str):
+                raise ValueError("expected_before must be a string")
+            if len(expected_before) > MAX_TRACK_NAME_LENGTH:
+                raise ValueError(
+                    f"expected_before must be at most {MAX_TRACK_NAME_LENGTH} characters"
+                )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_name",
+            {"track": index, "name": name, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
         after = raw.get("after")
@@ -433,7 +584,8 @@ class VerifiedWriter:
             before_name=None if raw.get("before") is None else str(raw["before"]),
             after_name=after_name,
             restored_default=restored,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def _send_pair(
@@ -460,21 +612,28 @@ class VerifiedWriter:
         destination_track_index: int,
         enabled: bool,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: bool | None = None,
     ) -> VerifiedMixerSendWrite:
         """Create or tear down one send. A stated state, never a toggle."""
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         source, destination = self._send_pair(
             track_index, destination_track_index, allow_master
         )
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
-        self._require_writable()
-        raw = self.gateway.call(
+        if expected_before is not None and not isinstance(expected_before, bool):
+            raise ValueError("expected_before must be true or false")
+        raw, connection, metadata = self._call_guarded(
             "mixer.set_send",
-            track=source,
-            to=destination,
-            enabled=enabled,
-            allow_master=allow_master,
+            {
+                "track": source,
+                "to": destination,
+                "enabled": enabled,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
         after = _optional_bool(raw.get("after"))
@@ -498,7 +657,8 @@ class VerifiedWriter:
             before_enabled=_optional_bool(raw.get("before")),
             after_enabled=after,
             level_normalized=_optional_float(raw.get("level")),
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_mixer_send_level(
@@ -508,6 +668,8 @@ class VerifiedWriter:
         destination_track_index: int,
         level_normalized: float,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: float | None = None,
     ) -> VerifiedMixerSendLevelWrite:
         """Set how much of one track reaches another. 0.8 is unity.
 
@@ -516,18 +678,26 @@ class VerifiedWriter:
         message naming ``fl_set_mixer_send`` instead of writing something it
         could never read back.
         """
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         source, destination = self._send_pair(
             track_index, destination_track_index, allow_master
         )
         value = _normalized(level_normalized, "level_normalized", low=0.0, high=1.0)
-        self._require_writable()
-        raw = self.gateway.call(
+        expected = (
+            None
+            if expected_before is None
+            else _normalized(expected_before, "expected_before", low=0.0, high=1.0)
+        )
+        raw, connection, metadata = self._call_guarded(
             "mixer.set_send_level",
-            track=source,
-            to=destination,
-            value=value,
-            allow_master=allow_master,
+            {
+                "track": source,
+                "to": destination,
+                "value": value,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
         )
         verified = _strict_bool(raw, "verified")
         after = _optional_float(raw.get("after"))
@@ -550,7 +720,8 @@ class VerifiedWriter:
             before_level_normalized=_optional_float(raw.get("before")),
             after_level_normalized=after,
             send_active=_optional_bool(raw.get("send_active")),
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_plugin_parameter_display(
@@ -562,6 +733,8 @@ class VerifiedWriter:
         target_value: float,
         tolerance: float | None = None,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPluginParameterState | None = None,
     ) -> VerifiedPluginDisplayWrite:
         """Set one plug-in parameter in the units the plug-in itself displays.
 
@@ -576,7 +749,7 @@ class VerifiedWriter:
         Controls whose display is pure text are refused, with a message saying
         to use the normalized setter instead.
         """
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         slot = _index(slot_index, "slot_index", low=0, high=MAX_EFFECT_SLOT_INDEX)
         if isinstance(parameter, bool) or not isinstance(parameter, (int, str)):
@@ -590,7 +763,10 @@ class VerifiedWriter:
         )
         if tolerance is not None:
             tolerance = _normalized(tolerance, "tolerance", low=0.0, high=1e6)
-        self._require_writable()
+        if expected_before is not None:
+            expected_before = ExpectedPluginParameterState.model_validate(
+                expected_before
+            )
         arguments: dict[str, Any] = {
             "track": index,
             "slot": slot,
@@ -600,7 +776,12 @@ class VerifiedWriter:
         }
         if tolerance is not None:
             arguments["tolerance"] = tolerance
-        raw = self.gateway.call("plugin.set_param_display", **arguments)
+        raw, connection, metadata = self._call_guarded(
+            "plugin.set_param_display",
+            arguments,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
         verified = _strict_bool(raw, "verified")
         landed = _optional_float(raw.get("landed_on"))
         after = _parameter_observation(raw.get("after"))
@@ -634,7 +815,8 @@ class VerifiedWriter:
             normalized_value=_optional_float(raw.get("normalised")),
             before=_parameter_observation(raw.get("before")),
             after=after,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_plugin_parameter_option(
@@ -646,6 +828,8 @@ class VerifiedWriter:
         option: str,
         sweep_steps: int = 64,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPluginParameterState | None = None,
     ) -> VerifiedPluginOptionWrite:
         """Set an enumerated parameter -- Key, Scale, Input Type -- by its text.
 
@@ -662,7 +846,7 @@ class VerifiedWriter:
         The result carries ``options``, the whole enumeration in order, so one
         call is enough to learn what a control accepts.
         """
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         slot = _index(slot_index, "slot_index", low=0, high=MAX_EFFECT_SLOT_INDEX)
         if isinstance(parameter, bool) or not isinstance(parameter, (int, str)):
@@ -674,15 +858,22 @@ class VerifiedWriter:
         if not isinstance(option, str) or not option.strip():
             raise ValueError("option must be a non-empty string")
         steps = _index(sweep_steps, "sweep_steps", low=2, high=256)
-        self._require_writable()
-        raw = self.gateway.call(
+        if expected_before is not None:
+            expected_before = ExpectedPluginParameterState.model_validate(
+                expected_before
+            )
+        raw, connection, metadata = self._call_guarded(
             "plugin.set_param_option",
-            track=index,
-            slot=slot,
-            param=parameter,
-            option=option.strip(),
-            steps=steps,
-            allow_master=allow_master,
+            {
+                "track": index,
+                "slot": slot,
+                "param": parameter,
+                "option": option.strip(),
+                "steps": steps,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
         selected = raw.get("selected")
@@ -718,7 +909,8 @@ class VerifiedWriter:
             options=options,
             before=_parameter_observation(raw.get("before")),
             after=after,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_mixer_mute(
@@ -727,14 +919,20 @@ class VerifiedWriter:
         track_index: int,
         muted: bool,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: bool | None = None,
     ) -> VerifiedMixerMuteWrite:
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         if not isinstance(muted, bool):
             raise ValueError("muted must be true or false; this is a state, not a toggle")
-        self._require_writable()
-        raw = self.gateway.call(
-            "mixer.set_mute", track=index, muted=muted, allow_master=allow_master
+        if expected_before is not None and not isinstance(expected_before, bool):
+            raise ValueError("expected_before must be true or false")
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_mute",
+            {"track": index, "muted": muted, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
         after = _optional_bool(raw.get("after"))
@@ -757,7 +955,8 @@ class VerifiedWriter:
             requested_muted=muted,
             before_muted=_optional_bool(raw.get("before")),
             after_muted=after,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_mixer_eq(
@@ -768,8 +967,10 @@ class VerifiedWriter:
         gain_normalized: float | None = None,
         frequency_normalized: float | None = None,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedEqBandState | None = None,
     ) -> VerifiedMixerEqWrite:
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         # FL Studio's built-in mixer EQ has three bands; the bridge re-checks
         # this against the live band count it can actually see.
@@ -790,7 +991,8 @@ class VerifiedWriter:
             raise ValueError(
                 "gain_normalized, frequency_normalized, or both must be given"
             )
-        self._require_writable()
+        if expected_before is not None:
+            expected_before = ExpectedEqBandState.model_validate(expected_before)
         arguments: dict[str, Any] = {
             "track": index,
             "band": band,
@@ -800,7 +1002,12 @@ class VerifiedWriter:
             arguments["gain"] = gain
         if frequency is not None:
             arguments["freq"] = frequency
-        raw = self.gateway.call("mixer.set_eq", **arguments)
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_eq",
+            arguments,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
         verified = _strict_bool(raw, "verified")
         fields = raw.get("verified_fields")
         fields = fields if isinstance(fields, dict) else {}
@@ -838,7 +1045,8 @@ class VerifiedWriter:
             after=after,
             gain_verified=gain_verified,
             frequency_verified=frequency_verified,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )
 
     def set_plugin_parameter(
@@ -849,20 +1057,29 @@ class VerifiedWriter:
         parameter_index: int,
         normalized_value: float,
         allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPluginParameterState | None = None,
     ) -> VerifiedPluginParameterWrite:
-        allow_master = bool(allow_master)
+        allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         slot = _index(slot_index, "slot_index", low=0, high=MAX_EFFECT_SLOT_INDEX)
         parameter = _index(parameter_index, "parameter_index", low=0)
         value = _normalized(normalized_value, "normalized_value", low=0.0, high=1.0)
-        self._require_writable()
-        raw = self.gateway.call(
+        if expected_before is not None:
+            expected_before = ExpectedPluginParameterState.model_validate(
+                expected_before
+            )
+        raw, connection, metadata = self._call_guarded(
             "plugin.set_param",
-            track=index,
-            slot=slot,
-            index=parameter,
-            value=value,
-            allow_master=allow_master,
+            {
+                "track": index,
+                "slot": slot,
+                "index": parameter,
+                "value": value,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
         display_changed = _strict_bool(raw, "display_changed")
@@ -920,5 +1137,6 @@ class VerifiedWriter:
             after=after,
             display_changed=display_changed,
             reads_at_requested_value=reads_at_value,
-            warnings=warnings,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
         )

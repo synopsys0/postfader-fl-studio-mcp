@@ -66,6 +66,14 @@ def target_path(override: str | None = None) -> Path:
     return hardware_dir(override) / CONTROLLER_DIR_NAME / BRIDGE_FILENAME
 
 
+def expected_bridge_deployment() -> tuple[bytes, str]:
+    """Return the exact installed bytes and source hash this version ships."""
+    try:
+        return stamp_bridge_source(bridge_source_path().read_bytes())
+    except (BridgeStampError, OSError) as exc:
+        raise BridgeInstallError("could not prepare the bridge: %s" % exc) from exc
+
+
 def deploy(override: str | None = None) -> dict:
     """Install the packaged bridge, returning what happened.
 
@@ -75,7 +83,6 @@ def deploy(override: str | None = None) -> dict:
 
     Keys returned: ``target``, ``digest``, ``changed``, ``backup``.
     """
-    source = bridge_source_path()
     hardware = hardware_dir(override)
     if not hardware.is_dir():
         raise BridgeInstallError(
@@ -85,10 +92,7 @@ def deploy(override: str | None = None) -> dict:
             "FL_STUDIO_USER_DATA_DIR." % hardware
         )
 
-    try:
-        stamped, digest = stamp_bridge_source(source.read_bytes())
-    except (BridgeStampError, OSError) as exc:
-        raise BridgeInstallError("could not prepare the bridge: %s" % exc) from exc
+    stamped, digest = expected_bridge_deployment()
 
     target = target_path(override)
     target.parent.mkdir(parents=True, exist_ok=True)

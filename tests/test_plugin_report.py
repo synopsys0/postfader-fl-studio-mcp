@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from fl_studio_mcp.plugin_profile import summarise  # noqa: E402
+from fl_studio_mcp.bridge_install import expected_bridge_deployment  # noqa: E402
 from fl_studio_mcp.plugin_report import (  # noqa: E402
     WriteValidationEvidence,
     build_public_report,
@@ -311,7 +312,17 @@ class FakeWriteClient:
 
     def ping(self):
         self.commands.append("ping")
-        return {"verified_writes_enabled": self.writes}
+        return {
+            "pong": True,
+            "protocol": 2,
+            "program_title": "FL Studio 2026",
+            "fl_version": "Producer Edition v26.1.3 [build 5336]",
+            "midi_scripting_api_version": 44,
+            "bridge_mode": "write_test" if self.writes else "read_only",
+            "verified_writes_enabled": self.writes,
+            "bridge_source_sha256": expected_bridge_deployment()[1],
+            "session_fingerprint": "a" * 32,
+        }
 
     def call(self, command, **arguments):
         self.commands.append(command)

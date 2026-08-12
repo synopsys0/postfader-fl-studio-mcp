@@ -49,6 +49,8 @@ SAFE_TESTS = (
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
+    "tests/test_mcpb.py",
+    "tests/test_performance.py",
 )
 
 

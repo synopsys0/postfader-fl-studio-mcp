@@ -16,12 +16,11 @@ import sys
 
 from .bridge_install import (
     BridgeInstallError,
-    bridge_source_path,
+    expected_bridge_deployment,
     hardware_dir,
     target_path,
     user_data_dir,
 )
-from .bridge_stamp import BridgeStampError, stamp_bridge_source
 
 # Paths are resolved once at import from the same helpers the installer uses,
 # so a relocated FL data folder is reported identically by both commands.
@@ -35,12 +34,6 @@ GREEN, YELLOW, RED, DIM, RESET = (
 
 problems: list[str] = []
 skipped_host_checks: list[str] = []
-
-
-def expected_bridge_deployment() -> tuple[bytes, str]:
-    """Return the exact installed bytes and source hash this version ships."""
-    with open(bridge_source_path(), "rb") as source:
-        return stamp_bridge_source(source.read())
 
 
 def native_midi_probe_blocked() -> bool:
@@ -119,7 +112,7 @@ def check_script_installed():
         expected, digest = expected_bridge_deployment()
         with open(SCRIPT_PATH, "rb") as installed:
             actual = installed.read()
-    except (BridgeStampError, OSError) as exc:
+    except BridgeInstallError as exc:
         fail(f"Could not verify the installed bridge: {exc}",
              "Reinstall the package, or restore the bridge source and re-run "
              "postfader-install-bridge.")
@@ -235,7 +228,7 @@ def check_bridge_live():
     if reported_digest:
         try:
             _expected, expected_digest = expected_bridge_deployment()
-        except (BridgeStampError, OSError) as exc:
+        except BridgeInstallError as exc:
             fail(f"Could not calculate the repository bridge hash: {exc}",
                  "Reinstall the package, or restore the bridge source and re-run "
              "postfader-install-bridge.")
@@ -270,7 +263,7 @@ def check_bridge_live():
         ok(
             f"Connected to {info.get('program_title')} {info.get('fl_version')}",
             f"protocol {connection.bridge_protocol_version}, mode "
-            f"{connection.bridge_mode}: the ten verified write commands are "
+            f"{connection.bridge_mode}: the verified mutation commands are "
             "enabled, so the fl_set_* tools can change this project. Relaunch "
             "FL without FL_BRIDGE_ENABLE_WRITES for a read-only-locked bridge.",
         )

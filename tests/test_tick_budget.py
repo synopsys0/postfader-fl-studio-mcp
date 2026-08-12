@@ -22,6 +22,7 @@ import _state  # noqa: E402
 import mixer  # noqa: E402
 import plugins  # noqa: E402
 import channels  # noqa: E402
+import patterns  # noqa: E402
 import arrangement  # noqa: E402
 import general  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
@@ -56,6 +57,7 @@ def instrument():
         (mixer, "mixer"),
         (plugins, "plugins"),
         (channels, "channels"),
+        (patterns, "patterns"),
         (arrangement, "arrangement"),
         (general, "general"),
     ):
@@ -107,6 +109,16 @@ class Client:
 
 def main():
     _state.reset()
+    step_grid = [False] * 256
+    patterns.patternNumber = lambda: 1
+    patterns.getPatternLength = lambda _pattern: len(step_grid)
+    channels.getGridBit = (
+        lambda _channel, position, _global=False: int(step_grid[position])
+    )
+    channels.setGridBit = (
+        lambda _channel, position, value, _global=False:
+        step_grid.__setitem__(position, bool(value))
+    )
     instrument()
     bridge.OnInit()
     bridge.OnIdle()
@@ -276,6 +288,81 @@ def main():
     check("second client answered during the scan", got_b and got_b["ok"], got_b)
     check("concurrent worst tick under budget (%d)" % worst_concurrent,
           worst_concurrent <= MAX_CALLS_PER_TICK, worst_concurrent)
+
+    print("\n-- guarded step writes preserve the atomic tick budget --")
+    saved_write_gate = bridge.LEAN_WRITES_ENABLED
+    bridge.LEAN_WRITES_ENABLED = True
+    try:
+        observed, read_ticks = c.call(
+            "sequencer.get", pattern=1, channel=0, index_scope="global"
+        )
+        updates = [
+            {"step_index": index, "enabled": True}
+            for index in range(56)
+        ]
+        written, write_ticks = c.call(
+            "sequencer.set",
+            pattern=1,
+            channel=0,
+            index_scope="global",
+            expected_digest=observed["result"]["digest"],
+            updates=updates,
+        )
+        check("maximum supported atomic step batch completed",
+              written["ok"] and written["result"]["verified"], written)
+        check("maximum supported batch uses the declared 320-call ceiling",
+              max(write_ticks) <= bridge.SEQUENCER_WRITE_CALL_BUDGET,
+              max(write_ticks))
+        check("maximum supported batch stays below the global tick ceiling",
+              max(write_ticks) <= MAX_CALLS_PER_TICK, max(write_ticks))
+        check("guarded step read remains chunked and bounded",
+              len([tick for tick in read_ticks if tick > 0]) > 1
+              and max(read_ticks) <= MAX_CALLS_PER_TICK,
+              read_ticks)
+
+        fresh, _ = c.call(
+            "sequencer.get", pattern=1, channel=0, index_scope="global"
+        )
+        grid_before = list(step_grid)
+        undo_before = list(_state.UNDO)
+        too_many, refused_ticks = c.call(
+            "sequencer.set",
+            pattern=1,
+            channel=0,
+            index_scope="global",
+            expected_digest=fresh["result"]["digest"],
+            updates=[
+                {"step_index": index, "enabled": False}
+                for index in range(57)
+            ],
+        )
+        check("oversized atomic step batch is refused before mutation",
+              not too_many["ok"] and step_grid == grid_before
+              and _state.UNDO == undo_before, too_many)
+        check("oversized-batch refusal itself stays within the tick budget",
+              max(refused_ticks) <= MAX_CALLS_PER_TICK, max(refused_ticks))
+
+        step_grid.extend([False] * 256)
+        long_grid, _ = c.call(
+            "sequencer.get", pattern=1, channel=0, index_scope="global"
+        )
+        grid_before = list(step_grid)
+        undo_before = list(_state.UNDO)
+        too_long, long_ticks = c.call(
+            "sequencer.set",
+            pattern=1,
+            channel=0,
+            index_scope="global",
+            expected_digest=long_grid["result"]["digest"],
+            updates=[{"step_index": 511, "enabled": True}],
+        )
+        check("a grid too long for an atomic proof is refused safely",
+              not too_long["ok"] and step_grid == grid_before
+              and _state.UNDO == undo_before, too_long)
+        check("long-grid refusal remains chunked under the tick ceiling",
+              max(long_ticks) <= MAX_CALLS_PER_TICK, max(long_ticks))
+    finally:
+        bridge.LEAN_WRITES_ENABLED = saved_write_gate
 
     print("\n-- a client that leaves mid-scan is cleaned up --")
     d = Client(port)

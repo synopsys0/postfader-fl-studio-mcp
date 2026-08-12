@@ -95,6 +95,7 @@ IDEMPOTENT_READ_COMMANDS = frozenset({
     "plugin.params",
     "plugin.scan_params",
     "channels.list",
+    "sequencer.get",
 })
 MAX_IDEMPOTENT_READ_RECONNECTS = 1
 RECONNECT_DELAY_SECONDS = 0.05
