@@ -1,0 +1,77 @@
+name: Plug-in validation
+description: Contribute privacy-safe mixer-effect compatibility evidence
+title: "[plug-in validation] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for expanding Postfader's evidence beyond the maintainer's plug-in folder.
+
+        The matrix is evidence, not an allowlist. Do not attach a raw scan, log, screenshot, preset, project, or audio file. Review the generated report before posting it.
+  - type: input
+    id: plugin
+    attributes:
+      label: Plug-in product and version
+      description: Product identity only; do not include a preset, project, path, account, or licence identifier.
+      placeholder: Example Effect 2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: origin
+    attributes:
+      label: Origin
+      options:
+        - FL Studio stock effect
+        - Third-party effect
+        - Unknown
+    validations:
+      required: true
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      description: FL's scripting API does not report this; choose Unknown if unsure.
+      options:
+        - Native
+        - VST
+        - VST3
+        - AU
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: FL Studio edition and version
+      placeholder: Producer, 26.1.3 build 5336
+    validations:
+      required: true
+  - type: textarea
+    id: generated_report
+    attributes:
+      label: Generated Postfader report
+      description: Paste only the output of postfader-plugin-report. Do not paste its source JSON or any client transcript.
+      render: markdown
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I reviewed the text and it contains no project/artist identity, current setting, preset or sample name, path, account identifier, or machine identifier.
+          required: true
+        - label: I am not attaching raw JSON, logs, screenshots, presets, FLP files, audio, or other session material.
+          required: true
+  - type: checkboxes
+    id: write_safety
+    attributes:
+      label: Write-validation confirmation
+      description: Check this only when the report says write-validated; otherwise leave it unchecked.
+      options:
+        - label: I ran the write check in a new blank disposable project, saw the exact restore confirmed, and closed it without saving.
+          required: false
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities do not belong in this form. Use the private reporting link shown when creating a security advisory.

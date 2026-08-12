@@ -28,6 +28,19 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Check public tree
+        run: python scripts/check_public_tree.py
+
+      - name: Install hermetic test environment
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable ".[test]"
+
+      - name: Run hermetic safe suite
+        env:
+          FL_BRIDGE_SANDBOXED: "1"
+        run: python scripts/run_safe_tests.py
+
       # A tag that disagrees with the version in the package is the one
       # mistake that cannot be taken back once it reaches PyPI, so refuse
       # before building rather than discovering it afterwards.
@@ -72,7 +85,7 @@ jobs:
       - name: Verify distribution metadata
         run: |
           python - <<'PY'
-          import pathlib, sys, tarfile, zipfile
+          import email.parser, pathlib, sys, tarfile, tomllib, zipfile
 
           dist = pathlib.Path("dist")
           wheel = next(iter(dist.glob("*.whl")))
@@ -89,6 +102,15 @@ jobs:
               scripts = archive.read(entry_points).decode("utf-8") if entry_points else ""
 
           failures = []
+          declared_version = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          wheel_version = email.parser.Parser().parsestr(text).get("Version")
+          if wheel_version != declared_version:
+              failures.append(
+                  f"wheel version {wheel_version!r} does not match pyproject "
+                  f"version {declared_version!r}"
+              )
           if "License-Expression: Apache-2.0" not in text:
               failures.append("wheel METADATA is missing the Apache-2.0 license expression")
           for required in ("LICENSE", "NOTICE"):
@@ -97,9 +119,14 @@ jobs:
           # Without the bridge, an installed copy can never reach FL Studio.
           if "fl_studio_mcp/_bridge/device_UniversalBridge.py" not in names:
               failures.append("the packaged bridge script is missing from the wheel")
+          for required_module in ("fl_studio_mcp/plugin_profile.py",
+                                  "fl_studio_mcp/plugin_report.py"):
+              if required_module not in names:
+                  failures.append(f"wheel does not carry {required_module}")
           for command in ("fl-studio-mcp = fl_studio_mcp.mcp_server:main",
                           "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
-                          "postfader-doctor = fl_studio_mcp.diagnostics:main"):
+                          "postfader-doctor = fl_studio_mcp.diagnostics:main",
+                          "postfader-plugin-report = fl_studio_mcp.plugin_report:main"):
               if command not in scripts:
                   failures.append(f"missing console entry point: {command}")
           # The MCP Registry reads this out of the PyPI description to verify
@@ -112,6 +139,8 @@ jobs:
           for required in ("LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md"):
               if not any(m.endswith("/" + required) for m in members):
                   failures.append(f"sdist does not carry {required}")
+          if not any(m.endswith("/docs/plugin-matrix.md") for m in members):
+              failures.append("sdist does not carry docs/plugin-matrix.md")
 
           if failures:
               print("\nDistribution check failed:")
@@ -120,6 +149,12 @@ jobs:
               sys.exit(1)
           print("\nDistribution metadata OK")
           PY
+
+      - name: Smoke-test the installed reporter
+        run: |
+          python -m venv /tmp/postfader-wheel-smoke
+          /tmp/postfader-wheel-smoke/bin/python -m pip install dist/*.whl
+          /tmp/postfader-wheel-smoke/bin/postfader-plugin-report --help
 
       - name: Upload distributions for the publish job
         uses: actions/upload-artifact@v5
@@ -150,3 +185,36 @@ jobs:
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-mcp-registry:
+    name: Publish to MCP Registry
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      # Pin the publisher release so a moving download cannot change the
+      # release path between a rehearsed commit and its tag.
+      - name: Install MCP Registry publisher v1.7.9
+        run: |
+          curl --fail --location --silent --show-error \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz \
+            --output /tmp/mcp-publisher.tar.gz
+          echo "ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac  /tmp/mcp-publisher.tar.gz" | sha256sum --check
+          tar -xzf /tmp/mcp-publisher.tar.gz mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Validate MCP Registry manifest
+        run: ./mcp-publisher validate server.json
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish MCP server version
+        run: ./mcp-publisher publish server.json

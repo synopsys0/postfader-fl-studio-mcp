@@ -35,10 +35,10 @@ class BridgeSourceTests(unittest.TestCase):
         self.assertEqual(source.parent.name, "_bridge")
         self.assertEqual(source.parent.parent.name, "fl_studio_mcp")
 
-    def test_the_packaged_bridge_is_not_importable(self):
-        # It calls FL Studio's embedded API at import time. Reaching it with a
-        # plain import from anywhere else would fail confusingly, so it must
-        # stay package data rather than a submodule.
+    def test_the_bridge_directory_has_no_package_initializer(self):
+        # Python may expose this directory as a namespace, but the controller
+        # module body depends on FL-only modules. Keep it as deployable data;
+        # the MCP process must not treat it as a normal Python subpackage.
         self.assertFalse((bridge_install.bridge_source_path().parent / "__init__.py").exists())
 
     def test_the_packaged_bridge_is_ascii(self):

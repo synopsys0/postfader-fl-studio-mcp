@@ -82,7 +82,7 @@ jobs:
       - name: Verify distribution metadata
         run: |
           python - <<'PY'
-          import pathlib, sys, tarfile, zipfile
+          import email.parser, pathlib, sys, tarfile, tomllib, zipfile
 
           dist = pathlib.Path("dist")
           wheel = next(iter(dist.glob("*.whl")))
@@ -99,13 +99,30 @@ jobs:
               scripts = archive.read(entry_points).decode("utf-8") if entry_points else ""
 
           failures = []
+          declared_version = tomllib.loads(
+              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+          )["project"]["version"]
+          wheel_version = email.parser.Parser().parsestr(text).get("Version")
+          if wheel_version != declared_version:
+              failures.append(
+                  f"wheel version {wheel_version!r} does not match pyproject "
+                  f"version {declared_version!r}"
+              )
           if "License-Expression: Apache-2.0" not in text:
               failures.append("wheel METADATA is missing the Apache-2.0 license expression")
           for required in ("LICENSE", "NOTICE"):
               if not any(n.endswith(f".dist-info/licenses/{required}") for n in names):
                   failures.append(f"wheel does not carry {required}")
-          if "fl-studio-mcp = fl_studio_mcp.mcp_server:main" not in scripts:
-              failures.append("the fl-studio-mcp console entry point is missing")
+          for command in ("fl-studio-mcp = fl_studio_mcp.mcp_server:main",
+                          "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
+                          "postfader-doctor = fl_studio_mcp.diagnostics:main",
+                          "postfader-plugin-report = fl_studio_mcp.plugin_report:main"):
+              if command not in scripts:
+                  failures.append(f"missing console entry point: {command}")
+          for required_module in ("fl_studio_mcp/plugin_profile.py",
+                                  "fl_studio_mcp/plugin_report.py"):
+              if required_module not in names:
+                  failures.append(f"wheel does not carry {required_module}")
           if any(n.startswith("fl_studio_mcp/") and "prototype" in n for n in names):
               failures.append("a prototype module leaked into the wheel")
           for gone in ("fl_studio_mcp/server.py", "fl_studio_mcp/models.py",
@@ -118,6 +135,8 @@ jobs:
           for required in ("LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md"):
               if not any(m.endswith("/" + required) for m in members):
                   failures.append(f"sdist does not carry {required}")
+          if not any(m.endswith("/docs/plugin-matrix.md") for m in members):
+              failures.append("sdist does not carry docs/plugin-matrix.md")
 
           if failures:
               print("\nDistribution check failed:")
@@ -126,6 +145,12 @@ jobs:
               sys.exit(1)
           print("\nDistribution metadata OK")
           PY
+
+      - name: Smoke-test the installed reporter
+        run: |
+          python -m venv /tmp/postfader-wheel-smoke
+          /tmp/postfader-wheel-smoke/bin/python -m pip install dist/*.whl
+          /tmp/postfader-wheel-smoke/bin/postfader-plugin-report --help
 
       - name: Upload distributions
         uses: actions/upload-artifact@v5

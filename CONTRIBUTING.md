@@ -54,6 +54,46 @@ Before submitting a change, run the public-tree check when present:
 
 That checker is a release boundary, not a substitute for reviewing the diff.
 
+## Plug-in validation reports
+
+The compatibility matrix is evidence, not a runtime allowlist. A report can
+add confidence and document an exception; it never teaches Postfader a product
+identity or enables that product in code.
+
+Generate a read-only report with the installed command:
+
+```bash
+postfader-plugin-report \
+  --track 3 --slot 1 \
+  --plugin-version 2.1 \
+  --plugin-origin third-party \
+  --plugin-format VST3 \
+  --fl-edition Producer
+```
+
+Submit the generated text through the repository's **Plug-in validation**
+issue form. Generated reports always label their source `community candidate`:
+the reporter records evidence but cannot approve its own submission or speak
+for the maintainer. Maintainers curate accepted evidence into
+`docs/plugin-matrix.md`; the resulting row records `community` or `maintainer`
+as its source while the evidence level remains `detected`, `read-profiled`, or
+`write-validated`.
+
+For write evidence, use only a new blank disposable project. The command must
+be given both `--validate-write PARAMETER_INDEX` and
+`--confirm-disposable-project`. It refuses Master, playback, recording, and a
+bridge without verified writes. A report qualifies as write-validated only if
+the move verifies and a separate read confirms the captured original
+normalized value after restoration. Close the disposable project without
+saving even after a passing report.
+
+Never attach the saved scan, raw JSON, logs, screenshots, presets, FLP files,
+audio, or project/session descriptions. The generated report removes current
+values, display strings, parameter names, option strings, track/slot locations,
+paths, project metadata, and timestamps; nevertheless, read it before posting.
+GitHub issue text is not covered by `scripts/check_public_tree.py`, so reviewer
+judgment is still the final privacy boundary.
+
 ## Testing
 
 The required test command is:
@@ -79,8 +119,10 @@ the documentation.
 
 The bridge lives at `fl_studio_mcp/_bridge/device_UniversalBridge.py` and ships
 as package data so an installed copy can deploy it without a clone. It must
-never gain an `__init__.py`: it calls FL Studio's embedded API at import time
-and is not importable anywhere else.
+never gain an `__init__.py`. Python can expose the directory as a namespace,
+but the controller module itself depends on FL Studio-only modules and must run
+only after deployment into FL Studio. The MCP process reads and copies its
+bytes; it does not import or execute the controller module.
 
 Changes to it must preserve these properties:
 

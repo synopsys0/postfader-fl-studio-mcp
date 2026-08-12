@@ -3,7 +3,7 @@
   "name": "io.github.synopsys0/postfader-fl-studio-mcp",
   "title": "Postfader",
   "description": "Read-back-verified mixer and plug-in control for FL Studio 2026 on macOS, with audio analysis.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "repository": {
     "url": "https://github.com/synopsys0/postfader-fl-studio-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "postfader-fl-studio-mcp",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "transport": {
         "type": "stdio"
       },

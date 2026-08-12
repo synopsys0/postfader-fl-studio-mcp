@@ -1,43 +1,218 @@
-"""Summarise a plug-in's parameter map into something shareable.
+"""Reduce a live plug-in scan to privacy-safe compatibility evidence.
 
-`plugins_scan_parameters` answers what a plug-in exposes *right now*, which
-includes the settings someone chose. A control reading `Key = A` and
-`Scale = Minor` states the key of the song; `Retune Speed = 10 ms` is a mixing
-decision. None of that describes the plug-in, and none of it belongs in a
-compatibility table.
+The bridge has to read current parameter values and display strings to decide
+which reported slots are real.  Those values are session data: a key, preset,
+timing value, or custom option can describe somebody's project.  The local
+reducer uses a small closed vocabulary to classify controls, while public
+reports retain only structural counts.  They never emit values, units, display
+strings, parameter names, option text, track/slot locations, paths, dates, or
+project metadata.
 
-So this module reduces a scan to shape and discards values. The sanitisation
-is structural rather than a filter: :class:`ParameterShape` has no field for a
-value or a display string, so there is nothing to accidentally forward. What
-survives is the part that is a property of the plug-in -- how many controls
-exist, where they sit, whether they are named, what kind of control they are,
-and what unit they speak in -- which is exactly what tells the next person
-whether their plug-in will work and which scan bounds it needs.
+Both bridge-wire and typed MCP scan shapes are accepted.  Keeping that adapter
+here prevents the command-line reporter from drifting from the bridge schema
+again while its tests continue to exercise only one representation.
 """
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-# Matches a display that is a bare number with an optional unit: "10 ms",
-# "-3.5 dB", "100 %", "0". The unit is a property of the control; the number
-# is a setting, so only the unit is kept.
-_NUMERIC_DISPLAY = re.compile(r"^[-+]?\d+(?:\.\d+)?\s*(?P<unit>[^\d\s][^\d]*)?$")
 
+_NUMERIC_DISPLAY = re.compile(
+    r"^[-+]?\d+(?:\.\d+)?\s*(?P<unit>[^\d\s][^\d]*)?$"
+)
 _ON_OFF = {"on", "off", "yes", "no", "enabled", "disabled"}
+
+# Display text is untrusted session data.  Only units from this closed list
+# survive reduction; an arbitrary suffix such as a preset or client label is
+# deliberately discarded rather than guessed to be a unit.
+_KNOWN_UNITS = {
+    "%": "%",
+    "bpm": "BPM",
+    "cent": "cent",
+    "cents": "cents",
+    "db": "dB",
+    "degree": "degree",
+    "degrees": "degrees",
+    "hz": "Hz",
+    "khz": "kHz",
+    "ms": "ms",
+    "oct": "oct",
+    "octave": "octave",
+    "octaves": "octaves",
+    "s": "s",
+    "sample": "sample",
+    "samples": "samples",
+    "semitone": "semitone",
+    "semitones": "semitones",
+    "st": "st",
+    "x": "x",
+}
 
 ControlKind = Literal["on_off", "numeric", "enumerated", "unknown"]
 
 
+def _integer(value: Any, field: str) -> int:
+    """Accept exact JSON integers only; evidence must never be coerced."""
+    if type(value) is not int:
+        raise ValueError(f"plug-in scan {field} must be an integer")
+    return value
+
+
+def _optional_integer(value: Any, field: str) -> int | None:
+    return None if value is None else _integer(value, field)
+
+
+def _mapping(scan: Any) -> dict[str, Any]:
+    if hasattr(scan, "model_dump"):
+        scan = scan.model_dump(mode="python")
+    if not isinstance(scan, dict):
+        raise ValueError("plug-in scan must be an object")
+    return scan
+
+
+_MISSING = object()
+
+
+def _same_json_value(left: Any, right: Any) -> bool:
+    """Compare untrusted JSON-like values without bool/int equivalence."""
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            _same_json_value(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _same_json_value(a, b) for a, b in zip(left, right)
+        )
+    return bool(left == right)
+
+
+def _alias_value(
+    source: dict[str, Any], typed_key: str, raw_key: str, field: str
+) -> Any:
+    """Read one raw/typed alias pair, rejecting contradictory duplicates."""
+    typed = source.get(typed_key, _MISSING)
+    raw = source.get(raw_key, _MISSING)
+    if typed is not _MISSING and raw is not _MISSING:
+        if not _same_json_value(typed, raw):
+            raise ValueError(f"plug-in scan carries conflicting {field} fields")
+        return typed
+    if typed is not _MISSING:
+        return typed
+    if raw is not _MISSING:
+        return raw
+    return None
+
+
+def _normalise_scan(scan: Any) -> dict[str, Any]:
+    """Return one internal shape from bridge-wire or typed MCP input."""
+    source = _mapping(scan)
+    plugin = source.get("plugin")
+    if isinstance(plugin, dict):
+        plugin_name = plugin.get("name")
+    elif isinstance(plugin, str):
+        plugin_name = plugin
+    else:
+        raise ValueError("plug-in scan plugin must be a string or object")
+    if not isinstance(plugin_name, str):
+        raise ValueError("plug-in scan plugin name must be a string")
+
+    raw_rows = _alias_value(source, "parameters", "params", "parameter-list")
+    if not isinstance(raw_rows, list):
+        raise ValueError("plug-in scan parameters must be a list")
+
+    rows: list[dict[str, Any]] = []
+    for raw in raw_rows:
+        if not isinstance(raw, dict):
+            raise ValueError("each plug-in parameter must be an object")
+        typed = "reported_name" in raw or "display_text" in raw
+        if (
+            "reported_name" in raw
+            and "name" in raw
+            and not _same_json_value(raw["reported_name"], raw["name"])
+        ):
+            raise ValueError("plug-in parameter carries conflicting name fields")
+        if (
+            "display_text" in raw
+            and "display" in raw
+            and not _same_json_value(raw["display_text"], raw["display"])
+        ):
+            raise ValueError("plug-in parameter carries conflicting display fields")
+        name = raw.get("reported_name", raw.get("name"))
+        display = raw.get("display_text", raw.get("display"))
+        if name is not None and not isinstance(name, str):
+            raise ValueError("plug-in parameter name must be a string or null")
+        if display is not None and not isinstance(display, str):
+            raise ValueError("plug-in parameter display must be a string or null")
+        availability = raw.get("display_text_available")
+        if availability is not None and type(availability) is not bool:
+            raise ValueError("plug-in parameter display availability must be a boolean")
+        if typed and availability is None:
+            raise ValueError("typed plug-in parameter is missing display availability")
+        if availability is not None and availability != bool(display):
+            raise ValueError("plug-in parameter display availability is inconsistent")
+        rows.append(
+            {
+                "index": raw.get("index"),
+                "reported_name": name,
+                "display_text": display,
+                "display_text_available": (
+                    bool(display) if availability is None else availability
+                ),
+            }
+        )
+
+    reported = _alias_value(
+        source, "reported_parameter_count", "reported_count", "reported-count"
+    )
+    examined = _alias_value(
+        source, "examined_count", "examined", "examined-count"
+    )
+    real = _alias_value(source, "real_count", "real", "real-count")
+    if isinstance(plugin, dict):
+        nested_reported = plugin.get("reported_parameter_count")
+        if (
+            nested_reported is not None
+            and not _same_json_value(reported, nested_reported)
+        ):
+            raise ValueError(
+                "plug-in scan carries conflicting aggregate and plug-in reported counts"
+            )
+    start = source.get("scan_start")
+    end = source.get("scan_end")
+    if "truncated" not in source or type(source["truncated"]) is not bool:
+        raise ValueError("plug-in scan truncated must be a boolean")
+    truncated_by = source.get("truncated_by")
+    if truncated_by is not None and not isinstance(truncated_by, str):
+        raise ValueError("plug-in scan truncated_by must be a string or null")
+    return {
+        "plugin_name": plugin_name or "unknown",
+        "reported_count": _integer(reported, "reported count"),
+        "examined": _integer(examined, "examined count"),
+        "real_count": _integer(real, "real count"),
+        "padding_skipped": _integer(source.get("padding_skipped"), "padding count"),
+        "truncated": source["truncated"],
+        "truncated_by": truncated_by or None,
+        "scan_start": _optional_integer(start, "scan start"),
+        "scan_end": _optional_integer(end, "scan end"),
+        "parameters": rows,
+    }
+
+
 @dataclass(frozen=True)
 class ParameterShape:
-    """What a control *is*, with no trace of how it is currently set."""
+    """What a control is, with no trace of how it is currently set."""
 
     index: int
     named: bool
-    name: str | None          # from the plug-in's own vocabulary, not the user's
+    # Retained in memory for local diagnostics, but never rendered into a
+    # community report.  Some hosts can surface user-defined labels here.
+    name: str | None
     kind: ControlKind
     unit: str | None = None
 
@@ -51,6 +226,8 @@ class PluginProfile:
     padding_skipped: int
     truncated: bool
     truncated_by: str | None
+    scan_start: int | None
+    scan_end: int | None
     highest_real_index: int | None
     largest_index_gap: int
     nameless_count: int
@@ -60,57 +237,115 @@ class PluginProfile:
 
     @property
     def enumerated(self) -> list[ParameterShape]:
-        return [p for p in self.parameters if p.kind == "enumerated"]
+        return [
+            parameter
+            for parameter in self.parameters
+            if parameter.kind == "enumerated"
+        ]
 
     @property
     def units(self) -> list[str]:
         seen: list[str] = []
-        for p in self.parameters:
-            if p.unit and p.unit not in seen:
-                seen.append(p.unit)
+        for parameter in self.parameters:
+            if parameter.unit and parameter.unit not in seen:
+                seen.append(parameter.unit)
         return seen
+
+    @property
+    def internally_consistent(self) -> bool:
+        indices = [parameter.index for parameter in self.parameters]
+        bounds_known = self.scan_start is not None and self.scan_end is not None
+        bounded_width = (
+            self.scan_end - self.scan_start if bounds_known else None
+        )
+        return (
+            self.reported_count >= 0
+            and self.examined >= 0
+            and self.real_count >= 0
+            and self.padding_skipped >= 0
+            and self.real_count == len(self.parameters)
+            and self.examined == self.real_count + self.padding_skipped
+            and len(indices) == len(set(indices))
+            and all(index >= 0 for index in indices)
+            and all(index < self.reported_count for index in indices)
+            and (self.scan_start is None or self.scan_start >= 0)
+            and (self.scan_end is None or self.scan_end >= 0)
+            and (
+                self.scan_start is None
+                or self.scan_end is None
+                or self.scan_start <= self.scan_end <= self.reported_count
+            )
+            and (
+                not bounds_known
+                or all(self.scan_start <= index < self.scan_end for index in indices)
+            )
+            and (bounded_width is None or self.examined <= bounded_width)
+            and (
+                self.truncated
+                or bounded_width is None
+                or self.examined == bounded_width
+            )
+            and self.truncated_by in {
+                None, "max_indices", "max_results", "start", "end"
+            }
+            and (self.truncated or self.truncated_by is None)
+        )
+
+    @property
+    def complete(self) -> bool:
+        """Whether every index FL reported was examined consistently."""
+        bounds_cover_all = (
+            self.scan_start == 0 and self.scan_end == self.reported_count
+        )
+        return (
+            self.internally_consistent
+            and not self.truncated
+            and bounds_cover_all
+            and self.examined == self.reported_count
+        )
+
+    @property
+    def kind_counts(self) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for parameter in self.parameters:
+            result[parameter.kind] = result.get(parameter.kind, 0) + 1
+        return result
 
 
 def classify(display: str | None) -> tuple[ControlKind, str | None]:
-    """Decide what kind of control a display string implies.
-
-    Real plug-ins pad their display text -- every string observed on a live
-    VST3 carried a trailing space -- so strip before deciding anything.
-    """
+    """Classify a display without allowing its free text into public output."""
     if display is None:
         return "unknown", None
-    text = display.strip()
+    text = str(display).strip()
     if not text:
         return "unknown", None
     if text.casefold() in _ON_OFF:
         return "on_off", None
     match = _NUMERIC_DISPLAY.match(text)
     if match:
-        unit = (match.group("unit") or "").strip() or None
+        raw_unit = (match.group("unit") or "").strip()
+        unit = _KNOWN_UNITS.get(raw_unit.casefold()) if raw_unit else None
         return "numeric", unit
-    # Text that is not a number and not a switch is an enumeration: a key, a
-    # scale, a mode. Its options can only be learned by sweeping the control,
-    # which mutates, so a read-only report says one exists and stops there.
+    # The actual text is deliberately not retained. It may be a product-owned
+    # enumeration, a user preset, a sample, or a project-specific label.
     return "enumerated", None
 
 
-def summarise(scan: dict[str, Any]) -> PluginProfile:
-    """Reduce a `plugins_scan_parameters` result to shareable shape."""
-    plugin = scan.get("plugin") or {}
-    rows = scan.get("parameters") or []
-
+def summarise(scan: Any) -> PluginProfile:
+    """Reduce a raw or typed ``plugin.scan_params`` result to safe shape."""
+    normal = _normalise_scan(scan)
     shapes: list[ParameterShape] = []
     indices: list[int] = []
     nameless = 0
     with_display = 0
 
-    for row in rows:
-        index = int(row.get("index", -1))
-        raw_name = (row.get("reported_name") or "").strip()
+    for row in normal["parameters"]:
+        index = _integer(row.get("index"), "parameter index")
+        raw_name = str(row.get("reported_name") or "").strip()
         display = row.get("display_text")
         if row.get("display_text_available"):
             with_display += 1
-        kind, unit = classify(display)
+        kind, unit = classify(None if display is None else str(display))
         if not raw_name:
             nameless += 1
         shapes.append(
@@ -130,13 +365,15 @@ def summarise(scan: dict[str, Any]) -> PluginProfile:
         largest_gap = max(largest_gap, later - earlier - 1)
 
     profile = PluginProfile(
-        plugin_name=str(plugin.get("name") or "unknown"),
-        reported_count=int(scan.get("reported_parameter_count") or 0),
-        examined=int(scan.get("examined_count") or 0),
-        real_count=int(scan.get("real_count") or len(rows)),
-        padding_skipped=int(scan.get("padding_skipped") or 0),
-        truncated=bool(scan.get("truncated")),
-        truncated_by=scan.get("truncated_by"),
+        plugin_name=normal["plugin_name"],
+        reported_count=normal["reported_count"],
+        examined=normal["examined"],
+        real_count=normal["real_count"],
+        padding_skipped=normal["padding_skipped"],
+        truncated=normal["truncated"],
+        truncated_by=normal["truncated_by"],
+        scan_start=normal["scan_start"],
+        scan_end=normal["scan_end"],
         highest_real_index=indices[-1] if indices else None,
         largest_index_gap=largest_gap,
         nameless_count=nameless,
@@ -148,178 +385,53 @@ def summarise(scan: dict[str, Any]) -> PluginProfile:
 
 
 def _notes(profile: PluginProfile) -> list[str]:
-    """Turn the numbers into the verdicts a reader actually needs."""
     notes: list[str] = []
-
     if profile.reported_count > profile.real_count * 4:
         notes.append(
-            f"FL reports {profile.reported_count} slots for ~{profile.real_count} "
-            "real controls, so this plug-in must be de-padded rather than paged."
+            f"FL reports {profile.reported_count} slots for {profile.real_count} "
+            "real-looking controls; de-padding is required."
         )
     if profile.nameless_count:
-        share = profile.nameless_count / max(1, len(profile.parameters))
         notes.append(
             f"{profile.nameless_count} of {len(profile.parameters)} controls "
-            f"({share:.0%}) report no name and are identifiable only by what "
-            "they display, so address them with the display or option form."
+            "report no name."
         )
     if profile.enumerated:
         notes.append(
-            f"{len(profile.enumerated)} controls display text rather than a "
-            "number; their option lists can only be discovered by sweeping, "
-            "which moves the control."
+            f"{len(profile.enumerated)} controls display text rather than a number; "
+            "option text is withheld from public reports."
         )
     if profile.units:
-        notes.append("Units seen in display text: " + ", ".join(profile.units) + ".")
+        notes.append("Recognised units: " + ", ".join(profile.units) + ".")
 
-    # The bound that decides whether a name search finds everything.
-    from_bound = 256  # PARAM_SEARCH_RUN in the bridge
-    if profile.largest_index_gap >= from_bound:
+    search_bound = 256
+    if profile.largest_index_gap >= search_bound:
         notes.append(
-            f"The widest gap between real controls is {profile.largest_index_gap}, "
-            f"which meets or exceeds the {from_bound}-index search run: a name "
-            "search can stop early on this plug-in. Use plugins_scan_parameters "
-            "and address by index."
+            f"The widest gap is {profile.largest_index_gap}, meeting or exceeding "
+            f"the {search_bound}-index name-search run; address later controls "
+            "by index."
         )
     else:
         notes.append(
-            f"Widest gap between real controls is {profile.largest_index_gap}, "
-            f"well inside the {from_bound}-index search run."
+            f"Widest gap between real-looking controls: {profile.largest_index_gap}."
         )
     if profile.truncated:
         notes.append(
-            f"This scan was truncated by {profile.truncated_by}; the numbers "
-            "above describe the range examined, not the whole plug-in."
+            "The scan is partial (stopped by "
+            f"{profile.truncated_by or 'an unknown bound'})."
         )
-    # A genuine scan reports as many rows as it counted. If they disagree the
-    # caller passed a partial set, and every row-derived figure above covers
-    # only that subset -- say so rather than presenting them as the whole.
-    if profile.real_count != len(profile.parameters):
+    if not profile.internally_consistent:
         notes.append(
-            f"The scan counted {profile.real_count} real controls but supplied "
-            f"{len(profile.parameters)} rows; per-control figures cover the "
-            "rows supplied only."
+            "The supplied scan is internally inconsistent and is not "
+            "publishable evidence."
         )
     return notes
 
 
-def render_markdown(profile: PluginProfile) -> str:
-    """A table row for docs/plugin-support.md plus the reasoning behind it."""
-    kinds: dict[str, int] = {}
-    for p in profile.parameters:
-        kinds[p.kind] = kinds.get(p.kind, 0) + 1
-    kind_summary = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
-
-    lines = [
-        "Paste this row into the table in docs/plugin-support.md:",
-        "",
-        f"| {profile.plugin_name} | VST/VST3 | ~{profile.reported_count} | "
-        f"{profile.real_count} real, widest gap {profile.largest_index_gap}, "
-        f"{profile.nameless_count} nameless |",
-        "",
-        "Detail:",
-        "",
-        f"- reported slots: {profile.reported_count}",
-        f"- real controls found: {profile.real_count} "
-        f"(examined {profile.examined}, padding skipped {profile.padding_skipped})",
-        f"- highest real index: {profile.highest_real_index}",
-        f"- control kinds: {kind_summary or 'none'}",
-        f"- controls with a display string: {profile.display_available_count}",
-        "",
-    ]
-    lines += [f"- {note}" for note in profile.notes]
-    lines += [
-        "",
-        "No current value, display text, or setting appears above: those "
-        "describe the session, not the plug-in.",
-    ]
-    return "\n".join(lines)
-
-# Ceiling the bridge puts on a sweep. A control with more options than this
-# cannot be fully enumerated by sweeping at all.
-MAX_SWEEP_STEPS = 256
-
-# Options partition 0..1 into roughly equal contiguous bands rather than
-# needing fine sampling, so a sweep only has to land in each band once.
-# Measured on a live VST3: a 29-option control resolved completely at 64 steps
-# -- about 2.2 samples per option -- and 256 steps found nothing further. Two
-# samples per option is therefore the working rule, with headroom.
-SWEEP_SAMPLES_PER_OPTION = 2
-
-# An option list is the plug-in's own vocabulary and is the same for everyone
-# who owns it, so it is safe to publish -- unless the control enumerates things
-# the user made. A preset or sample selector does exactly that.
-_USER_CONTENT = re.compile(
-    r"[/\\]"                     # a path separator
-    r"|\.(wav|aiff?|mp3|flac|fxp|fxb|vstpreset|nks|nki)\b"  # a file extension
-    r"|^(?:untitled|new preset|my )",
-    re.IGNORECASE,
-)
-
-
-@dataclass(frozen=True)
-class OptionSurvey:
-    """What sweeping one enumerated control found."""
-
-    index: int
-    name: str | None
-    option_count: int
-    steps_used: int
-    options: tuple[str, ...] = ()
-    looks_user_generated: bool = False
-
-    @property
-    def steps_needed(self) -> int:
-        """Sweep resolution this control wants, by the measured rule."""
-        return self.option_count * SWEEP_SAMPLES_PER_OPTION
-
-    @property
-    def default_is_enough(self) -> bool:
-        return 64 >= self.steps_needed
-
-    @property
-    def enumerable_at_all(self) -> bool:
-        return self.steps_needed <= MAX_SWEEP_STEPS
-
-
-def survey_options(index: int, name: str | None, options: list[str],
-                   steps_used: int) -> OptionSurvey:
-    """Reduce one sweep result, withholding option text that is user content."""
-    cleaned = tuple(o.strip() for o in options if o and o.strip())
-    suspect = any(_USER_CONTENT.search(o) for o in cleaned)
-    return OptionSurvey(
-        index=index,
-        name=name,
-        option_count=len(cleaned),
-        steps_used=steps_used,
-        # Withheld entirely when anything in the list looks like the user's
-        # own content: one preset name is enough to make the list personal.
-        options=() if suspect else cleaned,
-        looks_user_generated=suspect,
-    )
-
-
-def render_option_survey(surveys: list[OptionSurvey]) -> str:
-    """Format sweep findings, including where the default resolution fails."""
-    if not surveys:
-        return "No enumerated controls were surveyed."
-    lines = ["", "Enumerated controls (discovered by sweeping):", ""]
-    for s in sorted(surveys, key=lambda s: s.index):
-        label = s.name or f"index {s.index}"
-        verdict = (
-            "default 64 steps is enough" if s.default_is_enough
-            else f"needs sweep_steps>={min(s.steps_needed, MAX_SWEEP_STEPS)}"
-            if s.enumerable_at_all
-            else f"CANNOT be fully enumerated: {s.option_count} options exceeds "
-                 f"what {MAX_SWEEP_STEPS} steps can resolve"
-        )
-        lines.append(f"- {label}: {s.option_count} options, {verdict}")
-        if s.looks_user_generated:
-            lines.append(
-                "  Option text withheld: this control enumerates something "
-                "that looks user-created, such as presets or samples."
-            )
-        elif s.options:
-            lines.append("  " + ", ".join(s.options))
-    return "\n".join(lines)
-
+def markdown_text(value: Any, *, maximum: int | None = 160) -> str:
+    """Collapse and escape one untrusted label for a Markdown table cell."""
+    text = " ".join(str(value or "unknown").split())
+    if maximum is not None:
+        text = text[:maximum]
+    text = html.escape(text, quote=False).replace("|", "&#124;")
+    return text or "unknown"

@@ -53,7 +53,7 @@ relied on the response says so instead of assuming.
 | **Read-only by default** | Writes need a flag set on the FL Studio process itself |
 | **Narrow on purpose** | 24 tools, each with a defined contract, not a generic API bridge |
 | **No plug-in database** | Parameters are discovered at runtime; nothing to add per plug-in |
-| **Hermetic tests** | 582 checks with a fake FL API — no DAW, no MIDI device, no user audio |
+| **Hermetic tests** | 608 checks with a fake FL API — no DAW, no MIDI device, no user audio |
 
 ## Status
 
@@ -108,15 +108,18 @@ write tools while recording or on irreplaceable material.
 ## Plug-in compatibility
 
 Effects on a mixer track, addressed by track and slot. Channel Rack
-instruments are out of reach: FL's scripting API exposes no parameter access
-for them, so a synth is not a scan-tuning problem, it is unreachable.
+instruments are outside Postfader's current mixer-only contracts. FL's scripting
+API has a separate Channel Rack addressing form, but this release does not
+expose it; a synth is therefore not a mixer scan-tuning problem.
 
 Within that, there is no supported-plug-in list and no per-plug-in profiles:
 parameters are discovered at runtime, so a plug-in needs no support added for
 it. What varies is how much of a large parameter map a bounded scan can see,
 and whether FL reports a given control at all. See
 [Plug-in support](docs/plugin-support.md) for those bounds, how to raise them,
-and how to add your own plug-in to the validated-against table.
+and [the validated plug-in matrix](docs/plugin-matrix.md) for published
+evidence. The matrix records observations; it never enables or disables a
+plug-in.
 
 ## Requirements
 
@@ -232,8 +235,9 @@ write them out in full. `.mcp.json.example` in this repository shows the same
 shape with relative paths, for the launched-from-the-checkout case only.
 
 The Python distribution is `postfader-fl-studio-mcp`. The import path remains
-`fl_studio_mcp`, the console command remains `fl-studio-mcp`, and the MCP
-server ID is `fl-studio`.
+`fl_studio_mcp`, the MCP server command is `fl-studio-mcp`, and the MCP server
+ID is `fl-studio`. Installed utilities are `postfader-install-bridge`,
+`postfader-doctor`, and `postfader-plugin-report`.
 
 Only one process can own the IAC port at a time, so if you register the server
 at user scope, close any project-scoped copy of it first.
@@ -287,6 +291,7 @@ complete trust model.
 - [Setup and usage](docs/setup.md)
 - [Tool and command reference](docs/tool-contracts.md)
 - [Plug-in support](docs/plugin-support.md)
+- [Validated plug-in matrix](docs/plugin-matrix.md)
 - [Architecture](docs/architecture.md)
 - [FL Studio constraints](docs/fl-constraints.md)
 - [Security policy](SECURITY.md)
