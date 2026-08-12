@@ -43,6 +43,23 @@ LOUDNESS_MATCH_VERSION = "integrated-loudness-delta-gain-1"
 MASKING_ANALYSIS_VERSION = "sample-synchronous-stft-overlap-1"
 
 
+# Ceiling on the samples one load may hold in memory, independent of how large
+# the file on disk is.
+#
+# The caller-facing size limit bounds bytes on disk, and max_seconds bounds
+# duration, but neither bounds what those bytes become once decoded: samples
+# are read as float64, so a 16-bit file quadruples, and sample rate and channel
+# count multiply on top of that. A ten-minute file is 0.6 GiB decoded at 48 kHz
+# stereo and 7.7 GiB at 192 kHz with eight channels -- and a compressed
+# container reaches either while staying far under the on-disk limit.
+#
+# 2 GiB leaves every realistic master analysable in full: ten minutes of 96 kHz
+# stereo needs 1.3 GiB. Past that the read is clamped rather than refused, and
+# the result says it was clamped and why, because a partial measurement that
+# announces itself is more useful than an error.
+MAX_DECODED_AUDIO_BYTES = 2 * 1024 * 1024 * 1024
+
+
 class AudioError(RuntimeError):
     pass
 
@@ -67,17 +84,45 @@ def load(path: str, max_seconds: float | None = None) -> Loaded:
     if not os.path.isfile(path):
         raise AudioError(f"No such audio file: {path}")
     try:
+        # sf.info reads the header only, so the decoded footprint is known
+        # before a single sample is committed to memory.
         info = sf.info(path)
         rate = int(info.samplerate)
-        if max_seconds is None:
-            frames_to_read = -1
-        else:
-            frames_to_read = min(int(info.frames), max(0, int(max_seconds * rate)))
-        data, rate = sf.read(
-            path, frames=frames_to_read, always_2d=True, dtype="float64"
-        )
+        channels = max(1, int(info.channels))
+        source_frames = int(info.frames)
+
+        wanted = source_frames
+        if max_seconds is not None:
+            wanted = min(wanted, max(0, int(max_seconds * rate)))
+
+        # sf.read returns (frames, channels) float64 and the mono fold below
+        # adds one more column's worth, so a frame costs (channels + 1) * 8.
+        per_frame_bytes = (channels + 1) * 8
+        affordable_frames = MAX_DECODED_AUDIO_BYTES // per_frame_bytes
+        too_wide = affordable_frames < rate
+
+        frames_to_read = min(wanted, affordable_frames)
+        truncated_by = None
+        if frames_to_read < source_frames:
+            truncated_by = (
+                "decode_limit" if frames_to_read < wanted else "max_seconds"
+            )
+
+        if not too_wide:
+            data, rate = sf.read(
+                path, frames=frames_to_read, always_2d=True, dtype="float64"
+            )
     except Exception as e:
         raise AudioError(f"Could not read {path}: {e}") from None
+
+    # Raised outside the reader's except so it reaches the caller as the
+    # refusal it is, rather than being re-wrapped as an unreadable file.
+    if too_wide:
+        raise AudioError(
+            f"{path} declares {channels} channels at {rate} Hz, so a single "
+            f"second decodes past the {MAX_DECODED_AUDIO_BYTES}-byte limit; "
+            "refusing to read it"
+        )
     if data.size == 0:
         raise AudioError(f"{path} contains no audio.")
     channels = data.shape[1]
@@ -99,6 +144,10 @@ def load(path: str, max_seconds: float | None = None) -> Loaded:
             "analyzed_frames": analysed_frames,
             "source_duration_sec": source_frames / rate,
             "truncated": analysed_frames < source_frames,
+            # Which bound stopped the read, so a partial measurement is never
+            # mistaken for a whole-file one: "max_seconds" is the caller's own
+            # limit, "decode_limit" is the memory ceiling.
+            "truncated_by": truncated_by,
             "max_seconds": max_seconds,
         },
         channel_samples=data,

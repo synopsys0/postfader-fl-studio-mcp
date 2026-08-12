@@ -53,7 +53,7 @@ relied on the response says so instead of assuming.
 | **Read-only by default** | Writes need a flag set on the FL Studio process itself |
 | **Narrow on purpose** | 24 tools, each with a defined contract, not a generic API bridge |
 | **No plug-in database** | Parameters are discovered at runtime; nothing to add per plug-in |
-| **Hermetic tests** | 550 checks with a fake FL API — no DAW, no MIDI device, no user audio |
+| **Hermetic tests** | 559 checks with a fake FL API — no DAW, no MIDI device, no user audio |
 
 ## Status
 

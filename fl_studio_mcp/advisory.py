@@ -119,6 +119,12 @@ class AudioFileDescription(AdvisoryModel):
     analyzed_frames: int
     source_duration_sec: float
     truncated: bool
+    # Which bound stopped the read, so a partial measurement is never mistaken
+    # for a whole-file one. "max_seconds" is the caller's own limit;
+    # "decode_limit" is the ceiling on how much audio may be held as samples,
+    # which a high sample rate or channel count can reach on a file that is
+    # well under the on-disk size limit.
+    truncated_by: Literal["max_seconds", "decode_limit"] | None = None
     max_seconds: float | None = None
 
 

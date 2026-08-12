@@ -126,6 +126,13 @@ relative paths, `..` components, directories, unsupported extensions, empty
 files, and files larger than 512 MiB. A valid direct path can still identify an
 audio file outside FL Studio's folders.
 
+Decoded audio is bounded independently of the file-size limit. Samples are read
+as float64, so sample rate and channel count multiply what a given number of
+bytes on disk becomes in memory, and a compressed container can pass the size
+check and still decode to many gigabytes. A load that would exceed the ceiling
+is clamped and the result reports `truncated_by: "decode_limit"`; a file too
+wide for even one second is refused.
+
 Measurement results expose the canonical path and SHA-256 hash to the MCP
 client but do not include audio samples. Recent-bounce discovery is restricted
 to fixed FL Studio output and project roots, does not follow directory
@@ -145,8 +152,9 @@ The safe test suite checks important boundaries, including:
 - no bridge call to `saveProject`;
 - no automatic replay of ambiguous writes;
 - bounded bridge work per FL Studio idle tick;
-- MIDI framing and size limits;
-- audio file type, size, and path checks;
+- MIDI framing and size limits, and the same request ceiling on the
+  socket and file transports;
+- audio file type, size, path, and decoded-memory checks;
 - synthetic-only public fixtures; and
 - no author host record in the installed package.
 

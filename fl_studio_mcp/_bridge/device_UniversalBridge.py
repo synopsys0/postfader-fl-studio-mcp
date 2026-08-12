@@ -107,6 +107,12 @@ MAX_SYSEX_PER_TICK = 8
 # driven by one serialized MCP client; the extra partial/ready capacity absorbs
 # harmless delivery overlap without allowing a shared IAC sender to grow FL's
 # embedded interpreter without bound.
+# A request is one command and its bounded arguments on every transport, so
+# the socket and file paths use the same ceiling the SysEx reassembler does.
+# Neither is reachable inside FL Studio's sandbox, but both listen wherever the
+# bridge runs outside it, and an unbounded accumulator is an unbounded
+# accumulator regardless of who is expected to connect to it.
+MAX_TRANSPORT_REQUEST_BYTES = 256 * 1024
 MAX_SYSEX_REQUEST_BYTES = 256 * 1024
 MAX_SYSEX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYSEX_REQUEST_PARTS = (
@@ -1806,6 +1812,15 @@ class _SocketTransport:
                 if chunk == b"":
                     self._drop(c)
                     continue
+                if len(c.inbox) + len(chunk) > MAX_TRANSPORT_REQUEST_BYTES:
+                    # A sender that never terminates a line would otherwise
+                    # grow this buffer until the interpreter died. There is no
+                    # partial request worth keeping, so drop the connection.
+                    self.respond(c, {"id": None, "ok": False,
+                                     "error": "request exceeds the transport "
+                                              "size limit"})
+                    self._drop(c)
+                    continue
                 c.inbox += chunk
             n = 0
             while n < MAX_COMMANDS_PER_TICK and b"\n" in c.inbox:
@@ -1948,8 +1963,16 @@ class _FileTransport:
             path = os.path.join(self.root, name)
             token = name[len(REQ_PREFIX):-5]
             try:
+                # Check the size before reading: os.path.getsize is a stat, so
+                # an oversized request never reaches memory at all.
+                if os.path.getsize(path) > MAX_TRANSPORT_REQUEST_BYTES:
+                    os.remove(path)
+                    self.respond(token, {
+                        "id": None, "ok": False,
+                        "error": "request exceeds the transport size limit"})
+                    continue
                 with open(path, encoding="utf-8") as fh:
-                    body = fh.read()
+                    body = fh.read(MAX_TRANSPORT_REQUEST_BYTES + 1)
                 os.remove(path)
             except OSError:
                 continue
