@@ -234,3 +234,92 @@ def render_markdown(profile: PluginProfile) -> str:
         "describe the session, not the plug-in.",
     ]
     return "\n".join(lines)
+
+# Ceiling the bridge puts on a sweep. A control with more options than this
+# cannot be fully enumerated by sweeping at all.
+MAX_SWEEP_STEPS = 256
+
+# Options partition 0..1 into roughly equal contiguous bands rather than
+# needing fine sampling, so a sweep only has to land in each band once.
+# Measured on a live VST3: a 29-option control resolved completely at 64 steps
+# -- about 2.2 samples per option -- and 256 steps found nothing further. Two
+# samples per option is therefore the working rule, with headroom.
+SWEEP_SAMPLES_PER_OPTION = 2
+
+# An option list is the plug-in's own vocabulary and is the same for everyone
+# who owns it, so it is safe to publish -- unless the control enumerates things
+# the user made. A preset or sample selector does exactly that.
+_USER_CONTENT = re.compile(
+    r"[/\\]"                     # a path separator
+    r"|\.(wav|aiff?|mp3|flac|fxp|fxb|vstpreset|nks|nki)\b"  # a file extension
+    r"|^(?:untitled|new preset|my )",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class OptionSurvey:
+    """What sweeping one enumerated control found."""
+
+    index: int
+    name: str | None
+    option_count: int
+    steps_used: int
+    options: tuple[str, ...] = ()
+    looks_user_generated: bool = False
+
+    @property
+    def steps_needed(self) -> int:
+        """Sweep resolution this control wants, by the measured rule."""
+        return self.option_count * SWEEP_SAMPLES_PER_OPTION
+
+    @property
+    def default_is_enough(self) -> bool:
+        return 64 >= self.steps_needed
+
+    @property
+    def enumerable_at_all(self) -> bool:
+        return self.steps_needed <= MAX_SWEEP_STEPS
+
+
+def survey_options(index: int, name: str | None, options: list[str],
+                   steps_used: int) -> OptionSurvey:
+    """Reduce one sweep result, withholding option text that is user content."""
+    cleaned = tuple(o.strip() for o in options if o and o.strip())
+    suspect = any(_USER_CONTENT.search(o) for o in cleaned)
+    return OptionSurvey(
+        index=index,
+        name=name,
+        option_count=len(cleaned),
+        steps_used=steps_used,
+        # Withheld entirely when anything in the list looks like the user's
+        # own content: one preset name is enough to make the list personal.
+        options=() if suspect else cleaned,
+        looks_user_generated=suspect,
+    )
+
+
+def render_option_survey(surveys: list[OptionSurvey]) -> str:
+    """Format sweep findings, including where the default resolution fails."""
+    if not surveys:
+        return "No enumerated controls were surveyed."
+    lines = ["", "Enumerated controls (discovered by sweeping):", ""]
+    for s in sorted(surveys, key=lambda s: s.index):
+        label = s.name or f"index {s.index}"
+        verdict = (
+            "default 64 steps is enough" if s.default_is_enough
+            else f"needs sweep_steps>={min(s.steps_needed, MAX_SWEEP_STEPS)}"
+            if s.enumerable_at_all
+            else f"CANNOT be fully enumerated: {s.option_count} options exceeds "
+                 f"what {MAX_SWEEP_STEPS} steps can resolve"
+        )
+        lines.append(f"- {label}: {s.option_count} options, {verdict}")
+        if s.looks_user_generated:
+            lines.append(
+                "  Option text withheld: this control enumerates something "
+                "that looks user-created, such as presets or samples."
+            )
+        elif s.options:
+            lines.append("  " + ", ".join(s.options))
+    return "\n".join(lines)
+

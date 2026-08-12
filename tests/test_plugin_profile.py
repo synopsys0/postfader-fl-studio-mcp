@@ -18,9 +18,12 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from fl_studio_mcp.plugin_profile import (  # noqa: E402
+    MAX_SWEEP_STEPS,
     classify,
     render_markdown,
+    render_option_survey,
     summarise,
+    survey_options,
 )
 
 # Values invented. Shapes copied from what a padded VST3 really returns.
@@ -156,6 +159,59 @@ class TruncationDisclosureTests(unittest.TestCase):
         self.assertIsNone(profile.highest_real_index)
         self.assertEqual(profile.largest_index_gap, 0)
         self.assertIsInstance(render_markdown(profile), str)
+
+
+class OptionSurveyTests(unittest.TestCase):
+    """The sweep half. Option counts here match what a live VST3 returned."""
+
+    def test_a_29_option_control_is_covered_by_the_default_resolution(self):
+        # Measured: a live 29-option Scale control resolved completely at 64
+        # steps, and 256 found nothing more. That is the basis for the rule.
+        survey = survey_options(1, "Scale", [f"opt{i}" for i in range(29)], 64)
+        self.assertEqual(survey.option_count, 29)
+        self.assertEqual(survey.steps_needed, 58)
+        self.assertTrue(survey.default_is_enough)
+        self.assertTrue(survey.enumerable_at_all)
+
+    def test_a_control_past_the_default_is_flagged_with_the_resolution_it_needs(self):
+        survey = survey_options(4, "Wavetable", [f"wt{i}" for i in range(60)], 64)
+        self.assertFalse(survey.default_is_enough)
+        self.assertTrue(survey.enumerable_at_all)
+        self.assertIn("needs sweep_steps>=120", render_option_survey([survey]))
+
+    def test_a_control_past_the_ceiling_is_reported_as_unenumerable(self):
+        # Sweeping cannot resolve more options than the ceiling allows, and
+        # saying so is more useful than returning a confident partial list.
+        survey = survey_options(5, "Preset Bank", [f"p{i}" for i in range(200)], 256)
+        self.assertFalse(survey.enumerable_at_all)
+        rendered = render_option_survey([survey])
+        self.assertIn("CANNOT be fully enumerated", rendered)
+        self.assertIn(str(MAX_SWEEP_STEPS), rendered)
+
+    def test_plugin_vocabulary_is_published(self):
+        survey = survey_options(1, "Scale", ["Major", "Minor", "Chromatic"], 64)
+        self.assertFalse(survey.looks_user_generated)
+        self.assertIn("Major, Minor, Chromatic", render_option_survey([survey]))
+
+    def test_a_list_containing_user_content_is_withheld_entirely(self):
+        # One personal entry makes the whole list personal, so none of it is
+        # printed -- a preset selector can enumerate things the user named.
+        for personal in ("Bank A/take one.fxp", "My Vocal Chain",
+                         "Untitled 3", "vocal_take.wav"):
+            with self.subTest(personal=personal):
+                survey = survey_options(9, "Preset", ["Init", personal], 64)
+                self.assertTrue(survey.looks_user_generated)
+                self.assertEqual(survey.options, ())
+                rendered = render_option_survey([survey])
+                self.assertNotIn(personal, rendered)
+                self.assertIn("withheld", rendered)
+
+    def test_blank_options_are_not_counted(self):
+        survey = survey_options(1, "Scale", ["Major", "", "  ", "Minor"], 64)
+        self.assertEqual(survey.option_count, 2)
+
+    def test_nothing_surveyed_is_stated_rather_than_implied(self):
+        self.assertIn("No enumerated controls", render_option_survey([]))
 
 
 if __name__ == "__main__":
