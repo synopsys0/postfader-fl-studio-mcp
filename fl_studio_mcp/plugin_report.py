@@ -22,6 +22,7 @@ from typing import Any, Literal, Protocol
 
 from . import __version__
 from .plugin_profile import PluginProfile, markdown_text, summarise
+from .readonly_inspector import connection_from_ping
 
 
 PluginFormat = Literal["native", "VST", "VST3", "AU", "unknown"]
@@ -433,8 +434,22 @@ def validate_representative_write(
         )
 
     ping = _object(client.ping(), "handshake")
-    if ping.get("verified_writes_enabled") is not True:
+    connection = connection_from_ping(ping, "unknown")
+    if not connection.connected or not connection.compatible:
+        raise ValueError(
+            connection.error or connection.compatibility_reason
+        )
+    if not connection.verified_writes_enabled:
         raise ValueError("the running FL bridge has verified writes disabled")
+    if not connection.bridge_provenance_verified:
+        raise ValueError(
+            "representative write validation refuses an unverified bridge "
+            f"({connection.bridge_provenance}); reinstall and reload it first"
+        )
+    if connection.session_fingerprint is None:
+        raise ValueError(
+            "representative write validation requires a valid bridge session fingerprint"
+        )
     state = _object(client.call("project.info"), "project state")
     if state.get("playing") not in (False, 0):
         raise ValueError("write validation refuses while FL Studio is playing")
@@ -466,6 +481,11 @@ def validate_representative_write(
                 slot=slot,
                 index=parameter_index,
                 value=target,
+                session_fingerprint=connection.session_fingerprint,
+                expected_before={
+                    "normalized_value": original,
+                    "display_text": original_display,
+                },
             ), "write result")
         except (OSError, RuntimeError, TimeoutError, ValueError):
             move_error = True
@@ -479,6 +499,7 @@ def validate_representative_write(
                 slot=slot,
                 index=parameter_index,
                 value=original,
+                session_fingerprint=connection.session_fingerprint,
             ), "restore result")
         except (OSError, RuntimeError, TimeoutError, ValueError):
             restore_error = True

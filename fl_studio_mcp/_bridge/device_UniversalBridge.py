@@ -30,9 +30,12 @@ Protocol: JSON request/response.
 """
 
 import json
+import hashlib
+import math
 import socket
 import os
 import select
+import time
 import traceback
 import types
 
@@ -64,6 +67,7 @@ MAX_CLIENTS = 4
 TRACKS_PER_TICK = 12
 MIXER_SLOTS = 10
 PARAMS_PER_TICK = 64
+CHANNELS_PER_TICK = 8
 # Every plug-in parameter write passes this. FL's default pickup behaviour can
 # put a control into "waiting for pickup", after which it silently refuses
 # further scripted writes. Disabling pickup makes repeated write/readback
@@ -145,10 +149,18 @@ PROTOCOL_VERSION = 2
 # Do not edit the marker text; scripts/install.sh matches it exactly.
 BRIDGE_SOURCE_SHA256 = ""  # injected-by-install
 
-# The lean write surface: commands that each change exactly one thing and
-# then read FL back to say whether it actually moved. Off unless FL is launched
-# with this flag. Setting it never enables anything outside the ten verified
-# command names below.
+# Stable for exactly one loaded bridge lifetime and intentionally unrelated to
+# project names or host identity. A caller can pass it back with a write to
+# refuse if FL reloaded the script between observation and mutation.
+SESSION_FINGERPRINT = "%016x%016x" % (
+    os.getpid() & 0xFFFFFFFFFFFFFFFF,
+    time.time_ns() & 0xFFFFFFFFFFFFFFFF,
+)
+
+# The bounded mutation surface: persistent commands read FL back after a later
+# idle tick, while live-note dispatch reports only note-on/note-off delivery.
+# It is off unless FL is launched with this flag. Setting it never enables
+# anything outside the twenty explicit command names below.
 LEAN_WRITES_ENABLED = (
     os.environ.get("FL_BRIDGE_ENABLE_WRITES", "").strip() == "1"
 )
@@ -163,6 +175,7 @@ READ_ONLY_COMMANDS = frozenset({
     # padding rule and writes nothing.
     "plugin.scan_params",
     "channels.list",
+    "sequencer.get",
 })
 LEAN_WRITE_COMMANDS = frozenset({
     "mixer.set_volume",
@@ -175,10 +188,23 @@ LEAN_WRITE_COMMANDS = frozenset({
     "plugin.set_param",
     "plugin.set_param_display",
     "plugin.set_param_option",
+    "transport.set_playing",
+    "transport.stop",
+    "transport.set_song_position",
+    "transport.set_loop_mode",
+    "transport.set_tempo",
+    "channel.set_mix",
+    "channel.set_identity",
+    "channel.route_to_mixer",
+    "sequencer.set",
+    "channel.trigger_note",
 })
 
 MAX_PENDING_JOBS = 32
 _jobs = []     # list of _Job, chunked commands still running
+NOTE_TICK_MS = 20
+_idle_tick = 0
+_active_notes = []  # notes whose note-on reached FL and still need note-off
 
 # Where the file transport exchanges messages. Both sides derive it the
 # same way; TMPDIR is per-application on macOS so it cannot be used here.
@@ -258,15 +284,50 @@ def _bpm():
     FL reports tempo scaled by 1000 (140 BPM -> 140000). Scale defensively so
     this stays correct if a future build reports plain BPM.
     """
-    raw = _safe(lambda: mixer.getCurrentTempo(), None)
+    raw = _safe(lambda: mixer.getCurrentTempo(False), None)
     if raw is None:
         return None
     return round(raw / 1000.0, 4) if raw > 1000 else round(raw, 4)
 
 
+def _strict_integer(value, label):
+    """Return a JSON integer without accepting booleans, floats, or strings."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("%s must be an integer" % label)
+    return value
+
+
+def _fl_color_word(value):
+    """Canonical unsigned spelling of FL's signed/unsigned 32-bit color."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    if value < -(1 << 31) or value > 0xFFFFFFFF:
+        return None
+    return value & 0xFFFFFFFF
+
+
+def _fl_color_argument(value):
+    """Convert a public unsigned color word to FL's signed Python integer."""
+    word = _fl_color_word(value)
+    if word is None or value < 0:
+        raise ValueError("color must be an integer within 0..4294967295")
+    return word - (1 << 32) if word >= (1 << 31) else word
+
+
+def _fl_colors_equivalent(left, right):
+    """Compare the controllable 0x00BBGGRR bits; FL owns the high byte."""
+    left_word = _fl_color_word(left)
+    right_word = _fl_color_word(right)
+    return (
+        left_word is not None
+        and right_word is not None
+        and (left_word & 0x00FFFFFF) == (right_word & 0x00FFFFFF)
+    )
+
+
 def _mixer_track_index(value):
     """Return a valid live mixer index, never a fabricated empty track."""
-    index = int(value)
+    index = _strict_integer(value, "mixer track index")
     count = int(mixer.trackCount())
     if index < 0 or index >= count:
         raise ValueError(
@@ -278,21 +339,30 @@ def _mixer_track_index(value):
 
 def _effect_slot_index(value):
     """Return a valid zero-based mixer effect slot index."""
-    slot = int(value)
+    slot = _strict_integer(value, "effect slot index")
     if slot < 0 or slot >= MIXER_SLOTS:
         raise ValueError("effect slot index must be 0..%d" % (MIXER_SLOTS - 1))
     return slot
 
 
-def _plugin_summary(track, slot):
-    if not _safe(lambda: plugins.isValid(track, slot), False):
+def _plugin_summary(track, slot, use_global_index=False):
+    if not _safe(lambda: plugins.isValid(track, slot, use_global_index), False):
         return None
     return {
         "slot": slot,
-        "name": _safe(lambda: plugins.getPluginName(track, slot), ""),
-        "user_name": _safe(lambda: plugins.getPluginName(track, slot, True), ""),
-        "param_count": _safe(lambda: plugins.getParamCount(track, slot), 0),
-        "mix_level": _safe(lambda: mixer.getPluginMixLevel(track, slot), None),
+        "name": _safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global_index), ""
+        ),
+        "user_name": _safe(
+            lambda: plugins.getPluginName(track, slot, True, use_global_index), ""
+        ),
+        "param_count": _safe(
+            lambda: plugins.getParamCount(track, slot, use_global_index), 0
+        ),
+        "mix_level": None if use_global_index else _safe(
+            lambda: mixer.getPluginMixLevel(track, slot), None
+        ),
+        "use_global_index": bool(use_global_index),
     }
 
 
@@ -355,12 +425,24 @@ def _is_padding(name, display):
     return (display or "").strip() in ("", "0", "0.0000000", "0.000000")
 
 
-def _param_state(track, slot, idx):
-    return (_safe(lambda: plugins.getParamValue(idx, track, slot), None),
-            _safe(lambda: plugins.getParamValueString(idx, track, slot), "") or "")
+def _param_state(track, slot, idx, use_global_index=False):
+    return (
+        _safe(
+            lambda: plugins.getParamValue(
+                idx, track, slot, use_global_index
+            ), None
+        ),
+        _safe(
+            lambda: plugins.getParamValueString(
+                idx, track, slot, use_global_index
+            ), ""
+        ) or "",
+    )
 
 
-def _set_param_verified(track, slot, idx, value, attempts=4):
+def _set_param_verified(
+    track, slot, idx, value, attempts=4, use_global_index=False
+):
     """Write a plugin parameter and confirm it actually landed.
 
     Two observed FL behaviours make a naive write unreliable:
@@ -377,15 +459,19 @@ def _set_param_verified(track, slot, idx, value, attempts=4):
     # Never skip the write because getParamValue claims the value is already
     # correct: that readback is precisely what cannot be trusted. Writing an
     # unchanged value is harmless, so always write and judge by what moves.
-    before_v, before_d = _param_state(track, slot, idx)
+    before_v, before_d = _param_state(track, slot, idx, use_global_index)
 
     cur_v, cur_d = before_v, before_d
     for _ in range(attempts):
         # Always issue two writes: FL drops a lone one, and the second is
         # guaranteed to be a repeat of the same parameter.
-        plugins.setParamValue(value, idx, track, slot, PICKUP_NONE)
-        plugins.setParamValue(value, idx, track, slot, PICKUP_NONE)
-        cur_v, cur_d = _param_state(track, slot, idx)
+        plugins.setParamValue(
+            value, idx, track, slot, PICKUP_NONE, use_global_index
+        )
+        plugins.setParamValue(
+            value, idx, track, slot, PICKUP_NONE, use_global_index
+        )
+        cur_v, cur_d = _param_state(track, slot, idx, use_global_index)
         # Check the display first. getParamValue can report a stale number
         # that happens to equal the target, which would look like success on
         # a write that never happened.
@@ -435,7 +521,7 @@ def cmd_ping(a):
     if LEAN_WRITES_ENABLED:
         # The name read-only tooling already looks for. A bridge that can write
         # must never present itself as read-only, even though the surface is
-        # ten verified commands.
+        # the explicit, readback-oriented mutation commands.
         bridge_mode = "write_test"
     else:
         bridge_mode = "read_only"
@@ -452,6 +538,7 @@ def cmd_ping(a):
         "bridge_mode": bridge_mode,
         # Lets a client detect that FL is running an outdated installed copy.
         "bridge_source_sha256": BRIDGE_SOURCE_SHA256,
+        "session_fingerprint": SESSION_FINGERPRINT,
         "program_title": _safe(lambda: ui.getProgTitle(), ""),
     }
 
@@ -623,12 +710,80 @@ def cmd_mixer_eq_get(a):
     return {"track": i, "band_count": n, "bands": bands}
 
 
+def _plugin_target(a, writing=False):
+    kind = a.get("target_kind", "mixer_effect")
+    if kind == "legacy":
+        kind = "mixer_effect"
+    if kind == "mixer_effect":
+        if a.get("use_global_index", False) is not False:
+            raise ValueError("mixer_effect targets require use_global_index=false")
+        if "channel" in a:
+            raise ValueError(
+                "mixer_effect targets use track and slot, never channel"
+            )
+        track = _lean_track(a) if writing else _mixer_track_index(a["track"])
+        slot = _effect_slot_index(a.get("slot", -1))
+        return {
+            "target_kind": "mixer_effect",
+            "index": track,
+            "track": track,
+            "slot": slot,
+            "use_global_index": False,
+        }
+    if kind == "channel_generator":
+        if a.get("use_global_index") is not True:
+            raise ValueError(
+                "channel_generator targets require use_global_index=true"
+            )
+        if "track" in a:
+            raise ValueError(
+                "channel_generator targets use channel, never mixer track"
+        )
+        _require_global_scope(a)
+        channel = _channel_index(a.get("channel"))
+        if "slot" in a:
+            generator_slot = a["slot"]
+            if (
+                isinstance(generator_slot, bool)
+                or not isinstance(generator_slot, int)
+                or generator_slot != -1
+            ):
+                raise ValueError("channel_generator targets require integer slot=-1")
+        return {
+            "target_kind": "channel_generator",
+            "index": channel,
+            "channel": channel,
+            "slot": -1,
+            "use_global_index": True,
+            "index_scope": "global",
+        }
+    raise ValueError(
+        "target_kind must be 'mixer_effect' or 'channel_generator'"
+    )
+
+
+def _plugin_target_report(target):
+    report = {
+        "target_kind": target["target_kind"],
+        "slot": target["slot"],
+        "use_global_index": target["use_global_index"],
+    }
+    if target["target_kind"] == "channel_generator":
+        report["channel"] = target["channel"]
+        report["index_scope"] = "global"
+    else:
+        report["track"] = target["track"]
+    return report
+
+
 def cmd_plugin_params(a):
-    track = _mixer_track_index(a["track"])
-    slot = _effect_slot_index(a.get("slot", -1))
-    if not _safe(lambda: plugins.isValid(track, slot), False):
-        raise ValueError("no plugin at track %d slot %d" % (track, slot))
-    count = plugins.getParamCount(track, slot)
+    target = _plugin_target(a)
+    track = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(track, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    count = plugins.getParamCount(track, slot, use_global)
     limit = int(a.get("limit", 128))
     offset = int(a.get("offset", 0))
     if limit < 1 or limit > MAX_PARAM_SCAN:
@@ -640,8 +795,12 @@ def cmd_plugin_params(a):
     params = []
     padding = 0
     for p in range(offset, min(count, offset + limit)):
-        pname = _safe(lambda: plugins.getParamName(p, track, slot), "") or ""
-        pdisp = _safe(lambda: plugins.getParamValueString(p, track, slot), "") or ""
+        pname = _safe(
+            lambda: plugins.getParamName(p, track, slot, use_global), ""
+        ) or ""
+        pdisp = _safe(
+            lambda: plugins.getParamValueString(p, track, slot, use_global), ""
+        ) or ""
         if skip_padding and _is_padding(pname, pdisp):
             padding += 1
         elif name_filter and name_filter not in pname.lower():
@@ -651,7 +810,9 @@ def cmd_plugin_params(a):
                 {
                     "index": p,
                     "name": pname,
-                    "value": _safe(lambda: plugins.getParamValue(p, track, slot), None),
+                    "value": _safe(
+                        lambda: plugins.getParamValue(p, track, slot, use_global), None
+                    ),
                     "display": pdisp,
                 }
             )
@@ -662,9 +823,11 @@ def cmd_plugin_params(a):
         if (p - offset + 1) % PARAMS_PER_TICK == 0:
             yield
     return {
-        "track": track,
-        "slot": slot,
-        "plugin": _safe(lambda: plugins.getPluginName(track, slot), ""),
+        "command": "plugin.params",
+        **_plugin_target_report(target),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), ""
+        ),
         "param_count": count,
         "returned": len(params),
         "padding_skipped": padding,
@@ -707,13 +870,17 @@ def cmd_plugin_scan_params(a):
     A read. It calls nothing that changes FL, which is why it sits in
     READ_ONLY_COMMANDS next to plugin.params and needs no write flag.
     """
-    track = _mixer_track_index(a["track"])
-    slot = _effect_slot_index(a.get("slot", -1))
-    if not _safe(lambda: plugins.isValid(track, slot), False):
-        raise ValueError("no plugin at track %d slot %d" % (track, slot))
+    target = _plugin_target(a)
+    track = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(track, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
     # What FL claims. For a VST this is a padded maximum and never a count of
     # the parameters that exist, which is the whole reason this command exists.
-    reported_count = int(_safe(lambda: plugins.getParamCount(track, slot), 0) or 0)
+    reported_count = int(
+        _safe(lambda: plugins.getParamCount(track, slot, use_global), 0) or 0
+    )
 
     start = int(a.get("start", 0))
     if start < 0:
@@ -748,9 +915,12 @@ def cmd_plugin_scan_params(a):
         if examined >= max_indices:
             stopped_by = "max_indices"
             break
-        pname = _safe(lambda: plugins.getParamName(p, track, slot), "") or ""
+        pname = _safe(
+            lambda: plugins.getParamName(p, track, slot, use_global), ""
+        ) or ""
         pdisp = _safe(
-            lambda: plugins.getParamValueString(p, track, slot), "") or ""
+            lambda: plugins.getParamValueString(p, track, slot, use_global), ""
+        ) or ""
         examined += 1
         highest = p
         if _is_padding(pname, pdisp):
@@ -761,7 +931,8 @@ def cmd_plugin_scan_params(a):
                     "index": p,
                     "name": pname,
                     "value": _safe(
-                        lambda: plugins.getParamValue(p, track, slot), None),
+                        lambda: plugins.getParamValue(p, track, slot, use_global), None
+                    ),
                     "display": pdisp,
                 }
             )
@@ -785,9 +956,10 @@ def cmd_plugin_scan_params(a):
 
     return {
         "command": "plugin.scan_params",
-        "track": track,
-        "slot": slot,
-        "plugin": _safe(lambda: plugins.getPluginName(track, slot), ""),
+        **_plugin_target_report(target),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), ""
+        ),
         "reported_count": reported_count,
         "scan_start": start,
         "scan_end": end,
@@ -801,33 +973,112 @@ def cmd_plugin_scan_params(a):
     }
 
 
+CHANNEL_TYPE_NAMES = {
+    0: "sampler",
+    1: "hybrid",
+    2: "generator_plugin",
+    3: "layer",
+    4: "audio_clip",
+    5: "automation_clip",
+}
+
+
+def _sha256_json(value):
+    encoded = json.dumps(
+        value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _channel_index(value):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("channel must be an integer global index")
+    index = value
+    count = int(channels.channelCount(True))
+    if index < 0 or index >= count:
+        raise ValueError(
+            "global channel index %d is outside the live range 0..%d"
+            % (index, max(0, count - 1))
+        )
+    return index
+
+
+def _require_global_scope(a):
+    if a.get("index_scope") != "global":
+        raise ValueError(
+            "channel commands require explicit index_scope='global'; grouped "
+            "or implicit indices are not accepted"
+        )
+
+
+def _channel_summary(i):
+    name = _safe(lambda: channels.getChannelName(i, True), "") or ""
+    type_code = _safe(lambda: channels.getChannelType(i, True), None)
+    color = _fl_color_word(
+        _safe(lambda: channels.getChannelColor(i, True), None)
+    )
+    destination = _safe(lambda: channels.getTargetFxTrack(i, True), None)
+    plugin_name = _safe(lambda: plugins.getPluginName(i, -1, False, True), "") or ""
+    param_count = _safe(lambda: plugins.getParamCount(i, -1, True), None)
+    material = {
+        "channel_index": i,
+        "channel_type_code": type_code,
+        "color": color,
+        "generator_name": plugin_name or None,
+        "mixer_destination": destination,
+        "name": name,
+        "scope": "global",
+    }
+    muted = _safe(lambda: channels.isChannelMuted(i, True), None)
+    solo = _safe(lambda: channels.isChannelSolo(i, True), None)
+    selected = _safe(lambda: channels.isChannelSelected(i, True), None)
+    return {
+        "index": i,
+        "index_scope": "global",
+        "name": name,
+        "volume": _safe(lambda: channels.getChannelVolume(i, 0, True), None),
+        "pan": _safe(lambda: channels.getChannelPan(i, True), None),
+        "muted": None if muted is None else bool(muted),
+        "solo": None if solo is None else bool(solo),
+        "selected": None if selected is None else bool(selected),
+        "type": type_code,
+        "type_name": CHANNEL_TYPE_NAMES.get(type_code, "unknown"),
+        "mixer_track": destination,
+        "color": color,
+        "plugin": plugin_name,
+        "reported_parameter_count": param_count,
+        "channel_fingerprint": _sha256_json(material),
+    }
+
+
 def cmd_channels_list(a):
-    n = channels.channelCount()
+    if a and set(a) - {"global_count"}:
+        raise ValueError("channels.list accepts only global_count=true")
+    if a.get("global_count", True) is not True:
+        raise ValueError("channels.list exposes global channel indices only")
+    n = channels.channelCount(True)
     out = []
     for i in range(n):
-        out.append(
-            {
-                "index": i,
-                "name": _safe(lambda: channels.getChannelName(i), ""),
-                "volume": _safe(lambda: channels.getChannelVolume(i), None),
-                "pan": _safe(lambda: channels.getChannelPan(i), None),
-                "muted": _safe(lambda: channels.isChannelMuted(i), None),
-                "solo": _safe(lambda: channels.isChannelSolo(i), None),
-                "selected": _safe(lambda: channels.isChannelSelected(i), None),
-                "type": _safe(lambda: channels.getChannelType(i), None),
-                "mixer_track": _safe(lambda: channels.getTargetFxTrack(i), None),
-                "color": _safe(lambda: channels.getChannelColor(i), None),
-                "plugin": _safe(lambda: plugins.getPluginName(i), ""),
-            }
-        )
-    return {"channel_count": n, "channels": out}
+        out.append(_channel_summary(i))
+        # A channel summary makes roughly ten FL API calls. Large racks must
+        # not perform all of those synchronously inside one UI-thread callback.
+        if (i + 1) % CHANNELS_PER_TICK == 0 and i + 1 < n:
+            yield
+    return {
+        "command": "channels.list",
+        "channel_count": n,
+        "partial": False,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+        "channels": out,
+    }
 
 
 # ---------------------------------------------------------------------------
 # lean verified write surface (FL_BRIDGE_ENABLE_WRITES=1)
 #
-# Ten commands, each changing one narrowly scoped property and then reading
-# FL back to say what actually happened. Shared rules:
+# Bounded commands, each changing one narrowly scoped state or dispatching one
+# live note. Persistent changes read FL back to say what actually happened.
+# Shared rules:
 #
 # * Track 0 is the master bus and is refused unless the caller passes
 #   allow_master=True. Nothing here decides on its own that the master is what
@@ -858,7 +1109,10 @@ WRITE_ATTEMPTS = 2
 def _lean_track(a):
     """Resolve the target mixer track, refusing the master bus by default."""
     index = _mixer_track_index(a["track"])
-    if index == 0 and not bool(a.get("allow_master", False)):
+    allow_master = a.get("allow_master", False)
+    if type(allow_master) is not bool:
+        raise ValueError("allow_master must be true or false")
+    if index == 0 and not allow_master:
         raise ValueError(
             "refusing to write to mixer track 0 (master); pass "
             "allow_master=true to target the master bus deliberately"
@@ -870,11 +1124,48 @@ def _lean_value(a, key, low, high):
     value = a.get(key)
     if value is None:
         raise ValueError("%s is required" % key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("%s must be a number" % key)
     value = float(value)
+    if not math.isfinite(value):
+        raise ValueError("%s must be a finite number" % key)
     if value < low or value > high:
         raise ValueError(
             "%s must be within %g..%g (got %r)" % (key, low, high, value)
         )
+    return value
+
+
+def _lean_bool(a, key):
+    value = a.get(key)
+    if type(value) is not bool:
+        raise ValueError("%s is required and must be true or false" % key)
+    return value
+
+
+def _lean_finite_number(a, key, low=None, high=None):
+    value = a.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("%s is required and must be a number" % key)
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("%s must be a finite number" % key)
+    if low is not None and number < low:
+        raise ValueError("%s must be at least %g" % (key, low))
+    if high is not None and number > high:
+        raise ValueError("%s must be at most %g" % (key, high))
+    return number
+
+
+def _lean_parameter_selector(a):
+    value = a.get("param")
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise ValueError("param is required and must be an integer index or text")
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError("parameter index must be 0 or greater")
+    elif not value.strip():
+        raise ValueError("parameter name to resolve must not be empty")
     return value
 
 
@@ -885,6 +1176,144 @@ def _near(value, target, tol):
         return abs(float(value) - float(target)) <= tol
     except (TypeError, ValueError):
         return False
+
+
+def _check_session_precondition(a):
+    """Refuse a write observed against a different loaded bridge session."""
+    if "session_fingerprint" not in a or a.get("session_fingerprint") is None:
+        return
+    expected = a.get("session_fingerprint")
+    if not isinstance(expected, str) or expected != SESSION_FINGERPRINT:
+        raise ValueError(
+            "session precondition failed: the bridge was reloaded or the "
+            "fingerprint is invalid; re-read the project before writing"
+        )
+
+
+def _expected_before(a):
+    """Return (present, value) without confusing an omitted guard with null."""
+    return "expected_before" in a and a.get("expected_before") is not None, a.get(
+        "expected_before"
+    )
+
+
+def _expect_number(a, actual, label, tol=MIXER_READBACK_TOLERANCE):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if isinstance(expected, bool) or not isinstance(expected, (int, float)):
+        raise ValueError("expected_before for %s must be a number" % label)
+    if not math.isfinite(float(expected)):
+        raise ValueError("expected_before for %s must be finite" % label)
+    if not _near(actual, expected, tol):
+        raise ValueError(
+            "expected_before precondition failed for %s: expected %r, found %r; "
+            "nothing was changed" % (label, expected, actual)
+        )
+
+
+def _expect_bool(a, actual, label):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if type(expected) is not bool:
+        raise ValueError("expected_before for %s must be true or false" % label)
+    if actual is None or bool(actual) != expected:
+        raise ValueError(
+            "expected_before precondition failed for %s: expected %r, found %r; "
+            "nothing was changed" % (label, expected, actual)
+        )
+
+
+def _expect_text(a, actual, label):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if not isinstance(expected, str):
+        raise ValueError("expected_before for %s must be text" % label)
+    if actual != expected:
+        raise ValueError(
+            "expected_before precondition failed for %s: expected %r, found %r; "
+            "nothing was changed" % (label, expected, actual)
+        )
+
+
+def _expect_eq(a, actual):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if not isinstance(expected, dict):
+        raise ValueError("expected_before for an EQ band must be an object")
+    allowed = {"gain_normalized", "frequency_normalized"}
+    unknown = set(expected) - allowed
+    supplied = [key for key in allowed if expected.get(key) is not None]
+    if unknown or not supplied:
+        raise ValueError(
+            "expected_before for an EQ band accepts gain_normalized and/or "
+            "frequency_normalized only"
+        )
+    checks = (
+        ("gain_normalized", "gain"),
+        ("frequency_normalized", "freq"),
+    )
+    for public, raw in checks:
+        if public not in expected or expected[public] is None:
+            continue
+        value = expected[public]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ValueError("expected_before.%s must be a number" % public)
+        if not math.isfinite(float(value)):
+            raise ValueError("expected_before.%s must be finite" % public)
+        if not _near(actual.get(raw), value, MIXER_READBACK_TOLERANCE):
+            raise ValueError(
+                "expected_before precondition failed for EQ %s: expected %r, "
+                "found %r; nothing was changed"
+                % (public, value, actual.get(raw))
+            )
+
+
+def _expect_plugin(a, value, display):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if not isinstance(expected, dict):
+        raise ValueError("expected_before for a plug-in parameter must be an object")
+    allowed = {"normalized_value", "display_text"}
+    unknown = set(expected) - allowed
+    supplied = [key for key in allowed if expected.get(key) is not None]
+    if unknown or not supplied:
+        raise ValueError(
+            "expected_before for a plug-in parameter accepts normalized_value "
+            "and/or display_text only"
+        )
+    if expected.get("normalized_value") is not None:
+        wanted = expected["normalized_value"]
+        if isinstance(wanted, bool) or not isinstance(wanted, (int, float)):
+            raise ValueError("expected_before.normalized_value must be a number")
+        if not math.isfinite(float(wanted)):
+            raise ValueError("expected_before.normalized_value must be finite")
+        if not _near(value, wanted, PARAM_NOOP_TOLERANCE):
+            raise ValueError(
+                "expected_before precondition failed for plug-in normalized_value: "
+                "expected %r, found %r; nothing was changed" % (wanted, value)
+            )
+    if expected.get("display_text") is not None:
+        wanted = expected["display_text"]
+        if not isinstance(wanted, str):
+            raise ValueError("expected_before.display_text must be text")
+        if display != wanted:
+            raise ValueError(
+                "expected_before precondition failed for plug-in display_text: "
+                "expected %r, found %r; nothing was changed" % (wanted, display)
+            )
+
+
+def _precondition_report(a):
+    return {
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "expected_before_applied": a.get("expected_before") is not None,
+    }
 
 
 def _write_and_read_back(write, read, matches, attempts=WRITE_ATTEMPTS):
@@ -923,8 +1352,10 @@ def cmd_mixer_set_volume(a):
     """Set one mixer fader, normalised 0..1 (0.8 is FL's 0 dB default)."""
     i = _lean_track(a)
     value = _lean_value(a, "value", 0.0, 1.0)
+    _check_session_precondition(a)
     before = _safe(lambda: mixer.getTrackVolume(i), None)
     before_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+    _expect_number(a, before, "mixer volume")
     undone = _save_undo("Universal Bridge: volume track %d" % i)
     after, verified = yield from _write_and_read_back(
         lambda: mixer.setTrackVolume(i, value),
@@ -941,6 +1372,7 @@ def cmd_mixer_set_volume(a):
         "before_db": before_db,
         "after_db": _safe(lambda: mixer.getTrackVolume(i, 1), None),
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -948,7 +1380,9 @@ def cmd_mixer_set_pan(a):
     """Set one mixer pan, -1.0 hard left to 1.0 hard right."""
     i = _lean_track(a)
     value = _lean_value(a, "value", -1.0, 1.0)
+    _check_session_precondition(a)
     before = _safe(lambda: mixer.getTrackPan(i), None)
+    _expect_number(a, before, "mixer pan")
     undone = _save_undo("Universal Bridge: pan track %d" % i)
     after, verified = yield from _write_and_read_back(
         lambda: mixer.setTrackPan(i, value),
@@ -963,16 +1397,17 @@ def cmd_mixer_set_pan(a):
         "before": before,
         "after": after,
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
 def cmd_mixer_set_mute(a):
     """Mute or unmute one mixer track. Never a toggle: state is stated."""
     i = _lean_track(a)
-    if a.get("muted") is None:
-        raise ValueError("muted is required (true or false)")
-    want = bool(a["muted"])
+    want = _lean_bool(a, "muted")
+    _check_session_precondition(a)
     before = _safe(lambda: mixer.isTrackMuted(i), None)
+    _expect_bool(a, before, "mixer mute state")
     undone = _save_undo("Universal Bridge: mute track %d" % i)
     after, verified = yield from _write_and_read_back(
         # muteTrack toggles when its value argument is left at -1, so the
@@ -989,6 +1424,7 @@ def cmd_mixer_set_mute(a):
         "before": None if before is None else bool(before),
         "after": None if after is None else bool(after),
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -999,7 +1435,7 @@ def cmd_mixer_set_eq(a):
     them so the caller can see what those normalised numbers mean.
     """
     i = _lean_track(a)
-    band = int(a["band"])
+    band = _strict_integer(a.get("band"), "eq band")
     band_count = _safe(lambda: mixer.getEqBandCount(), 3) or 3
     if band < 0 or band >= band_count:
         raise ValueError("eq band must be 0..%d" % (band_count - 1))
@@ -1011,7 +1447,9 @@ def cmd_mixer_set_eq(a):
     if not requested:
         raise ValueError("mixer.set_eq needs gain, freq, or both")
 
+    _check_session_precondition(a)
     before = _eq_band_state(i, band)
+    _expect_eq(a, before)
     undone = _save_undo("Universal Bridge: EQ band %d track %d" % (band, i))
     fields = {}
     if "gain" in requested:
@@ -1038,6 +1476,7 @@ def cmd_mixer_set_eq(a):
         "after": _eq_band_state(i, band),
         "verified": all(fields.values()),
         "verified_fields": fields,
+        **_precondition_report(a),
     }
 
 
@@ -1064,32 +1503,44 @@ def cmd_plugin_set_param(a):
     alter the displayed text and too small to show in the readback therefore
     reports verified=false, which is the right direction to be wrong in.
     """
-    i = _lean_track(a)
-    slot = _effect_slot_index(a.get("slot", -1))
-    if not _safe(lambda: plugins.isValid(i, slot), False):
-        raise ValueError("no plugin at track %d slot %d" % (i, slot))
-    index = int(a["index"])
+    target = _plugin_target(a, writing=True)
+    i = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(i, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    index = _strict_integer(a.get("index"), "parameter index")
     # FL pads VST parameter lists out to a fixed size, so getParamCount is an
     # upper bound and never a count of the parameters that really exist. It is
     # used here only to reject an index FL could not address at all.
-    reported_count = _safe(lambda: plugins.getParamCount(i, slot), 0) or 0
+    reported_count = _safe(
+        lambda: plugins.getParamCount(i, slot, use_global), 0
+    ) or 0
     if index < 0 or (reported_count and index >= reported_count):
         raise ValueError(
-            "parameter index %d is outside the 0..%d FL reports for track %d "
-            "slot %d" % (index, max(0, reported_count - 1), i, slot)
+            "parameter index %d is outside the 0..%d FL reports for this "
+            "%s target" % (index, max(0, reported_count - 1), target["target_kind"])
         )
     value = _lean_value(a, "value", 0.0, 1.0)
 
-    before_value, before_display = _param_state(i, slot, index)
+    _check_session_precondition(a)
+    if _expected_before(a)[0]:
+        # Some plug-ins lag getParamValue/getParamValueString by one idle
+        # callback. Settle before treating a read as a concurrency guard.
+        yield
+    before_value, before_display = _param_state(i, slot, index, use_global)
+    _expect_plugin(a, before_value, before_display)
     undone = _save_undo(
         "Universal Bridge: %s param %d"
-        % (_safe(lambda: plugins.getPluginName(i, slot), "plugin"), index)
+        % (_safe(
+            lambda: plugins.getPluginName(i, slot, False, use_global), "plugin"
+        ), index)
     )
     # The helper's own verdict is not taken: it decides from the numbers it
     # happened to read last. This handler judges from the before and after it
     # captured itself.
     after_value, after_display, _helper_verdict = _set_param_verified(
-        i, slot, index, value
+        i, slot, index, value, use_global_index=use_global
     )
     # Same staleness as the mixer controls: the display string read in the
     # write's own tick lags by a whole operation. Observed live -- restoring a
@@ -1097,7 +1548,7 @@ def cmd_plugin_set_param(a):
     # the value set just before it. Give FL a tick, then re-read, so
     # display_changed describes this write rather than the previous one.
     yield
-    after_value, after_display = _param_state(i, slot, index)
+    after_value, after_display = _param_state(i, slot, index, use_global)
     display_changed = after_display != before_display
     reads_at_value = _near(after_value, value, PARAM_NOOP_TOLERANCE)
     # There are three outcomes here, not two, and collapsing them into one
@@ -1114,11 +1565,14 @@ def cmd_plugin_set_param(a):
     return {
         "command": "plugin.set_param",
         "undo_point_created": undone,
-        "track": i,
-        "slot": slot,
+        **_plugin_target_report(target),
         "index": index,
-        "plugin": _safe(lambda: plugins.getPluginName(i, slot), ""),
-        "name": _safe(lambda: plugins.getParamName(index, i, slot), ""),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(i, slot, False, use_global), ""
+        ),
+        "name": _safe(
+            lambda: plugins.getParamName(index, i, slot, use_global), ""
+        ),
         "requested": value,
         "before": {"value": before_value, "display": before_display},
         "after": {"value": after_value, "display": after_display},
@@ -1126,6 +1580,7 @@ def cmd_plugin_set_param(a):
         "verification_basis": basis,
         "display_changed": display_changed,
         "reads_at_value": reads_at_value,
+        **_precondition_report(a),
     }
 
 
@@ -1139,8 +1594,12 @@ def cmd_mixer_set_name(a):
     i = _lean_track(a)
     if a.get("name") is None:
         raise ValueError("name is required (pass \"\" to restore the default)")
-    want = str(a["name"])
+    if not isinstance(a.get("name"), str):
+        raise ValueError("name must be text")
+    want = a["name"]
+    _check_session_precondition(a)
     before = _safe(lambda: mixer.getTrackName(i), None)
+    _expect_text(a, before, "mixer track name")
     undone = _save_undo("Universal Bridge: name track %d" % i)
     after, verified = yield from _write_and_read_back(
         lambda: mixer.setTrackName(i, want),
@@ -1158,6 +1617,7 @@ def cmd_mixer_set_name(a):
         "after": after,
         "restored_default": want == "",
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -1177,10 +1637,10 @@ def cmd_mixer_set_send(a):
     """
     i = _lean_track(a)
     dest = _send_destination(a, i)
-    if a.get("enabled") is None:
-        raise ValueError("enabled is required (true or false)")
-    want = bool(a["enabled"])
+    want = _lean_bool(a, "enabled")
+    _check_session_precondition(a)
     before = _safe(lambda: mixer.getRouteSendActive(i, dest), None)
+    _expect_bool(a, before, "mixer send state")
     undone = _save_undo("Universal Bridge: route track %d to %d" % (i, dest))
 
     def write():
@@ -1207,6 +1667,7 @@ def cmd_mixer_set_send(a):
         # down rather than a fabricated zero.
         "level": _safe(lambda: mixer.getRouteToLevel(i, dest), None),
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -1225,12 +1686,14 @@ def cmd_mixer_set_send_level(a):
     i = _lean_track(a)
     dest = _send_destination(a, i)
     value = _lean_value(a, "value", 0.0, 1.0)
+    _check_session_precondition(a)
     if not _safe(lambda: mixer.getRouteSendActive(i, dest), False):
         raise ValueError(
             "track %d does not send to track %d, so its level cannot be set; "
             "create the route first with mixer.set_send" % (i, dest)
         )
     before = _safe(lambda: mixer.getRouteToLevel(i, dest), None)
+    _expect_number(a, before, "mixer send level")
     undone = _save_undo("Universal Bridge: send level track %d to %d" % (i, dest))
     after, verified = yield from _write_and_read_back(
         lambda: mixer.setRouteToLevel(i, dest, value),
@@ -1248,6 +1711,7 @@ def cmd_mixer_set_send_level(a):
         "after": after,
         "send_active": None if active is None else bool(active),
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -1258,9 +1722,36 @@ def cmd_mixer_set_send_level(a):
 # That sample is narrow: a plug-in that leaves a wider gap loses whatever sits
 # past it. See docs/plugin-support.md before trusting this on an untested VST.
 PARAM_SEARCH_RUN = 256
+PARAM_AMBIGUITY_LIMIT = 8
 
 
-def _resolve_named_param(track, slot, query):
+def _one_parameter_match(query, matches, matched_on):
+    """Return one match or fail with a bounded, index-addressable list."""
+    unique = []
+    seen = set()
+    for index, label in matches:
+        if index not in seen:
+            seen.add(index)
+            unique.append((index, label))
+    if not unique:
+        return None
+    if len(unique) == 1:
+        index, text = unique[0]
+        return index, matched_on, text
+    shown = unique[:PARAM_AMBIGUITY_LIMIT]
+    candidates = ", ".join(
+        "%d (%r)" % (index, str(label)[:80]) for index, label in shown
+    )
+    if len(unique) > len(shown):
+        candidates += ", ... and %d more" % (len(unique) - len(shown))
+    raise ValueError(
+        "ambiguous parameter %r matched %d controls by %s: %s. Pass a "
+        "parameter index to disambiguate."
+        % (str(query)[:80], len(unique), matched_on, candidates)
+    )
+
+
+def _resolve_named_param(track, slot, query, use_global_index=False):
     """Find a parameter by name or by displayed value. A generator.
 
     A naive name-only search walks every index FL reports, which for a VST can
@@ -1285,15 +1776,23 @@ def _resolve_named_param(track, slot, query):
     if not wanted:
         raise ValueError("parameter name to resolve must not be empty")
 
-    reported = int(_safe(lambda: plugins.getParamCount(track, slot), 0) or 0)
+    reported = int(
+        _safe(
+            lambda: plugins.getParamCount(track, slot, use_global_index), 0
+        ) or 0
+    )
     limit = min(reported, MAX_PARAM_INDEX_SCAN)
     found = []          # (index, lowered name, lowered display)
     since_real = 0
     examined = 0
 
     for p in range(limit):
-        pname = _safe(lambda: plugins.getParamName(p, track, slot), "") or ""
-        pdisp = _safe(lambda: plugins.getParamValueString(p, track, slot), "") or ""
+        pname = _safe(
+            lambda: plugins.getParamName(p, track, slot, use_global_index), ""
+        ) or ""
+        pdisp = _safe(
+            lambda: plugins.getParamValueString(p, track, slot, use_global_index), ""
+        ) or ""
         examined += 1
         if _is_padding(pname, pdisp):
             since_real += 1
@@ -1307,18 +1806,29 @@ def _resolve_named_param(track, slot, query):
         if examined % PARAMS_PER_TICK == 0:
             yield
 
-    for index, pname, pdisp in found:
-        if pname == wanted:
-            return index, "name", pname
-    for index, pname, pdisp in found:
-        if pdisp == wanted:
-            return index, "display", pdisp
-    for index, pname, pdisp in found:
-        if pname and wanted in pname:
-            return index, "name_substring", pname
-    for index, pname, pdisp in found:
-        if pdisp and wanted in pdisp:
-            return index, "display_substring", pdisp
+    passes = (
+        ("name", [(i, name) for i, name, _display in found if name == wanted]),
+        (
+            "display",
+            [(i, display) for i, _name, display in found if display == wanted],
+        ),
+        (
+            "name_substring",
+            [(i, name) for i, name, _display in found if name and wanted in name],
+        ),
+        (
+            "display_substring",
+            [
+                (i, display)
+                for i, _name, display in found
+                if display and wanted in display
+            ],
+        ),
+    )
+    for matched_on, matches in passes:
+        match = _one_parameter_match(query, matches, matched_on)
+        if match is not None:
+            return match
 
     raise ValueError(
         "no parameter matching %r on track %d slot %d; searched %d indices "
@@ -1378,7 +1888,7 @@ def _solve_across_ticks(read, write, target, tol, iters=SOLVE_ITERATIONS):
     return best, final, best_err is not None and best_err <= tol
 
 
-def _sweep_options(track, slot, index, steps):
+def _sweep_options(track, slot, index, steps, use_global_index=False):
     """Walk a control across 0..1 and record what it displays. A generator.
 
     An enumerated control -- a musical Key or Scale, an input-type selector --
@@ -1394,11 +1904,17 @@ def _sweep_options(track, slot, index, steps):
     seen = []
     for step in range(steps):
         value = step / float(steps - 1) if steps > 1 else 0.0
-        plugins.setParamValue(value, index, track, slot, PICKUP_NONE)
-        plugins.setParamValue(value, index, track, slot, PICKUP_NONE)
+        plugins.setParamValue(
+            value, index, track, slot, PICKUP_NONE, use_global_index
+        )
+        plugins.setParamValue(
+            value, index, track, slot, PICKUP_NONE, use_global_index
+        )
         yield
         display = _safe(
-            lambda: plugins.getParamValueString(index, track, slot), "") or ""
+            lambda: plugins.getParamValueString(
+                index, track, slot, use_global_index
+            ), "") or ""
         seen.append((value, display.strip()))
     return seen
 
@@ -1443,32 +1959,53 @@ def cmd_plugin_set_param_option(a):
                       and then as a substring
         steps         sweep resolution, 2..256 (default 64)
     """
-    track = _lean_track(a)
-    slot = _effect_slot_index(a.get("slot", -1))
-    if not _safe(lambda: plugins.isValid(track, slot), False):
-        raise ValueError("no plugin at track %d slot %d" % (track, slot))
-    if a.get("param") is None:
-        raise ValueError("param is required (an index, a name, or a display)")
+    target_info = _plugin_target(a, writing=True)
+    track = target_info["index"]
+    slot = target_info["slot"]
+    use_global = target_info["use_global_index"]
+    if not _safe(lambda: plugins.isValid(track, slot, use_global), False):
+        raise ValueError(
+            "no plugin at requested %s target" % target_info["target_kind"]
+        )
+    parameter = _lean_parameter_selector(a)
     wanted = a.get("option")
-    if wanted is None or not str(wanted).strip():
+    if not isinstance(wanted, str) or not wanted.strip():
         raise ValueError("option is required (the display text to land on)")
-    wanted = str(wanted).strip()
-    steps = int(a.get("steps", OPTION_SWEEP_STEPS))
+    wanted = wanted.strip()
+    steps = _strict_integer(a.get("steps", OPTION_SWEEP_STEPS), "steps")
     if steps < 2 or steps > MAX_OPTION_SWEEP_STEPS:
         raise ValueError("steps must be 2..%d" % MAX_OPTION_SWEEP_STEPS)
 
+    _check_session_precondition(a)
     index, matched_on, matched_text = yield from _resolve_named_param(
-        track, slot, a["param"]
+        track, slot, parameter, use_global
     )
-    original = _safe(lambda: plugins.getParamValue(index, track, slot), None)
+    reported_count = int(
+        _safe(lambda: plugins.getParamCount(track, slot, use_global), 0) or 0
+    )
+    if index < 0 or index >= reported_count:
+        raise ValueError(
+            "parameter index %d is outside the range this plug-in reports" % index
+        )
+    if _expected_before(a)[0]:
+        yield
+    original = _safe(
+        lambda: plugins.getParamValue(index, track, slot, use_global), None
+    )
     before_display = _safe(
-        lambda: plugins.getParamValueString(index, track, slot), "") or ""
+        lambda: plugins.getParamValueString(index, track, slot, use_global), ""
+    ) or ""
+    _expect_plugin(a, original, before_display)
 
     undone = _save_undo(
         "Universal Bridge: %s param %d"
-        % (_safe(lambda: plugins.getPluginName(track, slot), "plugin"), index)
+        % (_safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), "plugin"
+        ), index)
     )
-    seen = yield from _sweep_options(track, slot, index, steps)
+    seen = yield from _sweep_options(
+        track, slot, index, steps, use_global
+    )
     options = _option_runs(seen)
 
     low = wanted.lower()
@@ -1499,15 +2036,23 @@ def cmd_plugin_set_param_option(a):
             )
         _, restored = yield from _write_and_read_back(
             lambda: [
-                plugins.setParamValue(original, index, track, slot, PICKUP_NONE),
-                plugins.setParamValue(original, index, track, slot, PICKUP_NONE),
+                plugins.setParamValue(
+                    original, index, track, slot, PICKUP_NONE, use_global
+                ),
+                plugins.setParamValue(
+                    original, index, track, slot, PICKUP_NONE, use_global
+                ),
             ],
-            lambda: _safe(lambda: plugins.getParamValue(index, track, slot), None),
+            lambda: _safe(
+                lambda: plugins.getParamValue(index, track, slot, use_global), None
+            ),
             lambda got: _near(got, original, PARAM_NOOP_TOLERANCE),
         )
         if not restored:
             now = _safe(
-                lambda: plugins.getParamValueString(index, track, slot), "") or ""
+                lambda: plugins.getParamValueString(
+                    index, track, slot, use_global
+                ), "") or ""
             raise ValueError(
                 "no option matching %r on parameter %d; it offers %s. The "
                 "sweep moved this control and FL did not accept the restore, "
@@ -1523,21 +2068,30 @@ def cmd_plugin_set_param_option(a):
     chosen_display, chosen_value = target
     after, verified = yield from _write_and_read_back(
         lambda: [
-            plugins.setParamValue(chosen_value, index, track, slot, PICKUP_NONE),
-            plugins.setParamValue(chosen_value, index, track, slot, PICKUP_NONE),
+            plugins.setParamValue(
+                chosen_value, index, track, slot, PICKUP_NONE, use_global
+            ),
+            plugins.setParamValue(
+                chosen_value, index, track, slot, PICKUP_NONE, use_global
+            ),
         ],
         lambda: (_safe(
-            lambda: plugins.getParamValueString(index, track, slot), "") or "").strip(),
+            lambda: plugins.getParamValueString(
+                index, track, slot, use_global
+            ), "") or "").strip(),
         lambda got: got.lower() == chosen_display.lower(),
     )
     return {
         "command": "plugin.set_param_option",
         "undo_point_created": undone,
-        "track": track,
-        "slot": slot,
+        **_plugin_target_report(target_info),
         "index": index,
-        "plugin": _safe(lambda: plugins.getPluginName(track, slot), ""),
-        "name": _safe(lambda: plugins.getParamName(index, track, slot), ""),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), ""
+        ),
+        "name": _safe(
+            lambda: plugins.getParamName(index, track, slot, use_global), ""
+        ),
         "matched_on": matched_on,
         "matched_text": matched_text,
         "requested": wanted,
@@ -1547,10 +2101,13 @@ def cmd_plugin_set_param_option(a):
         "options": [d for d, _ in options],
         "before": {"value": original, "display": before_display.strip()},
         "after": {
-            "value": _safe(lambda: plugins.getParamValue(index, track, slot), None),
+            "value": _safe(
+                lambda: plugins.getParamValue(index, track, slot, use_global), None
+            ),
             "display": after,
         },
         "verified": verified,
+        **_precondition_report(a),
     }
 
 
@@ -1577,30 +2134,42 @@ def cmd_plugin_set_param_display(a):
     control whose display is pure text ("Chromatic", "Low Male"). Those are
     enumerations; set them with plugin.set_param_option.
     """
-    track = _lean_track(a)
-    slot = _effect_slot_index(a.get("slot", -1))
-    if not _safe(lambda: plugins.isValid(track, slot), False):
-        raise ValueError("no plugin at track %d slot %d" % (track, slot))
-    if a.get("param") is None:
-        raise ValueError("param is required (an index, a name, or a display)")
-    if a.get("target") is None:
-        raise ValueError("target is required (a number in the plug-in's units)")
-    target = float(a["target"])
+    target_info = _plugin_target(a, writing=True)
+    track = target_info["index"]
+    slot = target_info["slot"]
+    use_global = target_info["use_global_index"]
+    if not _safe(lambda: plugins.isValid(track, slot, use_global), False):
+        raise ValueError(
+            "no plugin at requested %s target" % target_info["target_kind"]
+        )
+    parameter = _lean_parameter_selector(a)
+    target = _lean_finite_number(a, "target", -1e6, 1e6)
     tol = a.get("tolerance")
-    tol = max(0.01, abs(target) * 0.02) if tol is None else abs(float(tol))
-
-    index, matched_on, matched_text = yield from _resolve_named_param(
-        track, slot, a["param"]
+    tol = (
+        max(0.01, abs(target) * 0.02)
+        if tol is None
+        else _lean_finite_number(a, "tolerance", 0.0, 1e6)
     )
+
+    _check_session_precondition(a)
+    index, matched_on, matched_text = yield from _resolve_named_param(
+        track, slot, parameter, use_global
+    )
+    if _expected_before(a)[0]:
+        yield
     if index < 0 or index >= int(
-        _safe(lambda: plugins.getParamCount(track, slot), 0) or 0
+        _safe(lambda: plugins.getParamCount(track, slot, use_global), 0) or 0
     ):
         raise ValueError(
             "parameter index %d is outside the range this plug-in reports" % index
         )
 
     def read():
-        text = _safe(lambda: plugins.getParamValueString(index, track, slot), "") or ""
+        text = _safe(
+            lambda: plugins.getParamValueString(
+                index, track, slot, use_global
+            ), ""
+        ) or ""
         number = _first_float(text)
         if number is None:
             raise ValueError(
@@ -1610,33 +2179,44 @@ def cmd_plugin_set_param_display(a):
             )
         return number
 
-    before_value = _safe(lambda: plugins.getParamValue(index, track, slot), None)
+    before_value = _safe(
+        lambda: plugins.getParamValue(index, track, slot, use_global), None
+    )
     before_display = _safe(
-        lambda: plugins.getParamValueString(index, track, slot), "") or ""
+        lambda: plugins.getParamValueString(index, track, slot, use_global), ""
+    ) or ""
     read()  # fail before touching anything if this control has no number
+    _expect_plugin(a, before_value, before_display)
 
     undone = _save_undo(
         "Universal Bridge: %s param %d"
-        % (_safe(lambda: plugins.getPluginName(track, slot), "plugin"), index)
+        % (_safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), "plugin"
+        ), index)
     )
     normalised, landed, within = yield from _solve_across_ticks(
         read,
         lambda v: plugins.setParamValue(
-            max(0.0, min(1.0, v)), index, track, slot, PICKUP_NONE),
+            max(0.0, min(1.0, v)), index, track, slot, PICKUP_NONE, use_global
+        ),
         target,
         tol,
     )
     yield
     after_display = _safe(
-        lambda: plugins.getParamValueString(index, track, slot), "") or ""
+        lambda: plugins.getParamValueString(index, track, slot, use_global), ""
+    ) or ""
     return {
         "command": "plugin.set_param_display",
         "undo_point_created": undone,
-        "track": track,
-        "slot": slot,
+        **_plugin_target_report(target_info),
         "index": index,
-        "plugin": _safe(lambda: plugins.getPluginName(track, slot), ""),
-        "name": _safe(lambda: plugins.getParamName(index, track, slot), ""),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(track, slot, False, use_global), ""
+        ),
+        "name": _safe(
+            lambda: plugins.getParamName(index, track, slot, use_global), ""
+        ),
         "matched_on": matched_on,
         "matched_text": matched_text,
         "requested": target,
@@ -1645,10 +2225,811 @@ def cmd_plugin_set_param_display(a):
         "normalised": normalised,
         "before": {"value": before_value, "display": before_display},
         "after": {
-            "value": _safe(lambda: plugins.getParamValue(index, track, slot), None),
+            "value": _safe(
+                lambda: plugins.getParamValue(index, track, slot, use_global), None
+            ),
             "display": after_display,
         },
         "verified": bool(within),
+        **_precondition_report(a),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Track B performance and Channel Rack surface
+# ---------------------------------------------------------------------------
+
+MAX_CHANNEL_NAME_LENGTH = 64
+MAX_STEP_COUNT = 512
+MAX_VERIFIED_STEP_COUNT = 256
+STEP_GRID_RESOLUTION = "sixteenth_note"
+STEP_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
+# A guarded step write has to re-read the complete grid without yielding, then
+# create its undo point and apply the whole batch without yielding. Keep that
+# atomic section below the repository's 400-call ceiling with explicit
+# headroom for the request pump that runs earlier in the same OnIdle callback.
+SEQUENCER_WRITE_CALL_BUDGET = 320
+SEQUENCER_WRITE_FIXED_CALLS = 8
+TEMPO_READBACK_TOLERANCE = 1e-3
+
+
+def _finite_number(value, label, low, high):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("%s must be a number" % label)
+    number = float(value)
+    if not math.isfinite(number) or number < low or number > high:
+        raise ValueError("%s must be within %g..%g" % (label, low, high))
+    return number
+
+
+def _strict_bool_arg(a, key):
+    value = a.get(key)
+    if type(value) is not bool:
+        raise ValueError("%s must be true or false" % key)
+    return value
+
+
+def _track_b_expected(a, allowed, label):
+    present, expected = _expected_before(a)
+    if not present:
+        return None
+    if not isinstance(expected, dict):
+        raise ValueError("expected_before for %s must be an object" % label)
+    unknown = set(expected) - set(allowed)
+    if unknown:
+        raise ValueError(
+            "expected_before for %s has unsupported fields: %s"
+            % (label, ", ".join(sorted(unknown)))
+        )
+    if not expected:
+        raise ValueError("expected_before for %s must not be empty" % label)
+    return expected
+
+
+def _precondition_failure(label, expected, actual):
+    raise ValueError(
+        "expected_before precondition failed for %s: expected %r, found %r; "
+        "nothing was changed" % (label, expected, actual)
+    )
+
+
+def _expect_track_b_value(expected, key, actual, label, tolerance=None):
+    if expected is None or key not in expected:
+        return
+    wanted = expected[key]
+    if key in ("playing", "muted") and type(wanted) is not bool:
+        raise ValueError("expected_before.%s must be true or false" % key)
+    if key in ("color", "mixer_destination") and (
+        isinstance(wanted, bool) or not isinstance(wanted, int)
+    ):
+        raise ValueError("expected_before.%s must be an integer" % key)
+    if key in ("name", "loop_mode", "channel_fingerprint") and not isinstance(
+        wanted, str
+    ):
+        raise ValueError("expected_before.%s must be text" % key)
+    if tolerance is not None:
+        if isinstance(wanted, bool) or not isinstance(wanted, (int, float)):
+            raise ValueError("expected_before.%s must be a number" % key)
+        if actual is None or not _near(float(actual), float(wanted), tolerance):
+            _precondition_failure(label, wanted, actual)
+    elif wanted != actual:
+        _precondition_failure(label, wanted, actual)
+
+
+def _transport_loop_mode():
+    raw = _safe(lambda: transport.getLoopMode(), None)
+    return "pattern" if raw == 0 else "song" if raw == 1 else None
+
+
+def cmd_transport_set_playing(a):
+    wanted = _strict_bool_arg(a, "playing")
+    _check_session_precondition(a)
+    before = _safe(lambda: bool(transport.isPlaying()), None)
+    expected = _track_b_expected(a, {"playing"}, "transport playing")
+    _expect_track_b_value(expected, "playing", before, "transport playing")
+
+    if before != wanted:
+        if wanted:
+            transport.start()
+        else:
+            transport.stop()
+    yield
+    after = _safe(lambda: bool(transport.isPlaying()), None)
+    return {
+        "command": "transport.set_playing",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after is wanted,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_transport_stop(a):
+    allowed = {"playing", "position", "session_fingerprint", "expected_before"}
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "transport.stop received unsupported arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    position = _finite_number(a.get("position"), "position", 0.0, 0.0)
+    if a.get("playing") is not False or position != 0.0:
+        raise ValueError(
+            "transport.stop is absolute and requires playing=false and position=0.0"
+        )
+    _check_session_precondition(a)
+    before = {
+        "playing": _safe(lambda: bool(transport.isPlaying()), None),
+        "position": _safe(lambda: transport.getSongPos(), None),
+    }
+    expected = _track_b_expected(
+        a, {"playing", "song_position_normalized"}, "transport stop state"
+    )
+    _expect_track_b_value(expected, "playing", before["playing"], "playing")
+    _expect_track_b_value(
+        expected, "song_position_normalized", before["position"],
+        "song position", 1e-4
+    )
+
+    transport.stop()
+    transport.setSongPos(0.0)
+    yield
+    after = {
+        "playing": _safe(lambda: bool(transport.isPlaying()), None),
+        "position": _safe(lambda: transport.getSongPos(), None),
+    }
+    fields = {
+        "playing": after["playing"] is False,
+        "position": after["position"] is not None
+        and _near(float(after["position"]), 0.0, 1e-4),
+    }
+    return {
+        "command": "transport.stop",
+        "requested": {"playing": False, "position": 0.0},
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_transport_set_song_position(a):
+    position = _finite_number(a.get("position"), "position", 0.0, 1.0)
+    tolerance = _finite_number(a.get("tolerance", 1e-4), "tolerance", 0.0, 0.05)
+    _check_session_precondition(a)
+    if _safe(lambda: bool(transport.isPlaying()), False):
+        raise ValueError(
+            "transport.set_song_position refuses while playback is running; "
+            "stop first so the readback has one stable meaning"
+        )
+    before = _safe(lambda: transport.getSongPos(), None)
+    expected = _track_b_expected(
+        a, {"song_position_normalized"}, "song position"
+    )
+    _expect_track_b_value(
+        expected, "song_position_normalized", before, "song position", tolerance
+    )
+    transport.setSongPos(position)
+    yield
+    after = _safe(lambda: transport.getSongPos(), None)
+    return {
+        "command": "transport.set_song_position",
+        "requested": position,
+        "tolerance": tolerance,
+        "before": before,
+        "after": after,
+        "verified": after is not None and _near(float(after), position, tolerance),
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_transport_set_loop_mode(a):
+    wanted = a.get("loop_mode")
+    if wanted not in ("pattern", "song"):
+        raise ValueError("loop_mode must be 'pattern' or 'song'")
+    _check_session_precondition(a)
+    before = _transport_loop_mode()
+    expected = _track_b_expected(a, {"loop_mode"}, "transport loop mode")
+    _expect_track_b_value(expected, "loop_mode", before, "transport loop mode")
+    if before != wanted:
+        transport.setLoopMode()
+    yield
+    after = _transport_loop_mode()
+    return {
+        "command": "transport.set_loop_mode",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after == wanted,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_transport_set_tempo(a):
+    wanted = _finite_number(a.get("tempo_bpm"), "tempo_bpm", 10.0, 522.0)
+    _check_session_precondition(a)
+    if _safe(lambda: bool(transport.isRecording()), False):
+        raise ValueError("transport.set_tempo refuses while recording is active")
+    if _safe(lambda: bool(transport.isPlaying()), False):
+        raise ValueError(
+            "transport.set_tempo refuses while playback is running; stop first "
+            "so the later-tick BPM readback has one stable meaning"
+        )
+    before = _bpm()
+    expected = _track_b_expected(a, {"tempo_bpm"}, "tempo")
+    _expect_track_b_value(
+        expected, "tempo_bpm", before, "tempo", TEMPO_READBACK_TOLERANCE
+    )
+    undone = _save_undo("Universal Bridge: tempo %.4g BPM" % wanted)
+    # Image-Line's bundled MCP tool passes ordinary BPM with the explicit mode
+    # flag. That flag avoids the legacy raw BPM*1000 form; current FL releases
+    # also accept a float here, which preserves this contract's fractional BPM.
+    mixer.setCurrentTempo(wanted, True)
+    yield
+    after = _bpm()
+    return {
+        "command": "transport.set_tempo",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after is not None and _near(
+            float(after), wanted, TEMPO_READBACK_TOLERANCE
+        ),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def _channel_mix_snapshot(index):
+    summary = _channel_summary(index)
+    return {
+        "volume": summary["volume"],
+        "pan": summary["pan"],
+        "muted": summary["muted"],
+        "channel_fingerprint": summary["channel_fingerprint"],
+    }
+
+
+def _channel_identity_snapshot(index):
+    summary = _channel_summary(index)
+    return {
+        "name": summary["name"],
+        "color": summary["color"],
+        "channel_fingerprint": summary["channel_fingerprint"],
+    }
+
+
+def _channel_route_snapshot(index):
+    summary = _channel_summary(index)
+    return {
+        "mixer_destination": summary["mixer_track"],
+        "channel_fingerprint": summary["channel_fingerprint"],
+    }
+
+
+def _expect_channel(a, before, fields, label):
+    expected = _track_b_expected(
+        a, {field[0] for field in fields} | {"channel_fingerprint"}, label
+    )
+    if expected is None:
+        return
+    _expect_track_b_value(
+        expected, "channel_fingerprint", before.get("channel_fingerprint"),
+        "channel fingerprint"
+    )
+    for public, actual, tolerance in fields:
+        if public == "color" and public in expected:
+            wanted = expected[public]
+            if (
+                isinstance(wanted, bool)
+                or not isinstance(wanted, int)
+                or wanted < 0
+                or wanted > 0xFFFFFFFF
+            ):
+                raise ValueError(
+                    "expected_before.color must be an integer within "
+                    "0..4294967295"
+                )
+            observed = before.get(actual)
+            if not _fl_colors_equivalent(wanted, observed):
+                _precondition_failure(
+                    "%s %s" % (label, public), wanted, observed
+                )
+            continue
+        _expect_track_b_value(
+            expected, public, before.get(actual), "%s %s" % (label, public),
+            tolerance
+        )
+
+
+def _channel_write_target(a):
+    _require_global_scope(a)
+    return _channel_index(a.get("channel"))
+
+
+def cmd_channel_set_mix(a):
+    index = _channel_write_target(a)
+    requested = {}
+    if "volume" in a:
+        requested["volume"] = _finite_number(a["volume"], "volume", 0.0, 1.0)
+    if "pan" in a:
+        requested["pan"] = _finite_number(a["pan"], "pan", -1.0, 1.0)
+    if "muted" in a:
+        requested["muted"] = _strict_bool_arg(a, "muted")
+    if not requested:
+        raise ValueError("channel.set_mix requires volume, pan, muted, or a combination")
+    _check_session_precondition(a)
+    before = _channel_mix_snapshot(index)
+    _expect_channel(
+        a, before,
+        (("volume_normalized", "volume", 1e-4),
+         ("pan", "pan", 1e-4), ("muted", "muted", None)),
+        "channel mix"
+    )
+    undone = _save_undo("Universal Bridge: channel %d mix" % index)
+    if "volume" in requested:
+        channels.setChannelVolume(index, requested["volume"], PICKUP_NONE, True)
+    if "pan" in requested:
+        channels.setChannelPan(index, requested["pan"], PICKUP_NONE, True)
+    if "muted" in requested:
+        channels.muteChannel(index, int(requested["muted"]), True)
+    yield
+    after = _channel_mix_snapshot(index)
+    fields = {}
+    if "volume" in requested:
+        fields["volume"] = after["volume"] is not None and _near(
+            float(after["volume"]), requested["volume"], 1e-4
+        )
+    if "pan" in requested:
+        fields["pan"] = after["pan"] is not None and _near(
+            float(after["pan"]), requested["pan"], 1e-4
+        )
+    if "muted" in requested:
+        fields["muted"] = after["muted"] is requested["muted"]
+    return {
+        "command": "channel.set_mix",
+        "channel": index,
+        "index_scope": "global",
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_channel_set_identity(a):
+    index = _channel_write_target(a)
+    requested = {}
+    if "name" in a:
+        name = a["name"]
+        if not isinstance(name, str):
+            raise ValueError("name must be text")
+        if len(name) > MAX_CHANNEL_NAME_LENGTH:
+            raise ValueError("name must be at most %d characters" % MAX_CHANNEL_NAME_LENGTH)
+        requested["name"] = name
+    if "color" in a:
+        color = a["color"]
+        # Validate the public unsigned spelling now. Conversion back to FL's
+        # signed Python integer happens only at the API call boundary below.
+        _fl_color_argument(color)
+        requested["color"] = color
+    if not requested:
+        raise ValueError("channel.set_identity requires name, color, or both")
+    _check_session_precondition(a)
+    before = _channel_identity_snapshot(index)
+    _expect_channel(
+        a, before, (("name", "name", None), ("color", "color", None)),
+        "channel identity"
+    )
+    undone = _save_undo("Universal Bridge: channel %d identity" % index)
+    if "name" in requested:
+        channels.setChannelName(index, requested["name"], True)
+    if "color" in requested:
+        channels.setChannelColor(
+            index, _fl_color_argument(requested["color"]), True
+        )
+    yield
+    after = _channel_identity_snapshot(index)
+    fields = {}
+    if "name" in requested:
+        fields["name"] = after["name"] == requested["name"]
+    if "color" in requested:
+        fields["color"] = _fl_colors_equivalent(
+            after["color"], requested["color"]
+        )
+    return {
+        "command": "channel.set_identity",
+        "channel": index,
+        "index_scope": "global",
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_channel_route_to_mixer(a):
+    index = _channel_write_target(a)
+    destination = a.get("destination")
+    if isinstance(destination, bool) or not isinstance(destination, int):
+        raise ValueError("destination must be an integer")
+    last_insert = int(mixer.getTrackInfo(midi.TN_LastIns))
+    if last_insert < 0:
+        raise ValueError("FL did not report a valid last mixer insert")
+    if destination < -1 or destination > last_insert:
+        raise ValueError(
+            "destination must be -1 or a live mixer track within 0..%d"
+            % last_insert
+        )
+    _check_session_precondition(a)
+    before = _channel_route_snapshot(index)
+    _expect_channel(
+        a, before, (("mixer_destination", "mixer_destination", None),),
+        "channel route"
+    )
+    undone = _save_undo("Universal Bridge: channel %d route" % index)
+    channels.setTargetFxTrack(index, destination, True)
+    yield
+    after = _channel_route_snapshot(index)
+    return {
+        "command": "channel.route_to_mixer",
+        "channel": index,
+        "index_scope": "global",
+        "requested": destination,
+        "before": before,
+        "after": after,
+        "verified": after["mixer_destination"] == destination,
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def _step_count(pattern):
+    count = _safe(lambda: patterns.getPatternLength(pattern), None)
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise ValueError("FL did not report an integer step count for pattern %d" % pattern)
+    if count < 1 or count > MAX_STEP_COUNT:
+        raise ValueError(
+            "pattern %d step count must be within 1..%d (got %r)"
+            % (pattern, MAX_STEP_COUNT, count)
+        )
+    return count
+
+
+def _step_digest(pattern, channel, cells):
+    return _sha256_json({
+        "cells": [1 if value else 0 for value in cells],
+        "channel_index": channel,
+        "grid_resolution": STEP_GRID_RESOLUTION,
+        "pattern_number": pattern,
+        "step_count": len(cells),
+    })
+
+
+def _step_snapshot(pattern, channel):
+    current = _safe(lambda: patterns.patternNumber(), None)
+    if current != pattern:
+        raise ValueError(
+            "step-grid APIs are current-pattern-only: requested pattern %d, "
+            "current pattern %r; nothing was changed" % (pattern, current)
+        )
+    count = _step_count(pattern)
+    cells = []
+    for position in range(count):
+        cells.append(bool(channels.getGridBit(channel, position, True)))
+        if (position + 1) % PARAMS_PER_TICK == 0:
+            yield
+    after_current = _safe(lambda: patterns.patternNumber(), None)
+    if after_current != pattern:
+        raise ValueError(
+            "current pattern changed during the step-grid observation; "
+            "discard the result and retry the read"
+        )
+    return {
+        "pattern": pattern,
+        "current_pattern": after_current,
+        "channel": channel,
+        "index_scope": "global",
+        "step_count": count,
+        "grid_resolution": STEP_GRID_RESOLUTION,
+        "cells": cells,
+        "digest_algorithm": STEP_DIGEST_ALGORITHM,
+        "digest": _step_digest(pattern, channel, cells),
+    }
+
+
+def _step_snapshot_immediate(pattern, channel):
+    """Capture the whole current grid without yielding before a mutation.
+
+    The ordinary snapshot is deliberately chunked so a read does not monopolize
+    FL's UI thread. A write precondition has a different requirement: after the
+    last yield, re-read every cell in this one callback so a change to an early
+    chunk cannot race the digest and then be overwritten by the batch.
+    """
+    current = _safe(lambda: patterns.patternNumber(), None)
+    if current != pattern:
+        raise ValueError("current pattern changed immediately before mutation")
+    count = _step_count(pattern)
+    cells = [
+        bool(channels.getGridBit(channel, position, True))
+        for position in range(count)
+    ]
+    if _safe(lambda: patterns.patternNumber(), None) != pattern:
+        raise ValueError("current pattern changed immediately before mutation")
+    return {
+        "pattern": pattern,
+        "current_pattern": pattern,
+        "channel": channel,
+        "index_scope": "global",
+        "step_count": count,
+        "grid_resolution": STEP_GRID_RESOLUTION,
+        "cells": cells,
+        "digest_algorithm": STEP_DIGEST_ALGORITHM,
+        "digest": _step_digest(pattern, channel, cells),
+    }
+
+
+def _sequence_target(a):
+    _require_global_scope(a)
+    pattern = a.get("pattern")
+    if isinstance(pattern, bool) or not isinstance(pattern, int) or pattern < 1:
+        raise ValueError("pattern must be an integer of 1 or greater")
+    channel = _channel_index(a.get("channel"))
+    return pattern, channel
+
+
+def cmd_sequencer_get(a):
+    if set(a) - {"pattern", "channel", "index_scope"}:
+        raise ValueError("sequencer.get received unsupported arguments")
+    pattern, channel = _sequence_target(a)
+    result = yield from _step_snapshot(pattern, channel)
+    result["command"] = "sequencer.get"
+    result["unsaved_changes"] = _safe(lambda: general.getChangedFlag(), None)
+    result["warnings"] = [
+        "FL's grid-bit API addresses the current pattern only; this read "
+        "refused to switch patterns implicitly."
+    ]
+    return result
+
+
+def cmd_sequencer_set(a):
+    if "expected_before" in a:
+        raise ValueError(
+            "sequencer.set does not accept generic expected_before; its required "
+            "expected_digest is the one authoritative concurrency guard"
+        )
+    pattern, channel = _sequence_target(a)
+    _check_session_precondition(a)
+    expected_digest = a.get("expected_digest")
+    if (
+        not isinstance(expected_digest, str)
+        or len(expected_digest) != 64
+        or any(ch not in "0123456789abcdef" for ch in expected_digest)
+    ):
+        raise ValueError("expected_digest must be 64 lowercase hex characters")
+    updates = a.get("updates")
+    if (
+        not isinstance(updates, list)
+        or not updates
+        or len(updates) > MAX_VERIFIED_STEP_COUNT
+    ):
+        raise ValueError(
+            "updates must contain 1..%d cells" % MAX_VERIFIED_STEP_COUNT
+        )
+    parsed = []
+    seen = set()
+    for item in updates:
+        if not isinstance(item, dict) or set(item) != {"step_index", "enabled"}:
+            raise ValueError("each update must contain only step_index and enabled")
+        step = item["step_index"]
+        enabled = item["enabled"]
+        if isinstance(step, bool) or not isinstance(step, int) or step < 0:
+            raise ValueError("step_index must be a non-negative integer")
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be true or false")
+        if step in seen:
+            raise ValueError("updates must not contain duplicate step indices")
+        seen.add(step)
+        parsed.append({"step_index": step, "enabled": enabled})
+
+    before = yield from _step_snapshot(pattern, channel)
+    if any(item["step_index"] >= before["step_count"] for item in parsed):
+        raise ValueError("step_index is outside the pattern's absolute step grid")
+    if before["digest"] != expected_digest:
+        raise ValueError(
+            "expected_digest conflict: the current step grid changed; nothing "
+            "was written and the batch was not retried"
+        )
+    step_count = before["step_count"]
+    if step_count > MAX_VERIFIED_STEP_COUNT:
+        raise ValueError(
+            "verified step writes support at most %d cells so the atomic "
+            "digest check stays within FL's idle-tick budget (got %d); "
+            "nothing was changed"
+            % (MAX_VERIFIED_STEP_COUNT, step_count)
+        )
+    atomic_calls = step_count + len(parsed) + SEQUENCER_WRITE_FIXED_CALLS
+    if atomic_calls > SEQUENCER_WRITE_CALL_BUDGET:
+        max_updates = max(
+            0,
+            SEQUENCER_WRITE_CALL_BUDGET
+            - SEQUENCER_WRITE_FIXED_CALLS
+            - step_count,
+        )
+        raise ValueError(
+            "step batch is too large for one atomic FL idle tick: pattern "
+            "length %d permits at most %d updates (got %d); split the batch "
+            "and refresh the digest between calls"
+            % (step_count, max_updates, len(parsed))
+        )
+    # The chunked observation above yielded between cell ranges. Re-read the
+    # full grid without yielding immediately before mutation so an edit to an
+    # already-read cell cannot slip between the digest guard and this batch.
+    # This unconditional boundary also prevents the final read chunk from
+    # sharing a callback with the atomic recheck/write section.
+    yield
+    immediate_before = _step_snapshot_immediate(pattern, channel)
+    if immediate_before["digest"] != expected_digest:
+        raise ValueError(
+            "expected_digest conflict immediately before mutation: the current "
+            "step grid changed; nothing was written and the batch was not retried"
+        )
+    before = immediate_before
+    undone = _save_undo(
+        "Universal Bridge: pattern %d channel %d steps" % (pattern, channel)
+    )
+    for item in parsed:
+        channels.setGridBit(
+            channel, item["step_index"], int(item["enabled"]), True
+        )
+    yield
+    after = yield from _step_snapshot(pattern, channel)
+    verified_cells = []
+    for item in parsed:
+        actual = after["cells"][item["step_index"]]
+        verified_cells.append({
+            "step_index": item["step_index"],
+            "requested_enabled": item["enabled"],
+            "after_enabled": actual,
+            "verified": actual is item["enabled"],
+        })
+    fields_ok = all(item["verified"] for item in verified_cells)
+    report = _precondition_report(a)
+    report["expected_before_applied"] = True
+    return {
+        "command": "sequencer.set",
+        "pattern": pattern,
+        "channel": channel,
+        "index_scope": "global",
+        "expected_digest": expected_digest,
+        "requested_updates": parsed,
+        "before": before,
+        "after": after,
+        "verified_cells": verified_cells,
+        "verified": fields_ok,
+        "undo_point_created": undone,
+        **report,
+    }
+
+
+def _release_active_note(active):
+    """Send one registered note-off, retaining failures for deinit cleanup."""
+    try:
+        channels.midiNoteOn(
+            active["channel"], active["note"], 0, active["midi_channel"]
+        )
+    except Exception:
+        active["release_pending"] = True
+        return False
+    try:
+        _active_notes.remove(active)
+    except ValueError:
+        pass
+    active["note_off_sent"] = True
+    active["release_pending"] = False
+    return True
+
+
+def _cleanup_active_notes(force_all=False):
+    """Retry due note-offs, or release every note while the script unloads."""
+    for active in list(_active_notes):
+        if (
+            force_all
+            or active.get("release_pending")
+            or active.get("due_tick", _idle_tick + 1) <= _idle_tick
+        ):
+            _release_active_note(active)
+
+
+def cmd_channel_trigger_note(a):
+    index = _channel_write_target(a)
+    note = a.get("note")
+    velocity = a.get("velocity")
+    duration = a.get("duration_ms", 250)
+    midi_channel = a.get("midi_channel", -1)
+    for value, label, low, high in (
+        (note, "note", 0, 127),
+        (velocity, "velocity", 1, 127),
+        (duration, "duration_ms", 20, 5000),
+        (midi_channel, "midi_channel", -1, 15),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError("%s must be an integer within %d..%d" % (label, low, high))
+    _check_session_precondition(a)
+    before = _channel_summary(index)
+    expected = _track_b_expected(a, {"channel_fingerprint"}, "channel note target")
+    _expect_track_b_value(
+        expected, "channel_fingerprint", before["channel_fingerprint"],
+        "channel fingerprint"
+    )
+
+    # MIDI note-off has no voice identifier. A second overlapping audition of
+    # the same target/note/channel would be cut short when the earlier job sent
+    # its off, so refuse that ambiguous overlap before dispatching another on.
+    for pending in _active_notes:
+        if (
+            not pending.get("note_off_sent")
+            and pending.get("channel") == index
+            and pending.get("note") == note
+            and pending.get("midi_channel") == midi_channel
+        ):
+            raise ValueError(
+                "the same channel/note/MIDI-channel audition is already active; "
+                "wait for its note-off before retrying"
+            )
+
+    active = {
+        "channel": index,
+        "note": note,
+        "midi_channel": midi_channel,
+        "due_tick": None,
+        "note_off_sent": False,
+        "release_pending": False,
+    }
+    sent_on = False
+    note_off_sent = False
+    try:
+        channels.midiNoteOn(index, note, velocity, midi_channel)
+        sent_on = True
+        active["due_tick"] = _idle_tick + max(
+            1, int(math.ceil(float(duration) / NOTE_TICK_MS))
+        )
+        _active_notes.append(active)
+        # Every active note is checked once per global OnIdle callback. This
+        # job can therefore be resumed round-robin with scans and other notes
+        # without multiplying its audible duration by the number of jobs.
+        while not active["note_off_sent"] and _idle_tick < active["due_tick"]:
+            yield
+    finally:
+        if sent_on and not active["note_off_sent"] and not active["release_pending"]:
+            active["release_pending"] = True
+            note_off_sent = _release_active_note(active)
+        else:
+            note_off_sent = active["note_off_sent"]
+    return {
+        "command": "channel.trigger_note",
+        "channel": index,
+        "index_scope": "global",
+        "note": note,
+        "velocity": velocity,
+        "duration_ms": duration,
+        "midi_channel": midi_channel,
+        "dispatched": sent_on,
+        "note_off_sent": note_off_sent,
+        "undo_point_created": None,
+        **_precondition_report(a),
     }
 
 
@@ -1658,6 +3039,11 @@ HANDLERS = {
     "arrangement.selection": cmd_arrangement_selection,
     "mixer.list": cmd_mixer_list,
     "mixer.track": cmd_mixer_track,
+    "transport.set_playing": cmd_transport_set_playing,
+    "transport.stop": cmd_transport_stop,
+    "transport.set_song_position": cmd_transport_set_song_position,
+    "transport.set_loop_mode": cmd_transport_set_loop_mode,
+    "transport.set_tempo": cmd_transport_set_tempo,
     # The lean verified write surface; reachable only with
     # FL_BRIDGE_ENABLE_WRITES=1, see LEAN_WRITE_COMMANDS in _dispatch.
     "mixer.set_volume": cmd_mixer_set_volume,
@@ -1673,6 +3059,12 @@ HANDLERS = {
     "plugin.params": cmd_plugin_params,
     "plugin.scan_params": cmd_plugin_scan_params,
     "channels.list": cmd_channels_list,
+    "channel.set_mix": cmd_channel_set_mix,
+    "channel.set_identity": cmd_channel_set_identity,
+    "channel.route_to_mixer": cmd_channel_route_to_mixer,
+    "sequencer.get": cmd_sequencer_get,
+    "sequencer.set": cmd_sequencer_set,
+    "channel.trigger_note": cmd_channel_trigger_note,
 }
 
 
@@ -1693,9 +3085,21 @@ def _dispatch(req):
     Returns a response dict, or a `_Job` when the handler is a generator that
     wants to be resumed across ticks.
     """
+    if not isinstance(req, dict):
+        return {
+            "id": None,
+            "ok": False,
+            "error": "bridge request must be a JSON object",
+        }
     rid = req.get("id")
     cmd = req.get("cmd", "")
-    args = req.get("args") or {}
+    args = req.get("args", {})
+    if not isinstance(args, dict):
+        return {
+            "id": rid,
+            "ok": False,
+            "error": "bridge request args must be a JSON object",
+        }
     allowed = READ_ONLY_COMMANDS
     lock_reason = "bridge is locked read-only"
     if LEAN_WRITES_ENABLED:
@@ -1729,6 +3133,10 @@ def _advance_jobs():
         return
     job = _jobs.pop(0)
     if not _transport.alive(job.handle):
+        try:
+            job.gen.close()
+        except Exception:
+            pass
         return                         # requester vanished mid-scan
     try:
         next(job.gen)
@@ -2298,7 +3706,16 @@ def OnInit():
 
 
 def OnDeInit():
+    for job in list(_jobs):
+        try:
+            job.gen.close()
+        except Exception:
+            pass
     del _jobs[:]
+    # Closing live-note generators normally sends their note-offs. The
+    # registry catches any job that was cancelled elsewhere, plus a note-off
+    # API call that failed and needs one final best-effort retry on unload.
+    _cleanup_active_notes(force_all=True)
     try:
         _transport.close()
     except Exception:
@@ -2307,8 +3724,13 @@ def OnDeInit():
 
 
 def OnIdle():
+    global _idle_tick
     try:
+        _idle_tick += 1
         _pump()
+        # Only records whose scheduled/finally note-off failed are retried;
+        # notes whose duration has not elapsed remain registered but untouched.
+        _cleanup_active_notes()
         _advance_jobs()
     except Exception:
         # Never let an exception escape a callback; FL disables the script.

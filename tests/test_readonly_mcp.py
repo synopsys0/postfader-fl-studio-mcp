@@ -46,7 +46,17 @@ WRITE_TOOLS = {
     "fl_set_plugin_param",
     "fl_set_plugin_param_display",
     "fl_set_plugin_param_option",
+    "fl_set_playing",
+    "fl_stop",
+    "fl_set_song_position",
+    "fl_set_loop_mode",
+    "fl_set_tempo",
+    "fl_set_channel_mix",
+    "fl_set_channel_identity",
+    "fl_route_channel_to_mixer",
+    "fl_set_step_sequence",
 }
+EPHEMERAL_TOOLS = {"fl_trigger_note"}
 EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_get_capabilities",
     "fl_get_project_summary",
@@ -58,6 +68,9 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     "plugins_inspect_parameter_map",
     "plugins_scan_parameters",
     "copilot_capture_readonly_inspection",
+    "fl_list_channels",
+    "fl_get_step_sequence",
+    *EPHEMERAL_TOOLS,
     # File measurement, not FL control.
     "audio_analyze_file",
     "audio_compare_files",
@@ -101,6 +114,21 @@ WRITE_CALLS = {
         "parameter": "Key",
         "option": "A",
     },
+    "fl_set_playing": {"playing": True},
+    "fl_stop": {},
+    "fl_set_song_position": {"position_normalized": 0.25},
+    "fl_set_loop_mode": {"loop_mode": "pattern"},
+    "fl_set_tempo": {"tempo_bpm": 128.0},
+    "fl_set_channel_mix": {"channel_index": 0, "volume_normalized": 0.7},
+    "fl_set_channel_identity": {"channel_index": 0, "name": "Demo"},
+    "fl_route_channel_to_mixer": {"channel_index": 0, "mixer_destination": 3},
+    "fl_set_step_sequence": {
+        "pattern_number": 1,
+        "channel_index": 0,
+        "expected_digest": "0" * 64,
+        "updates": [{"step_index": 0, "enabled": True}],
+    },
+    "fl_trigger_note": {"channel_index": 0, "note": 60, "velocity": 100},
 }
 
 
@@ -225,20 +253,56 @@ async def run():
                     and tool.annotations.read_only_hint
                     and tool.annotations.destructive_hint is False
                     for tool in tools
-                    if tool.name not in WRITE_TOOLS
+                    if tool.name not in WRITE_TOOLS | EPHEMERAL_TOOLS
                 ),
             )
             check(
-                "every write tool annotated mutating, destructive and idempotent",
+                "every write tool annotated mutating, destructive and non-idempotent",
                 all(
                     tool.annotations
                     and tool.annotations.read_only_hint is False
                     and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is True
+                    and tool.annotations.idempotent_hint is False
                     for tool in tools
                     if tool.name in WRITE_TOOLS
                 ),
                 sorted(WRITE_TOOLS),
+            )
+            check(
+                "live note is annotated as non-idempotent dispatch, not a verified write",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is False
+                    for tool in tools
+                    if tool.name in EPHEMERAL_TOOLS
+                ),
+            )
+            by_name = {tool.name: tool for tool in tools}
+            check(
+                "every write tool exposes optional session and before-state preconditions",
+                all(
+                    {"session_fingerprint"}
+                    <= set(by_name[name].input_schema.get("properties", {}))
+                    and "session_fingerprint"
+                    not in set(by_name[name].input_schema.get("required", []))
+                    and (
+                        name == "fl_set_step_sequence"
+                        or (
+                            "expected_before"
+                            in set(by_name[name].input_schema.get("properties", {}))
+                            and "expected_before"
+                            not in set(by_name[name].input_schema.get("required", []))
+                        )
+                    )
+                    for name in WRITE_TOOLS
+                ),
+                {
+                    name: by_name[name].input_schema
+                    for name in sorted(WRITE_TOOLS)
+                    if name in by_name
+                },
             )
 
             project = payload(await session.call_tool("fl_get_project_summary", {}))

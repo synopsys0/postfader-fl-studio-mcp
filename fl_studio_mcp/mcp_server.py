@@ -1,25 +1,27 @@
 """The MCP server for FL Studio 2026.  This is the default agent entry point.
 
-Three surfaces, and nothing else is reachable from here:
+Four surfaces, and nothing else is reachable from here:
 
 * **Reads** over the live project, through the fail-closed inspector allowlist.
 * **Measurements** of rendered audio files, because the FL API exposes no
   audio. Those tools read files the caller names, plus a bounded lookup over
   FL Studio's usual output and project folders; the discovery roots are fixed
   in code and cannot be chosen by an agent.
-* **Ten verified writes** -- a mixer track's volume, pan, mute state, name, one
-  band of its built-in EQ, one send, that send's level, and one plug-in
-  parameter addressed by index, by displayed units, or by option text.  Each
-  changes exactly one thing, reads FL back on a *later* idle tick, and reports
+* **Verified state mutations** for transport, mixer tracks, global Channel Rack
+  targets, the current pattern's step cells, and mixer-effect or generator
+  parameters. Each reads FL back on a *later* idle tick and reports
   ``verified`` from that readback alone.
+* **Bounded live-note audition**, which reports note dispatch and release but
+  never fabricates state verification.
 
-There are still no transport controls, no undo command, no render, no
-project save, no caller-directed filesystem search, and no reflective FL API
-escape hatch.
+There is still no undo command, render, project save, caller-directed
+filesystem search, playback-speed setter without a getter, or reflective FL
+API escape hatch.
 
 The write tools apply and report; there is no confirmation round-trip and no
-rollback ceremony.  FL's own undo is the safety net, and whether a point
-actually appeared is reported as ``undo_point_created`` rather than assumed.  They are dispatchable only when FL Studio itself was launched with
+rollback ceremony.  Where an FL undo request applies, whether a point actually
+appeared is reported as ``undo_point_created`` rather than assumed; transient
+transport and note actions truthfully report null.  They are dispatchable only when FL Studio itself was launched with
 ``FL_BRIDGE_ENABLE_WRITES=1``; when it was not, they refuse locally with
 :class:`~fl_studio_mcp.verified_writer.VerifiedWritesUnavailable`, which names
 the flag, rather than surfacing a raw bridge dispatch rejection.
@@ -49,6 +51,8 @@ from .advisory import (
 )
 from .contracts import (
     CapabilitiesReport,
+    ExpectedEqBandState,
+    ExpectedPluginParameterState,
     LoadedPluginInventory,
     MixerTrackInspection,
     MixerTrackList,
@@ -70,6 +74,39 @@ from .contracts import (
     VerifiedPluginParameterWrite,
 )
 from .readonly_inspector import ReadOnlyInspector
+from .performance import TrackBController, TrackBInspector
+from .track_b_contracts import (
+    ChannelList,
+    ExpectedChannelIdentityState,
+    ExpectedChannelMixState,
+    ExpectedChannelRouteState,
+    ExpectedChannelTargetState,
+    ExpectedLoopModeState,
+    ExpectedPlayingState,
+    ExpectedSongPositionState,
+    ExpectedStopState,
+    ExpectedTempoState,
+    LiveNoteDispatch,
+    MAX_VERIFIED_STEP_COUNT,
+    PluginTarget,
+    StepCellUpdate,
+    StepSequenceObservation,
+    TargetedLoadedPluginInventory,
+    TargetedPluginParameterPage,
+    TargetedPluginParameterScan,
+    VerifiedChannelIdentityWrite,
+    VerifiedChannelMixWrite,
+    VerifiedChannelRouteWrite,
+    VerifiedLoopModeWrite,
+    VerifiedPlayingWrite,
+    VerifiedSongPositionWrite,
+    VerifiedStepSequenceWrite,
+    VerifiedStopWrite,
+    VerifiedTargetedPluginDisplayWrite,
+    VerifiedTargetedPluginOptionWrite,
+    VerifiedTargetedPluginParameterWrite,
+    VerifiedTempoWrite,
+)
 from .verified_writer import VerifiedWriter
 
 
@@ -83,25 +120,37 @@ ArgModelBase.model_config = ConfigDict(
 )
 ArgModelBase.model_rebuild(force=True)
 
+SessionFingerprintArg = Annotated[
+    str | None,
+    Field(
+        default=None,
+        pattern=r"^[0-9a-f]{32}$",
+        description=(
+            "Optional bridge-lifetime fingerprint from a recent read. The write "
+            "refuses if FL reloaded the bridge before mutation. This is a "
+            "concurrency guard, not authentication or project identity."
+        ),
+    ),
+]
+
 
 INSTRUCTIONS = """\
-FL Studio 2026 project inspector with a narrow verified write surface.
+FL Studio 2026 project inspector with a narrow verified control surface.
 
 This server can observe the running project, mixer tracks, routing, loaded
-effects, transport state, and exposed plug-in parameters. It can change eight
-things on one mixer track -- volume, pan, mute state, name, one band of the
-built-in EQ, whether it sends to another track, how much it sends there, and
-one parameter of one loaded plug-in -- and a plug-in parameter can be addressed
-three ways. fl_set_plugin_param takes a normalised 0..1.
+effects and generators, transport state, global Channel Rack state, the current
+pattern's step grid, and exposed plug-in parameters. It can apply absolute,
+readback-verified transport, mixer, channel, routing, step, and parameter
+targets. fl_set_plugin_param takes a normalised 0..1.
 fl_set_plugin_param_display takes the number the plug-in itself shows, so
 "Attack to 20 ms" needs no knowledge of the curve.
 fl_set_plugin_param_option takes the text of an enumerated control such as Key
 or Scale, and also reports every option it found. Prefer the latter two: real
 third-party controls frequently have no name at all and are identified only
-by what they display. It cannot add, remove or reorder plug-ins
--- FL's scripting API has no function for it -- and it cannot control playback,
-render audio, save projects, write automation, undo, or invoke arbitrary FL API
-functions.
+by what they display. Plug-in insertion, removal, and reordering are unavailable
+through the public MIDI scripting backend. It cannot render audio, save
+projects, write automation, undo, set playback speed without a verifiable
+getter, or invoke arbitrary FL API functions.
 
 Two FL limits shape this surface. A send's level cannot be set before the send
 exists, so create the route with fl_set_mixer_send first. And FL ignores both
@@ -110,21 +159,31 @@ cannot be undone and the wet/dry mix never moves -- so there is no tool for
 bypassing or blending an individual plug-in. Change the plug-in's own
 parameters instead, or the track's send levels.
 
-The fl_set_* tools apply the change and report what happened; they never ask
+The state-setting tools apply the change and report what happened; they never ask
 first. Every one of them reads FL back on a later idle tick and returns
 `verified`. Treat `verified: false` as the headline of that result, not a
 footnote: FL genuinely accepts writes it then ignores, so an unverified write
-means the control may not have moved. The setter is repeated inside a single
-write because FL drops a lone one, but an unproven write is not replayed
-afterwards and nothing is rolled back. Re-read the track before deciding what
-to do next. Each write
-asks FL for one undo point and reports `undo_point_created`, observed by
-watching FL's undo history rather than assumed -- treat false or null as "this
-may not be undoable with Ctrl+Z". The project is never saved.
+means the control may not have moved. Mixer and plug-in parameter handlers may
+repeat an FL-facing setter inside one dispatched command because FL drops a
+lone call; transport, direct Channel Rack state, routing, and step setters are
+issued once. No mutating command is dispatched again after an ambiguous
+transport outcome, an unverified result is not retried for the caller, and
+nothing that landed is rolled back. Re-read the target before deciding what to
+do next.
+
+Every mutation reports `undo_point_created`. Commands that ask FL for an undo
+point report whether one was observed by watching its undo history; transient
+transport actions and live-note dispatch truthfully return null. Treat false or
+null as "this may not be undoable with Ctrl+Z". The project is never saved.
+`fl_trigger_note` is a separate bounded note-on/note-off dispatch receipt. It
+has no authoritative state readback, returns no `verified` field, and must not
+be presented as a verified mutation or proof that sound was produced.
 
 Writes are dispatchable only when FL Studio itself was launched with
 FL_BRIDGE_ENABLE_WRITES=1. Without it the write tools fail with an error naming
-that flag, and reading still works normally.
+that flag, and reading still works normally. A write also refuses when the
+running bridge source hash does not match this package. Optional session and
+expected-before guards let callers reject a decision made against stale state.
 
 Call fl_get_capabilities before relying on a feature. Treat every unprofiled
 plug-in parameter as unsafe to modify, even though its normalized value can be
@@ -136,6 +195,12 @@ Those values do not establish a time-signature denominator or a complete
 marker map. Therefore state, presence, units, and normalized ticks remain
 unknown/null for every ordinary live result. Render endpoint inclusivity
 remains unknown and every response is structurally marked unsafe for rendering.
+
+Step reads can observe up to 512 cells. Verified step writes refuse grids over
+256 cells and require step_count + update_count + 8 <= 320 so the final digest
+recheck and batch remain atomic below the idle-tick call ceiling. A 256-cell
+grid therefore permits at most 56 updates per call. Split larger edits and call
+fl_get_step_sequence again for a fresh digest between successful batches.
 
 The server is pinned to FL Studio 2026 version 26.1.3 build 5336 or newer. It
 will refuse project inspection if the shared bridge is attached to FL Studio
@@ -182,17 +247,29 @@ LOCAL_READ_ONLY_VOLATILE = ToolAnnotations(
 #
 # * readOnlyHint=False, because these change the user's open project.
 # * destructiveHint=True, because these overwrite live project state. Each call
-#   asks FL for an undo point and reports whether one was observed, but an undo
-#   point is not guaranteed and does not make the mutation non-destructive.
-# * idempotentHint=True, because every one of them states an absolute value --
-#   including mute, which is a stated state and never a toggle -- so applying
-#   the same call twice leaves FL in the same place as applying it once.
+#   reports undo evidence; persistent writes request an FL undo point, while
+#   transient transport actions truthfully report null. An undo point is not
+#   guaranteed and does not make the mutation non-destructive.
+# * idempotentHint=False, even though targets are absolute: repeating a command
+#   can add undo history, and display/option searches can perform transient
+#   parameter writes. BridgeClient therefore never replays mutation outcomes.
 # * openWorldHint=True, because the outcome depends on a live FL Studio.
 MUTATING = ToolAnnotations(
     title="Change FL Studio state",
     readOnlyHint=False,
     destructiveHint=True,
-    idempotentHint=True,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+
+# Live-note audition sends one bounded note-on/off pair. It changes no saved
+# project state and has no authoritative state getter, so its result is an
+# explicit dispatch receipt rather than a fabricated verified write.
+EPHEMERAL_MUTATING = ToolAnnotations(
+    title="Audition a Channel Rack note",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
     openWorldHint=True,
 )
 
@@ -234,6 +311,20 @@ async def _write(method_name: str, **arguments):
     def invoke():
         writer = VerifiedWriter()
         return getattr(writer, method_name)(**arguments)
+
+    return await anyio.to_thread.run_sync(invoke)
+
+
+async def _performance_read(method_name: str, **arguments):
+    def invoke():
+        return getattr(TrackBInspector(), method_name)(**arguments)
+
+    return await anyio.to_thread.run_sync(invoke)
+
+
+async def _performance_write(method_name: str, **arguments):
+    def invoke():
+        return getattr(TrackBController(), method_name)(**arguments)
 
     return await anyio.to_thread.run_sync(invoke)
 
@@ -333,8 +424,20 @@ async def plugins_scan_loaded_plugins(
         bool,
         Field(description="Apply the conservative used-track heuristic."),
     ] = False,
-) -> LoadedPluginInventory:
-    """Return every effect currently loaded on the observed mixer tracks."""
+    include_channel_generators: Annotated[
+        bool,
+        Field(
+            description=(
+                "Also include Channel Rack generators with explicit "
+                "channel_generator targets. False preserves the 0.11 "
+                "mixer-effect-only response contract."
+            )
+        ),
+    ] = False,
+) -> LoadedPluginInventory | TargetedLoadedPluginInventory:
+    """Inventory loaded plug-ins without inserting or changing anything."""
+    if include_channel_generators:
+        return await _performance_read("scan_loaded_plugins", only_used=only_used)
     return await _run("scan_loaded_plugins", only_used=only_used)
 
 
@@ -344,13 +447,38 @@ async def plugins_scan_loaded_plugins(
 )
 async def plugins_inspect_parameter_map(
     track_index: Annotated[
-        int,
-        Field(description="Zero-based mixer track index.", ge=0),
-    ],
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based mixer track index. Supply it together with "
+                "slot_index, or use target, never both."
+            ),
+            ge=0,
+        ),
+    ] = None,
     slot_index: Annotated[
-        int,
-        Field(description="Zero-based effect slot index (0 through 9).", ge=0, le=9),
-    ],
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based effect slot (0 through 9). Supply it with "
+                "track_index, or use target, never both."
+            ),
+            ge=0,
+            le=9,
+        ),
+    ] = None,
+    target: Annotated[
+        PluginTarget | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit mixer_effect or global channel_generator target. "
+                "Mutually exclusive with legacy track_index/slot_index."
+            ),
+        ),
+    ] = None,
     limit: Annotated[
         int,
         Field(description="Number of parameter indices to scan in this page.", ge=1, le=128),
@@ -363,8 +491,22 @@ async def plugins_inspect_parameter_map(
         str | None,
         Field(default=None, description="Optional case-insensitive name substring."),
     ] = None,
-) -> PluginParameterPage:
+) -> PluginParameterPage | TargetedPluginParameterPage:
     """Read a bounded page of exposed parameters; never marks unknown controls safe."""
+    if target is not None:
+        return await _performance_read(
+            "plugin_parameters",
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            limit=limit,
+            offset=offset,
+            name_filter=name_filter,
+        )
+    if track_index is None or slot_index is None:
+        raise ValueError(
+            "target or both legacy track_index and slot_index must be supplied"
+        )
     return await _run(
         "plugin_parameters",
         track_index=track_index,
@@ -381,13 +523,38 @@ async def plugins_inspect_parameter_map(
 )
 async def plugins_scan_parameters(
     track_index: Annotated[
-        int,
-        Field(description="Zero-based mixer track index.", ge=0),
-    ],
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based mixer track index. Supply it together with "
+                "slot_index, or use target, never both."
+            ),
+            ge=0,
+        ),
+    ] = None,
     slot_index: Annotated[
-        int,
-        Field(description="Zero-based effect slot index (0 through 9).", ge=0, le=9),
-    ],
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based effect slot (0 through 9). Supply it with "
+                "track_index, or use target, never both."
+            ),
+            ge=0,
+            le=9,
+        ),
+    ] = None,
+    target: Annotated[
+        PluginTarget | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit mixer_effect or global channel_generator target. "
+                "Mutually exclusive with legacy track_index/slot_index."
+            ),
+        ),
+    ] = None,
     start: Annotated[
         int | None,
         Field(default=None, description="First index to examine. Defaults to 0.", ge=0),
@@ -413,7 +580,7 @@ async def plugins_scan_parameters(
         int | None,
         Field(default=None, description="Stop after collecting this many real controls.", ge=1),
     ] = None,
-) -> PluginParameterScan:
+) -> PluginParameterScan | TargetedPluginParameterScan:
     """De-pad a whole plug-in in one call; prefer this over paging a VST.
 
     FL reports a padded maximum rather than a parameter count for VST plug-ins
@@ -425,6 +592,21 @@ async def plugins_scan_parameters(
 
     Check `truncated` before treating the result as the whole plug-in.
     """
+    if target is not None:
+        return await _performance_read(
+            "scan_plugin_parameters",
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            start=start,
+            end=end,
+            max_indices=max_indices,
+            max_results=max_results,
+        )
+    if track_index is None or slot_index is None:
+        raise ValueError(
+            "target or both legacy track_index and slot_index must be supplied"
+        )
     return await _run(
         "scan_plugin_parameters",
         track_index=track_index,
@@ -499,6 +681,16 @@ async def fl_set_mixer_volume(
         bool,
         Field(description="Deliberately target the master bus at index 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Optional expected current fader position; refuse if it changed.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ] = None,
 ) -> VerifiedMixerVolumeWrite:
     """Set one mixer fader and report the readback FL gave on a later tick."""
     return await _write(
@@ -506,6 +698,8 @@ async def fl_set_mixer_volume(
         track_index=track_index,
         volume_normalized=volume_normalized,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -533,6 +727,16 @@ async def fl_set_mixer_pan(
         bool,
         Field(description="Deliberately target the master bus at index 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Optional expected current pan; refuse if it changed.",
+            ge=-1.0,
+            le=1.0,
+        ),
+    ] = None,
 ) -> VerifiedMixerPanWrite:
     """Set one mixer pan and report the readback FL gave on a later tick."""
     return await _write(
@@ -540,6 +744,8 @@ async def fl_set_mixer_pan(
         track_index=track_index,
         pan=pan,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -565,6 +771,14 @@ async def fl_set_mixer_mute(
         bool,
         Field(description="Deliberately target the master bus at index 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="Optional expected current mute state; refuse if it changed.",
+        ),
+    ] = None,
 ) -> VerifiedMixerMuteWrite:
     """Set one track's mute state and report the readback FL gave on a later tick."""
     return await _write(
@@ -572,6 +786,8 @@ async def fl_set_mixer_mute(
         track_index=track_index,
         muted=muted,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -617,6 +833,14 @@ async def fl_set_track_eq(
         bool,
         Field(description="Deliberately target the master bus at index 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedEqBandState | None,
+        Field(
+            default=None,
+            description="Optional expected gain and/or frequency; refuse if any supplied field changed.",
+        ),
+    ] = None,
 ) -> VerifiedMixerEqWrite:
     """Set gain and/or frequency on one built-in EQ band; at least one is required."""
     return await _write(
@@ -626,6 +850,8 @@ async def fl_set_track_eq(
         gain_normalized=gain_normalized,
         frequency_normalized=frequency_normalized,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -646,6 +872,15 @@ async def fl_set_mixer_name(
         bool,
         Field(description="Required to target mixer track 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        str | None,
+        Field(
+            default=None,
+            max_length=64,
+            description="Optional expected current name; refuse if it changed.",
+        ),
+    ] = None,
 ) -> VerifiedMixerNameWrite:
     """Rename one mixer track.
 
@@ -657,6 +892,8 @@ async def fl_set_mixer_name(
         track_index=track_index,
         name=name,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -681,6 +918,14 @@ async def fl_set_mixer_send(
         bool,
         Field(description="Required only to send FROM track 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="Optional expected current route state; refuse if it changed.",
+        ),
+    ] = None,
 ) -> VerifiedMixerSendWrite:
     """Route one mixer track to another, or stop routing it there.
 
@@ -694,6 +939,8 @@ async def fl_set_mixer_send(
         destination_track_index=destination_track_index,
         enabled=enabled,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -718,6 +965,16 @@ async def fl_set_mixer_send_level(
         bool,
         Field(description="Required only to send FROM track 0."),
     ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Optional expected current send amount; refuse if it changed.",
+            ge=0.0,
+            le=1.0,
+        ),
+    ] = None,
 ) -> VerifiedMixerSendLevelWrite:
     """Set how much of one track reaches another. 0.8 is unity, as on the fader.
 
@@ -731,6 +988,8 @@ async def fl_set_mixer_send_level(
         destination_track_index=destination_track_index,
         level_normalized=level_normalized,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -741,14 +1000,6 @@ async def fl_set_mixer_send_level(
     ),
 )
 async def fl_set_plugin_param_display(
-    track_index: Annotated[
-        int,
-        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
-    ],
-    slot_index: Annotated[
-        int,
-        Field(description="Zero-based effect slot index (0 through 9).", ge=0, le=9),
-    ],
     parameter: Annotated[
         int | str,
         Field(
@@ -768,6 +1019,39 @@ async def fl_set_plugin_param_display(
             )
         ),
     ],
+    track_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based mixer index. Supply it with slot_index, or "
+                "use target, never both."
+            ),
+            ge=0,
+        ),
+    ] = None,
+    slot_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based effect slot 0 through 9. Supply it with "
+                "track_index, or use target, never both."
+            ),
+            ge=0,
+            le=9,
+        ),
+    ] = None,
+    target: Annotated[
+        PluginTarget | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit mixer_effect or global channel_generator target. "
+                "Mutually exclusive with legacy track_index/slot_index."
+            ),
+        ),
+    ] = None,
     tolerance: Annotated[
         float | None,
         Field(
@@ -780,7 +1064,15 @@ async def fl_set_plugin_param_display(
         bool,
         Field(description="Required to target mixer track 0."),
     ] = False,
-) -> VerifiedPluginDisplayWrite:
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPluginParameterState | None,
+        Field(
+            default=None,
+            description="Optional expected normalized value and/or exact display text; refuse if any supplied field changed.",
+        ),
+    ] = None,
+) -> VerifiedPluginDisplayWrite | VerifiedTargetedPluginDisplayWrite:
     """Set a plug-in parameter using the units it displays, not a 0..1 guess.
 
     Prefer this over `fl_set_plugin_param` for anything with real units.
@@ -797,6 +1089,23 @@ async def fl_set_plugin_param_display(
     `fl_set_plugin_param_option`, which sets them by their option text and
     also reports every option the control accepts.
     """
+    if target is not None:
+        return await _performance_write(
+            "set_plugin_parameter_display",
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            parameter=parameter,
+            target_value=target_value,
+            tolerance=tolerance,
+            allow_master=allow_master,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+    if track_index is None or slot_index is None:
+        raise ValueError(
+            "target or both legacy track_index and slot_index must be supplied"
+        )
     return await _write(
         "set_plugin_parameter_display",
         track_index=track_index,
@@ -805,6 +1114,8 @@ async def fl_set_plugin_param_display(
         target_value=target_value,
         tolerance=tolerance,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -815,14 +1126,6 @@ async def fl_set_plugin_param_display(
     ),
 )
 async def fl_set_plugin_param_option(
-    track_index: Annotated[
-        int,
-        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
-    ],
-    slot_index: Annotated[
-        int,
-        Field(description="Zero-based effect slot index (0 through 9).", ge=0, le=9),
-    ],
     parameter: Annotated[
         int | str,
         Field(description="Parameter index, or text matched against names and displays."),
@@ -831,6 +1134,39 @@ async def fl_set_plugin_param_option(
         str,
         Field(description="The option text to land on, e.g. 'A', 'Major', 'Low Male'."),
     ],
+    track_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based mixer index. Supply it with slot_index, or "
+                "use target, never both."
+            ),
+            ge=0,
+        ),
+    ] = None,
+    slot_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based effect slot 0 through 9. Supply it with "
+                "track_index, or use target, never both."
+            ),
+            ge=0,
+            le=9,
+        ),
+    ] = None,
+    target: Annotated[
+        PluginTarget | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit mixer_effect or global channel_generator target. "
+                "Mutually exclusive with legacy track_index/slot_index."
+            ),
+        ),
+    ] = None,
     sweep_steps: Annotated[
         int,
         Field(
@@ -843,7 +1179,15 @@ async def fl_set_plugin_param_option(
         bool,
         Field(description="Required to target mixer track 0."),
     ] = False,
-) -> VerifiedPluginOptionWrite:
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPluginParameterState | None,
+        Field(
+            default=None,
+            description="Optional expected normalized value and/or exact display text; refuse if any supplied field changed.",
+        ),
+    ] = None,
+) -> VerifiedPluginOptionWrite | VerifiedTargetedPluginOptionWrite:
     """Set a parameter that shows words rather than numbers: Key, Scale, Input Type.
 
     Use this where `fl_set_plugin_param_display` refuses. That tool searches on
@@ -858,6 +1202,23 @@ async def fl_set_plugin_param_option(
     The result carries `options` -- the whole enumeration, in order -- so one
     call is also how you discover what a control accepts.
     """
+    if target is not None:
+        return await _performance_write(
+            "set_plugin_parameter_option",
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            parameter=parameter,
+            option=option,
+            sweep_steps=sweep_steps,
+            allow_master=allow_master,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+    if track_index is None or slot_index is None:
+        raise ValueError(
+            "target or both legacy track_index and slot_index must be supplied"
+        )
     return await _write(
         "set_plugin_parameter_option",
         track_index=track_index,
@@ -866,6 +1227,8 @@ async def fl_set_plugin_param_option(
         option=option,
         sweep_steps=sweep_steps,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -874,17 +1237,6 @@ async def fl_set_plugin_param_option(
     annotations=MUTATING.model_copy(update={"title": "Set one plug-in parameter"}),
 )
 async def fl_set_plugin_param(
-    track_index: Annotated[
-        int,
-        Field(
-            description="Zero-based mixer index. Index 0 is Master and is refused unless allow_master is true.",
-            ge=0,
-        ),
-    ],
-    slot_index: Annotated[
-        int,
-        Field(description="Zero-based effect slot index (0 through 9).", ge=0, le=9),
-    ],
     parameter_index: Annotated[
         int,
         Field(
@@ -896,12 +1248,69 @@ async def fl_set_plugin_param(
         float,
         Field(description="Parameter value, normalized 0.0 to 1.0.", ge=0.0, le=1.0),
     ],
+    track_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based mixer index. Supply it with slot_index, or "
+                "use target, never both."
+            ),
+            ge=0,
+        ),
+    ] = None,
+    slot_index: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Legacy zero-based effect slot 0 through 9. Supply it with "
+                "track_index, or use target, never both."
+            ),
+            ge=0,
+            le=9,
+        ),
+    ] = None,
+    target: Annotated[
+        PluginTarget | None,
+        Field(
+            default=None,
+            description=(
+                "Explicit mixer_effect or global channel_generator target. "
+                "Mutually exclusive with legacy track_index/slot_index."
+            ),
+        ),
+    ] = None,
     allow_master: Annotated[
         bool,
         Field(description="Deliberately target the master bus at index 0."),
     ] = False,
-) -> VerifiedPluginParameterWrite:
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPluginParameterState | None,
+        Field(
+            default=None,
+            description="Optional expected normalized value and/or exact display text; refuse if any supplied field changed.",
+        ),
+    ] = None,
+) -> VerifiedPluginParameterWrite | VerifiedTargetedPluginParameterWrite:
     """Set one plug-in parameter; verified from FL's display string changing."""
+    if target is not None:
+        return await _performance_write(
+            "set_plugin_parameter",
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            parameter_index=parameter_index,
+            normalized_value=normalized_value,
+            allow_master=allow_master,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+    if track_index is None or slot_index is None:
+        raise ValueError(
+            "target or both legacy track_index and slot_index must be supplied"
+        )
     return await _write(
         "set_plugin_parameter",
         track_index=track_index,
@@ -909,6 +1318,281 @@ async def fl_set_plugin_param(
         parameter_index=parameter_index,
         normalized_value=normalized_value,
         allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+# ---------------------------------------------------------------------------
+# transport, Channel Rack, and current-pattern performance surface
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="fl_set_playing",
+    annotations=MUTATING.model_copy(update={"title": "Set playback state"}),
+)
+async def fl_set_playing(
+    playing: Annotated[bool, Field(description="Absolute playing state; never a toggle.")],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPlayingState | None,
+        Field(default=None, description="Optional expected current playing state."),
+    ] = None,
+) -> VerifiedPlayingWrite:
+    """Set playback to an absolute state and verify it on a later FL idle tick."""
+    return await _performance_write(
+        "set_playing", playing=playing, session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_stop",
+    annotations=MUTATING.model_copy(update={"title": "Stop and rewind playback"}),
+)
+async def fl_stop(
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedStopState | None,
+        Field(default=None, description="Optional expected playing and/or position state."),
+    ] = None,
+) -> VerifiedStopWrite:
+    """Stop playback, set normalized position to zero, and verify both fields."""
+    return await _performance_write(
+        "stop", session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_song_position",
+    annotations=MUTATING.model_copy(update={"title": "Set the song position"}),
+)
+async def fl_set_song_position(
+    position_normalized: Annotated[
+        float, Field(description="Absolute normalized playhead position.", ge=0.0, le=1.0)
+    ],
+    tolerance: Annotated[
+        float, Field(description="Maximum normalized readback error.", ge=0.0, le=0.05)
+    ] = 0.0001,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedSongPositionState | None,
+        Field(default=None, description="Optional expected current normalized position."),
+    ] = None,
+) -> VerifiedSongPositionWrite:
+    """Set a stopped transport's absolute normalized playhead position."""
+    return await _performance_write(
+        "set_song_position", position_normalized=position_normalized,
+        tolerance=tolerance, session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_loop_mode",
+    annotations=MUTATING.model_copy(update={"title": "Set the transport loop mode"}),
+)
+async def fl_set_loop_mode(
+    loop_mode: Annotated[
+        str, Field(description="Absolute loop mode: 'pattern' or 'song'.", pattern=r"^(pattern|song)$")
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedLoopModeState | None,
+        Field(default=None, description="Optional expected current loop mode."),
+    ] = None,
+) -> VerifiedLoopModeWrite:
+    """Set Pattern or Song loop mode without exposing FL's toggle-only API."""
+    return await _performance_write(
+        "set_loop_mode", loop_mode=loop_mode,
+        session_fingerprint=session_fingerprint, expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_tempo",
+    annotations=MUTATING.model_copy(update={"title": "Set the project tempo"}),
+)
+async def fl_set_tempo(
+    tempo_bpm: Annotated[
+        float, Field(description="Absolute project tempo in BPM.", ge=10.0, le=522.0)
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedTempoState | None,
+        Field(default=None, description="Optional expected current tempo in BPM."),
+    ] = None,
+) -> VerifiedTempoWrite:
+    """Set project tempo while stopped and verify BPM on a later FL idle tick."""
+    return await _performance_write(
+        "set_tempo", tempo_bpm=tempo_bpm,
+        session_fingerprint=session_fingerprint, expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_list_channels",
+    annotations=READ_ONLY.model_copy(update={"title": "List Channel Rack channels"}),
+)
+async def fl_list_channels() -> ChannelList:
+    """List globally addressed channels, mix state, routing, and generator identity."""
+    return await _performance_read("list_channels")
+
+
+@mcp.tool(
+    name="fl_set_channel_mix",
+    annotations=MUTATING.model_copy(update={"title": "Set Channel Rack mix fields"}),
+)
+async def fl_set_channel_mix(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    volume_normalized: Annotated[
+        float | None, Field(default=None, description="Absolute channel volume.", ge=0.0, le=1.0)
+    ] = None,
+    pan: Annotated[
+        float | None, Field(default=None, description="Absolute channel pan.", ge=-1.0, le=1.0)
+    ] = None,
+    muted: Annotated[
+        bool | None, Field(default=None, description="Absolute channel mute state.")
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelMixState | None,
+        Field(default=None, description="Optional guarded channel fingerprint and/or mix fields."),
+    ] = None,
+) -> VerifiedChannelMixWrite:
+    """Set channel volume, pan, and/or mute with per-field readback proof."""
+    return await _performance_write(
+        "set_channel_mix", channel_index=channel_index,
+        volume_normalized=volume_normalized, pan=pan, muted=muted,
+        session_fingerprint=session_fingerprint, expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_channel_identity",
+    annotations=MUTATING.model_copy(update={"title": "Set Channel Rack identity fields"}),
+)
+async def fl_set_channel_identity(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    name: Annotated[
+        str | None, Field(default=None, description="Absolute channel name.", max_length=64)
+    ] = None,
+    color: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description=(
+                "Absolute FL 0x--BBGGRR color word. FL owns the high byte, so "
+                "write verification compares the low 24 color bits."
+            ),
+            ge=0,
+            le=0xFFFFFFFF,
+        ),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelIdentityState | None,
+        Field(default=None, description="Optional guarded channel fingerprint/name/color."),
+    ] = None,
+) -> VerifiedChannelIdentityWrite:
+    """Set a channel's name and/or color with per-field readback proof."""
+    return await _performance_write(
+        "set_channel_identity", channel_index=channel_index, name=name, color=color,
+        session_fingerprint=session_fingerprint, expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_route_channel_to_mixer",
+    annotations=MUTATING.model_copy(update={"title": "Route a channel to the mixer"}),
+)
+async def fl_route_channel_to_mixer(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    mixer_destination: Annotated[
+        int, Field(description="Absolute mixer destination; -1 leaves it unassigned.", ge=-1)
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelRouteState | None,
+        Field(default=None, description="Optional guarded channel fingerprint/destination."),
+    ] = None,
+) -> VerifiedChannelRouteWrite:
+    """Set one global channel's absolute mixer destination and verify it."""
+    return await _performance_write(
+        "route_channel_to_mixer", channel_index=channel_index,
+        mixer_destination=mixer_destination, session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_get_step_sequence",
+    annotations=READ_ONLY.model_copy(update={"title": "Read a step sequence"}),
+)
+async def fl_get_step_sequence(
+    pattern_number: Annotated[int, Field(description="Explicit current pattern number.", ge=1)],
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+) -> StepSequenceObservation:
+    """Read an explicit current-pattern/channel grid and its conflict digest."""
+    return await _performance_read(
+        "get_step_sequence", pattern_number=pattern_number, channel_index=channel_index,
+    )
+
+
+@mcp.tool(
+    name="fl_set_step_sequence",
+    annotations=MUTATING.model_copy(update={"title": "Set absolute step cells"}),
+)
+async def fl_set_step_sequence(
+    pattern_number: Annotated[int, Field(description="Explicit current pattern number.", ge=1)],
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    expected_digest: Annotated[
+        str, Field(description="Required digest from fl_get_step_sequence.", pattern=r"^[0-9a-f]{64}$")
+    ],
+    updates: Annotated[
+        list[StepCellUpdate], Field(
+            description="Unique absolute cell states.",
+            min_length=1,
+            max_length=MAX_VERIFIED_STEP_COUNT,
+        )
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+) -> VerifiedStepSequenceWrite:
+    """Set absolute current-pattern cells only if the observed grid digest still matches."""
+    return await _performance_write(
+        "set_step_sequence", pattern_number=pattern_number,
+        channel_index=channel_index, expected_digest=expected_digest,
+        updates=updates, session_fingerprint=session_fingerprint,
+    )
+
+
+@mcp.tool(
+    name="fl_trigger_note",
+    annotations=EPHEMERAL_MUTATING,
+)
+async def fl_trigger_note(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    note: Annotated[int, Field(description="MIDI note number.", ge=0, le=127)],
+    velocity: Annotated[int, Field(description="MIDI note-on velocity.", ge=1, le=127)],
+    duration_ms: Annotated[
+        int, Field(description="Bounded audition duration in milliseconds.", ge=20, le=5000)
+    ] = 250,
+    midi_channel: Annotated[
+        int, Field(description="FL MIDI channel override; -1 uses the default.", ge=-1, le=15)
+    ] = -1,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelTargetState | None,
+        Field(default=None, description="Optional observation-scoped channel fingerprint guard."),
+    ] = None,
+) -> LiveNoteDispatch:
+    """Audition a global channel with a bounded note-on/off dispatch receipt."""
+    return await _performance_write(
+        "trigger_note", channel_index=channel_index, note=note, velocity=velocity,
+        duration_ms=duration_ms, midi_channel=midi_channel,
+        session_fingerprint=session_fingerprint, expected_before=expected_before,
     )
 
 

@@ -73,6 +73,41 @@ the yield, `verified: false` means only that the later read did not prove the
 requested outcome. It does not trigger a further replay of the write, and it
 does not roll anything back.
 
+## Playback speed has a setter but no authoritative getter
+
+The public transport module exposes `setPlaybackSpeed`, but no matching getter
+that can prove the actual speed on a later FL idle tick. Postfader therefore
+does not expose playback-speed control. This is a verification-boundary choice,
+not a claim that FL Studio itself cannot change playback speed.
+
+## Channel and step APIs require explicit index scope
+
+Channel APIs can interpret an index relative to a selected group unless the
+global-index flag is supplied. Postfader lists and mutates Channel Rack targets
+only with global indexing, echoes that scope in every contract, and uses an
+observation-scoped channel fingerprint to catch a changed or reordered target.
+FL exposes no durable channel UUID, so that fingerprint must not be treated as
+project identity.
+
+FL's channel-color getter can return a signed Python integer even though the
+public contract uses the equivalent unsigned 32-bit `0x--BBGGRR` word. The
+high byte is FL-owned: a low-24-bit setter request can read back with a
+different high byte. Postfader preserves the exact observed 32-bit word in
+reads and fingerprints, but expected-before guards and later-tick write proof
+compare the controllable low 24 color bits.
+
+`channels.getGridBit` and `channels.setGridBit` address only the current
+pattern. They do not expose an arbitrary-pattern read surface. Step reads and
+writes therefore require an explicit `pattern_number`, compare it with the
+current pattern before and after observation, and refuse rather than switching
+patterns. Writes also require the canonical grid digest returned by the read
+and recheck it immediately before any cell changes.
+
+Generator parameters use a different address form from mixer effects: global
+channel index plus `slotIndex=-1`. Public contracts keep that as the
+`channel_generator` variant of a discriminated target; mixer effects retain
+the strict 0–9 slot range.
+
 ## Numeric and displayed plug-in values can disagree temporarily
 
 `plugins.getParamValue()` can lag while `plugins.getParamValueString()` already

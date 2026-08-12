@@ -21,9 +21,15 @@ import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
 
 from fl_studio_mcp.bridge_client import BridgeClient, BridgeError, MAX_WIRE_ID  # noqa: E402
+from fl_studio_mcp.bridge_install import (  # noqa: E402
+    BridgeInstallError,
+    expected_bridge_deployment,
+)
 from fl_studio_mcp.contracts import (  # noqa: E402
     CapabilityStatus,
     ConnectionInfo,
+    ExpectedEqBandState,
+    ExpectedPluginParameterState,
     MixerTrackSummary,
     PluginParameter,
     SelectedRangeObservation,
@@ -92,6 +98,18 @@ class ConfigurablePingClient(DirectFakeClient):
         return dict(self.response)
 
 
+class RefuseDispatchClient(ConfigurablePingClient):
+    """A configurable handshake whose command path is a test tripwire."""
+
+    def __init__(self, response):
+        super().__init__(response)
+        self.commands = []
+
+    def call(self, cmd, **args):
+        self.commands.append((cmd, dict(args)))
+        raise AssertionError("a rejected handshake reached %r" % cmd)
+
+
 class DownClient(DirectFakeClient):
     def ping(self):
         raise BridgeError("fixture disconnected")
@@ -100,6 +118,8 @@ class DownClient(DirectFakeClient):
 # The handshake a bridge produces when FL Studio was launched with
 # FL_BRIDGE_ENABLE_WRITES=1, and the one it produces when it was not. Only the
 # bridge decides this; there is no client-side enable to set here.
+EXPECTED_BRIDGE_DIGEST = expected_bridge_deployment()[1]
+SESSION_FINGERPRINT = bridge.SESSION_FINGERPRINT
 WRITE_ENABLED_PING = {
     "pong": True,
     "protocol": 2,
@@ -108,6 +128,8 @@ WRITE_ENABLED_PING = {
     "midi_scripting_api_version": 44,
     "bridge_mode": "write_test",
     "verified_writes_enabled": True,
+    "bridge_source_sha256": EXPECTED_BRIDGE_DIGEST,
+    "session_fingerprint": SESSION_FINGERPRINT,
 }
 WRITES_DISABLED_PING = dict(
     WRITE_ENABLED_PING, bridge_mode="read_only", verified_writes_enabled=False
@@ -710,6 +732,76 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 self.assertTrue(info.compatible)
                 self.assertFalse(info.verified_writes_enabled)
 
+    def test_connection_retains_matching_bridge_provenance_and_session(self):
+        info = ReadOnlyInspector(
+            ReadOnlyGateway(ConfigurablePingClient(WRITE_ENABLED_PING))
+        ).connection_info()
+
+        self.assertTrue(info.compatible)
+        self.assertEqual(info.bridge_source_sha256, EXPECTED_BRIDGE_DIGEST)
+        self.assertEqual(info.expected_bridge_source_sha256, EXPECTED_BRIDGE_DIGEST)
+        self.assertEqual(info.bridge_provenance, "matching")
+        self.assertIs(info.bridge_provenance_verified, True)
+        self.assertEqual(info.session_fingerprint, SESSION_FINGERPRINT)
+        self.assertEqual(info.warnings, [])
+
+    def test_reads_warn_but_continue_for_untrusted_bridge_provenance(self):
+        cases = {
+            "missing": None,
+            "malformed": "not-a-sha256",
+            "mismatched": "0" * 64,
+        }
+        for provenance, digest in cases.items():
+            response = dict(WRITE_ENABLED_PING)
+            if digest is None:
+                response.pop("bridge_source_sha256")
+            else:
+                response["bridge_source_sha256"] = digest
+            with self.subTest(provenance=provenance):
+                inspector = ReadOnlyInspector(
+                    ReadOnlyGateway(ConfigurablePingClient(response))
+                )
+                info = inspector.connection_info()
+                self.assertTrue(info.connected)
+                self.assertTrue(info.compatible)
+                self.assertEqual(info.bridge_provenance, provenance)
+                self.assertIs(info.bridge_provenance_verified, False)
+                self.assertTrue(info.warnings)
+                # The warning must reach ordinary observations, not only the
+                # connection model returned by a capabilities request.
+                tracks = inspector.list_mixer_tracks(max_tracks=1)
+                self.assertTrue(
+                    any("write" in warning.lower() for warning in tracks.warnings),
+                    tracks.warnings,
+                )
+
+    def test_malformed_session_fingerprint_does_not_break_reads(self):
+        response = dict(WRITE_ENABLED_PING, session_fingerprint="not-a-session")
+        inspector = ReadOnlyInspector(ReadOnlyGateway(ConfigurablePingClient(response)))
+        info = inspector.connection_info()
+
+        self.assertTrue(info.compatible)
+        self.assertIsNone(info.session_fingerprint)
+        self.assertTrue(any("session fingerprint" in w for w in info.warnings))
+        self.assertEqual(inspector.project_summary().project_title, "Synthetic Test Project")
+
+    def test_reads_continue_when_packaged_bridge_digest_is_unavailable(self):
+        with mock.patch(
+            "fl_studio_mcp.readonly_inspector.expected_bridge_deployment",
+            side_effect=BridgeInstallError("fixture source missing"),
+        ):
+            inspector = ReadOnlyInspector(
+                ReadOnlyGateway(ConfigurablePingClient(WRITE_ENABLED_PING))
+            )
+            info = inspector.connection_info()
+            self.assertTrue(info.compatible)
+            self.assertEqual(info.bridge_provenance, "unavailable")
+            self.assertIs(info.bridge_provenance_verified, False)
+            self.assertTrue(any("could not be checked" in w for w in info.warnings))
+            self.assertEqual(
+                inspector.project_summary().project_title, "Synthetic Test Project"
+            )
+
     def test_offline_capabilities_do_not_claim_current_reads(self):
         report = ReadOnlyInspector(ReadOnlyGateway(DownClient())).capabilities()
         by_name = {item.capability: item.status for item in report.capabilities}
@@ -731,6 +823,16 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 display_text_available=False,
                 safe_to_modify=True,
             )
+
+    def test_structured_expected_before_models_require_a_real_guard(self):
+        for model in (ExpectedEqBandState, ExpectedPluginParameterState):
+            with self.subTest(model=model.__name__):
+                with self.assertRaises(ValidationError):
+                    model()
+        with self.assertRaises(ValidationError):
+            ExpectedEqBandState(gain_normalized=0.5, surprise=0.5)
+        with self.assertRaises(ValidationError):
+            ExpectedPluginParameterState(normalized_value=1.5)
 
     def test_observations_explicitly_admit_non_atomicity(self):
         report = self.inspector.capture(parameter_limit=4, max_plugins=2)
@@ -774,10 +876,10 @@ class ReadOnlyInspectorTests(unittest.TestCase):
 
     def test_mcp_surface_is_exactly_the_published_tool_set(self):
         # This used to be a blanket ban on any tool whose name contained
-        # "set_", which encoded a product that could only read. The ten
-        # verified writes are now part of the surface, so the guard is an exact
-        # set instead: an unintended tool appearing still fails here, and so
-        # does one silently disappearing.
+        # "set_", which encoded a product that could only read. The narrowly
+        # scoped mutations are now part of the surface, so the guard is an
+        # exact set instead: an unintended tool appearing still fails here,
+        # and so does one silently disappearing.
         tools = asyncio.run(mcp.list_tools())
         names = {tool.name for tool in tools}
         read_tools = {
@@ -791,6 +893,8 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "plugins_inspect_parameter_map",
             "plugins_scan_parameters",
             "copilot_capture_readonly_inspection",
+            "fl_list_channels",
+            "fl_get_step_sequence",
         }
         write_tools = {
             "fl_set_mixer_volume",
@@ -803,7 +907,17 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "fl_set_plugin_param",
             "fl_set_plugin_param_display",
             "fl_set_plugin_param_option",
+            "fl_set_playing",
+            "fl_stop",
+            "fl_set_song_position",
+            "fl_set_loop_mode",
+            "fl_set_tempo",
+            "fl_set_channel_mix",
+            "fl_set_channel_identity",
+            "fl_route_channel_to_mixer",
+            "fl_set_step_sequence",
         }
+        audition_tools = {"fl_trigger_note"}
         audio_tools = {
             # File measurement, not FL control: these read a rendered
             # bounce from disk and never reach the bridge.
@@ -812,16 +926,15 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "audio_analyze_masking",
             "audio_find_recent_bounces",
         }
-        self.assertEqual(names, read_tools | write_tools | audio_tools)
-        # Still no transport control, undo, render, approval ceremony or
-        # reflective escape hatch, whatever it might be called.
+        self.assertEqual(names, read_tools | write_tools | audition_tools | audio_tools)
+        # Still no undo, render, approval ceremony or reflective escape hatch,
+        # whatever it might be called.
         prohibited_fragments = (
             "apply",
             "rollback",
             "undo",
             "render",
             "api_call",
-            "transport_set",
             "save",
             "exec",
             "eval",
@@ -843,7 +956,25 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 # point is useful recovery evidence, not a non-destructive hint.
                 self.assertIs(annotations.read_only_hint, False)
                 self.assertIs(annotations.destructive_hint, True)
-                self.assertIs(annotations.idempotent_hint, True)
+                # Absolute targets still must not invite client retries: a
+                # repeat can add undo history or repeat a parameter sweep.
+                self.assertIs(annotations.idempotent_hint, False)
+                properties = by_name[name].input_schema["properties"]
+                required = set(by_name[name].input_schema.get("required", []))
+                self.assertIn("session_fingerprint", properties)
+                self.assertNotIn("session_fingerprint", required)
+                if name == "fl_set_step_sequence":
+                    self.assertNotIn("expected_before", properties)
+                    self.assertIn("expected_digest", properties)
+                    self.assertIn("expected_digest", required)
+                else:
+                    self.assertIn("expected_before", properties)
+                    self.assertNotIn("expected_before", required)
+        annotations = by_name["fl_trigger_note"].annotations
+        self.assertIsNotNone(annotations)
+        self.assertIs(annotations.read_only_hint, False)
+        self.assertIs(annotations.destructive_hint, False)
+        self.assertIs(annotations.idempotent_hint, False)
         self.assertTrue(all(tool.output_schema for tool in tools))
         selection_schema = next(
             tool.output_schema
@@ -941,6 +1072,76 @@ class VerifiedWriteTests(unittest.TestCase):
                     WriteGateway(self.client).call(command)
         self.assertEqual(self.dispatched(), [])
 
+    def test_allow_master_requires_a_literal_boolean_on_all_ten_writes(self):
+        calls = (
+            (
+                "set_mixer_volume",
+                {"track_index": 0, "volume_normalized": 0.5},
+            ),
+            ("set_mixer_pan", {"track_index": 0, "pan": 0.25}),
+            ("set_mixer_mute", {"track_index": 0, "muted": True}),
+            (
+                "set_mixer_eq",
+                {"track_index": 0, "band_index": 1, "gain_normalized": 0.6},
+            ),
+            ("set_mixer_name", {"track_index": 0, "name": "Master Test"}),
+            (
+                "set_mixer_send",
+                {
+                    "track_index": 0,
+                    "destination_track_index": 3,
+                    "enabled": True,
+                },
+            ),
+            (
+                "set_mixer_send_level",
+                {
+                    "track_index": 0,
+                    "destination_track_index": 3,
+                    "level_normalized": 0.5,
+                },
+            ),
+            (
+                "set_plugin_parameter",
+                {
+                    "track_index": 0,
+                    "slot_index": 0,
+                    "parameter_index": 0,
+                    "normalized_value": 0.4,
+                },
+            ),
+            (
+                "set_plugin_parameter_display",
+                {
+                    "track_index": 0,
+                    "slot_index": 0,
+                    "parameter": 0,
+                    "target_value": 20.0,
+                },
+            ),
+            (
+                "set_plugin_parameter_option",
+                {
+                    "track_index": 0,
+                    "slot_index": 0,
+                    "parameter": 0,
+                    "option": "On",
+                },
+            ),
+        )
+        before = state_fingerprint()
+        for method, arguments in calls:
+            with self.subTest(method=method):
+                with self.assertRaises(ValueError) as caught:
+                    getattr(self.writer, method)(
+                        **arguments,
+                        allow_master="false",
+                    )
+                self.assertIn("allow_master", str(caught.exception))
+        self.assertEqual(self.dispatched(), [])
+        self.assertEqual(_state.UNDO, [])
+        self.assertEqual(state_fingerprint(), before)
+
     def test_every_write_refuses_when_the_bridge_cannot_write(self):
         writer = self.unwritable()
         calls = (
@@ -970,6 +1171,44 @@ class VerifiedWriteTests(unittest.TestCase):
                 self.assertIn("FL_BRIDGE_ENABLE_WRITES=1", message)
                 self.assertIn("bridge_mode='read_only'", message)
         self.assertEqual(before, state_fingerprint())
+
+    def test_writes_fail_closed_for_every_untrusted_provenance_state(self):
+        cases = {
+            "missing": None,
+            "malformed": "not-a-sha256",
+            "mismatched": "0" * 64,
+        }
+        for provenance, digest in cases.items():
+            response = dict(WRITE_ENABLED_PING)
+            if digest is None:
+                response.pop("bridge_source_sha256")
+            else:
+                response["bridge_source_sha256"] = digest
+            client = RefuseDispatchClient(response)
+            writer = VerifiedWriter(WriteGateway(client))
+            with self.subTest(provenance=provenance):
+                before = state_fingerprint()
+                with self.assertRaises(RuntimeError) as caught:
+                    writer.set_mixer_volume(
+                        track_index=3, volume_normalized=0.5
+                    )
+                self.assertIn(provenance, str(caught.exception).lower())
+                self.assertEqual(client.commands, [])
+                self.assertEqual(state_fingerprint(), before)
+
+    def test_writes_fail_closed_when_expected_provenance_is_unavailable(self):
+        client = RefuseDispatchClient(WRITE_ENABLED_PING)
+        writer = VerifiedWriter(WriteGateway(client))
+        before = state_fingerprint()
+        with mock.patch(
+            "fl_studio_mcp.readonly_inspector.expected_bridge_deployment",
+            side_effect=BridgeInstallError("fixture source missing"),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                writer.set_mixer_volume(track_index=3, volume_normalized=0.5)
+        self.assertIn("unavailable", str(caught.exception).lower())
+        self.assertEqual(client.commands, [])
+        self.assertEqual(state_fingerprint(), before)
 
     # -- mixer volume ----------------------------------------------------
 
@@ -1180,6 +1419,30 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertTrue(any("UNVERIFIED" in w for w in result.warnings))
         self.assertIn("could not land", result.verification_summary)
         self.assertEqual(result.after.display_text, "50 ms")
+
+    def test_ambiguous_parameter_name_is_refused_and_index_disambiguates(self):
+        plugin = _state.TRACKS[3].slots[1]
+        plugin.param_names[2] = "Attack Time"
+        plugin.param_names[3] = "Attack Curve"
+        before = state_fingerprint()
+
+        with self.assertRaises(Exception) as caught:
+            self.writer.set_plugin_parameter_display(
+                track_index=3, slot_index=1, parameter="Attack", target_value=30.0
+            )
+        message = str(caught.exception).lower()
+        self.assertIn("ambiguous", message)
+        self.assertIn("attack time", message)
+        self.assertIn("attack curve", message)
+        self.assertIn("index", message)
+        self.assertEqual(state_fingerprint(), before)
+        self.assertEqual(_state.UNDO, [])
+
+        result = self.writer.set_plugin_parameter_display(
+            track_index=3, slot_index=1, parameter=2, target_value=30.0
+        )
+        self.assertEqual(result.parameter_index, 2)
+        self.assertEqual(result.matched_on, "index")
 
     def test_display_write_refuses_a_control_with_no_number_to_search(self):
         plugin = _state.TRACKS[3].slots[1]
@@ -1474,6 +1737,39 @@ class VerifiedWriteToolTests(unittest.TestCase):
             "option": "A",
         },
     }
+    EXPECTED_BEFORE = {
+        "fl_set_mixer_volume": 0.72,
+        "fl_set_mixer_pan": 0.0,
+        "fl_set_mixer_mute": False,
+        "fl_set_track_eq": {"gain_normalized": 0.5},
+        "fl_set_mixer_name": "Lead Vox",
+        "fl_set_mixer_send": False,
+        "fl_set_mixer_send_level": 0.8,
+        "fl_set_plugin_param": {
+            "normalized_value": 0.6,
+            "display_text": "60.0 %",
+        },
+        "fl_set_plugin_param_display": {
+            "normalized_value": 0.6,
+            "display_text": "60.0 %",
+        },
+        "fl_set_plugin_param_option": {
+            "normalized_value": 0.0,
+            "display_text": "C",
+        },
+    }
+    STALE_EXPECTED_BEFORE = {
+        "fl_set_mixer_volume": 0.1,
+        "fl_set_mixer_pan": 0.25,
+        "fl_set_mixer_mute": True,
+        "fl_set_track_eq": {"gain_normalized": 0.1},
+        "fl_set_mixer_name": "A Different Track",
+        "fl_set_mixer_send": True,
+        "fl_set_mixer_send_level": 0.1,
+        "fl_set_plugin_param": {"normalized_value": 0.1},
+        "fl_set_plugin_param_display": {"display_text": "not the live display"},
+        "fl_set_plugin_param_option": {"display_text": "not the live option"},
+    }
     OUT_OF_RANGE = {
         "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 1.5},
         "fl_set_mixer_pan": {"track_index": 3, "pan": -4.0},
@@ -1543,11 +1839,72 @@ class VerifiedWriteToolTests(unittest.TestCase):
                 )
                 self.assertIs(body["undo_point_created"], True)
                 self.assertIs(body["project_saved"], False)
+                self.assertEqual(body["session_fingerprint"], SESSION_FINGERPRINT)
+                self.assertIs(body["session_precondition_applied"], False)
+                self.assertIs(body["expected_before_applied"], False)
                 self.assertEqual(body["track_index"], arguments["track_index"])
                 self.assertIs(body["targeted_master"], False)
                 self.assertEqual(body["warnings"], [])
                 self.assertTrue(body["verification_summary"])
                 self.assertEqual(len(self.client.commands), 1)
+
+    def test_all_ten_tools_accept_and_report_matching_optional_preconditions(self):
+        for name, arguments in self.TOOLS.items():
+            with self.subTest(tool=name):
+                _state.reset()
+                self.client = WriteEnabledFakeClient()
+                guarded = dict(
+                    arguments,
+                    session_fingerprint=SESSION_FINGERPRINT,
+                    expected_before=self.EXPECTED_BEFORE[name],
+                )
+                body = self.structured(self.call(name, guarded))
+                self.assertIs(body["verified"], True)
+                self.assertEqual(body["session_fingerprint"], SESSION_FINGERPRINT)
+                self.assertIs(body["session_precondition_applied"], True)
+                self.assertIs(body["expected_before_applied"], True)
+                self.assertEqual(len(self.client.commands), 1)
+                sent = self.client.commands[0][1]
+                self.assertEqual(sent["session_fingerprint"], SESSION_FINGERPRINT)
+                self.assertEqual(sent["expected_before"], self.EXPECTED_BEFORE[name])
+
+    def test_all_ten_tools_refuse_stale_expected_before_without_mutating_or_undo(self):
+        for name, arguments in self.TOOLS.items():
+            with self.subTest(tool=name):
+                _state.reset()
+                self.client = WriteEnabledFakeClient()
+                before = state_fingerprint()
+                stale = dict(
+                    arguments,
+                    session_fingerprint=SESSION_FINGERPRINT,
+                    expected_before=self.STALE_EXPECTED_BEFORE[name],
+                )
+                with self.assertRaises(ToolError) as caught:
+                    self.call(name, stale)
+                self.assertIn("expected_before", str(caught.exception))
+                self.assertIn("nothing was changed", str(caught.exception))
+                self.assertEqual(state_fingerprint(), before)
+                self.assertEqual(_state.UNDO, [])
+                self.assertEqual(len(self.client.commands), 1)
+
+    def test_all_ten_tools_refuse_a_stale_session_without_mutating_or_undo(self):
+        stale_session = "f" * 32
+        if stale_session == SESSION_FINGERPRINT:
+            stale_session = "e" * 32
+        for name, arguments in self.TOOLS.items():
+            with self.subTest(tool=name):
+                _state.reset()
+                self.client = WriteEnabledFakeClient()
+                before = state_fingerprint()
+                stale = dict(arguments, session_fingerprint=stale_session)
+                with self.assertRaises(ToolError) as caught:
+                    self.call(name, stale)
+                self.assertIn("session", str(caught.exception).lower())
+                self.assertEqual(state_fingerprint(), before)
+                self.assertEqual(_state.UNDO, [])
+                # The fresh handshake catches this before the command is sent;
+                # the bridge repeats the check to close the ping/command race.
+                self.assertEqual(self.client.commands, [])
 
     def test_plugin_write_exposes_proof_strength_through_mcp(self):
         body = self.structured(
@@ -1629,6 +1986,35 @@ class VerifiedWriteToolTests(unittest.TestCase):
                 self.client = WriteEnabledFakeClient()
                 with self.assertRaises(ToolError):
                     self.call(name, dict(arguments, nudge_by=0.1))
+                self.assertEqual(self.client.commands, [])
+
+    def test_mcp_schema_rejects_malformed_preconditions_before_dispatch(self):
+        cases = (
+            (
+                "fl_set_mixer_volume",
+                dict(self.TOOLS["fl_set_mixer_volume"], session_fingerprint="short"),
+            ),
+            (
+                "fl_set_track_eq",
+                dict(self.TOOLS["fl_set_track_eq"], expected_before={}),
+            ),
+            (
+                "fl_set_plugin_param",
+                dict(self.TOOLS["fl_set_plugin_param"], expected_before={}),
+            ),
+            (
+                "fl_set_plugin_param_option",
+                dict(
+                    self.TOOLS["fl_set_plugin_param_option"],
+                    expected_before={"normalized_value": 2.0},
+                ),
+            ),
+        )
+        for name, arguments in cases:
+            with self.subTest(tool=name):
+                self.client = WriteEnabledFakeClient()
+                with self.assertRaises(ToolError):
+                    self.call(name, arguments)
                 self.assertEqual(self.client.commands, [])
 
 

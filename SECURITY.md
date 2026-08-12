@@ -101,7 +101,7 @@ loopback interface.
 
 ## Write boundary
 
-Read-only mode is the default. The ten supported write commands are added to
+Read-only mode is the default. The narrowly allowlisted mutation commands are added to
 the bridge's active allowlist only when the FL Studio process starts with:
 
 ```bash
@@ -114,6 +114,19 @@ does not provide rollback, audible validation, or a guaranteed undo point.
 Mixer track 0 is refused unless explicitly authorized with `allow_master`.
 The bridge never calls `saveProject`, but FL Studio or the user can later save
 the changed project.
+
+Mutation also requires source provenance: the SHA-256 stamped into the running
+FL script must match the bridge packaged with the MCP server. Missing,
+malformed, stale, or mismatched provenance fails closed before dispatch. Reads
+remain available and carry a warning so a stale installation can be repaired.
+
+Callers may supply a bridge-lifetime session fingerprint and a typed expected
+before-state. The server compares the session before dispatch, and the bridge
+checks supplied session/state guards immediately before undo or mutation.
+These are optimistic-concurrency controls, not authentication, authorization,
+or durable project identity. Step edits use a required canonical grid digest
+as their state guard. A Channel Rack fingerprint is similarly
+observation-scoped because FL exposes no durable channel UUID.
 
 Use write mode only on a copy or disposable project until the workflow is
 trusted. Do not invoke it while recording. Launch FL Studio normally to return
@@ -149,6 +162,9 @@ The safe test suite checks important boundaries, including:
 - strict MCP argument and result schemas;
 - read-only and write-command allowlists;
 - explicit Master targeting;
+- fail-closed bridge-source provenance for mutations while reads warn;
+- bridge-side session, before-state, channel-identity, and step-digest guards;
+- per-field proof whose aggregate verdict is a logical AND;
 - no bridge call to `saveProject`;
 - no automatic replay of ambiguous writes;
 - bounded bridge work per FL Studio idle tick;

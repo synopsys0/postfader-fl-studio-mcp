@@ -2,24 +2,35 @@
 
 ## What can be reached at all
 
-**Mixer effect slots only.** A plug-in is addressed by mixer track and slot
-0-9, so this covers effects on a mixer track and nothing else. Instruments in
-the Channel Rack -- Serum, Sytrus, Harmor, a Kontakt library -- are not
-addressable through Postfader's current contracts, which always require a mixer
-track and effect slot 0-9. FL's scripting API defines a separate Channel Rack
-parameter-addressing form; this release does not expose it.
-`fl_get_project_summary` can count channels, but Postfader cannot yet reach
-inside one.
+Postfader has two explicit plug-in target kinds:
 
-That limit is worth checking first: no amount of scan tuning helps a plug-in
-that is not on a mixer track.
+- `mixer_effect` names a mixer track plus effect slot 0–9. Mixer track 0
+  requires `allow_master: true` for a write.
+- `channel_generator` names a global Channel Rack index. The bridge translates
+  that target to FL's separate generator addressing form (`slotIndex=-1` with
+  global indexing); callers never overload a mixer slot with `-1`.
+
+Use `fl_list_channels` to obtain the global channel index and its
+observation-scoped identity fingerprint. Set
+`include_channel_generators=true` on `plugins_scan_loaded_plugins` to include
+both target kinds in one inventory. Parameter pages, full scans, and all three
+parameter setters accept the same discriminated `target` object. The legacy
+`track_index`/`slot_index` arguments remain available for mixer effects, but a
+call must use either the explicit target or the complete legacy pair, never
+both.
+
+FL does not expose a durable channel UUID or authoritative loaded plug-in
+version. A channel fingerprint is therefore a same-session stale-target guard,
+not an identity that can be carried across projects or bridge reloads, and
+exact plug-in version remains unknown.
 
 ## How support works for what can be reached
 
 There is no list of supported plug-ins, and no per-plug-in profiles. The
 connector never models a plug-in; it discovers one at runtime. So there is
 nothing to add for a plug-in it has not seen: it will attempt any VST, VST3,
-AU, or native FL effect loaded in a mixer slot.
+AU, or native FL plug-in that FL exposes through a mixer-effect or Channel Rack
+generator target.
 
 Attempt is the honest verb. What you get back depends on what FL chooses to
 report for that plug-in and on the scan bounds below, and a write is reported
@@ -40,14 +51,20 @@ So there are three ways to name the control you mean.
 
 | Tool | You supply | Use it when |
 |---|---|---|
-| `fl_set_plugin_param` | normalised `0..1` | You know the curve, or the control is a plain fader |
-| `fl_set_plugin_param_display` | the number the plug-in shows | You want "20 ms" and do not know the curve |
-| `fl_set_plugin_param_option` | the option text | The control is enumerated: a key, a scale, a mode |
+| `fl_set_plugin_param` | target, parameter index, normalised `0..1` | You know the curve, or the control is a plain fader |
+| `fl_set_plugin_param_display` | target, index/name, and the number the plug-in shows | You want "20 ms" and do not know the curve |
+| `fl_set_plugin_param_option` | target, index/name, and option text | The control is enumerated: a key, a scale, a mode |
 
 Prefer the second and third. `fl_set_plugin_param_display` searches the control
 until FL's own readback agrees, so it never assumes a curve.
 `fl_set_plugin_param_option` also returns every option it discovered, which is
 the fastest way to learn what an unfamiliar control can do.
+
+A text selector is resolved one priority tier at a time: exact name, exact
+display, name substring, then display substring. If the first matching tier
+contains more than one unique parameter index, the write is refused before an
+undo point or mutation. The bounded diagnostic lists candidates and directs
+the caller to pass an integer index.
 
 ## Three bounds that can hide controls
 
@@ -64,10 +81,8 @@ musical key selector.
 
 **Where it breaks:** a control with more distinct options than there are steps
 returns a partial list — and a partial list looks exactly like a complete one.
-An impulse-response picker on a convolution reverb, or a preset selector on a
-large effect, is where this bites. (A synth wavetable list would be the obvious
-example, but Channel Rack instruments are outside Postfader's current surface --
-see above.)
+An impulse-response picker on a convolution reverb, or a preset or wavetable
+selector on a generator, is where this bites.
 
 **How many steps a control actually needs.** Measured against a live VST3: a
 29-option Scale control resolved *completely* at the default 64 steps, and
@@ -175,11 +190,12 @@ refusal conditions.
 4. **A scan says `truncated`.** It hit a work ceiling. The result is a valid
    partial answer, not a complete one.
 
-## What cannot be done, for any plug-in
+## What cannot be done, for any plug-in target
 
 FL's scripting API has no function for these, so no plug-in supports them:
 
-- adding, removing, or reordering plug-ins;
+- adding, removing, or reordering plug-ins through the public MIDI scripting
+  backend;
 - bypassing a slot or changing its wet/dry mix — FL ignores both when a script
   drives them;
 - reading audio, rendering, or saving the project.

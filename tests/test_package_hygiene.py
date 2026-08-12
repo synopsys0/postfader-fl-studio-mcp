@@ -38,6 +38,17 @@ class PackageHygieneTests(unittest.TestCase):
             {package["version"] for package in manifest["packages"]},
         )
 
+    def test_registry_manifest_respects_published_description_limit(self) -> None:
+        manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        description = manifest["description"]
+        self.assertIsInstance(description, str)
+        self.assertGreater(len(description), 0)
+        self.assertLessEqual(
+            len(description),
+            100,
+            "MCP Registry rejects server descriptions longer than 100 characters",
+        )
+
     def test_no_author_host_records_are_shipped(self) -> None:
         # An installed copy must describe the user's own FL Studio, never the
         # machine this package was built on. A dated validation record used to
