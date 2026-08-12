@@ -107,10 +107,14 @@ write tools while recording or on irreplaceable material.
 
 ## Plug-in compatibility
 
-There is no supported-plug-in list and no per-plug-in profiles: parameters are
-discovered at runtime, so a plug-in needs no support added for it. What varies
-is how much of a large parameter map a bounded scan can see, and whether FL
-reports a given control at all. See
+Effects on a mixer track, addressed by track and slot. Channel Rack
+instruments are out of reach: FL's scripting API exposes no parameter access
+for them, so a synth is not a scan-tuning problem, it is unreachable.
+
+Within that, there is no supported-plug-in list and no per-plug-in profiles:
+parameters are discovered at runtime, so a plug-in needs no support added for
+it. What varies is how much of a large parameter map a bounded scan can see,
+and whether FL reports a given control at all. See
 [Plug-in support](docs/plugin-support.md) for those bounds, how to raise them,
 and how to add your own plug-in to the validated-against table.
 
