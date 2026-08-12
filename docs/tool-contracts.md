@@ -1,13 +1,16 @@
 # Tool and command reference
 
-Postfader exposes 24 MCP tools. The MCP layer is the supported
+Postfader exposes 36 MCP tools. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. Inspection and audio tools are annotated read-only.
-The ten `fl_set_*` tools are annotated mutating and destructive because they
-change the open FL Studio project immediately.
+and non-finite numbers. Twelve inspection tools and four audio tools are
+annotated read-only. Nineteen absolute state tools are annotated mutating,
+destructive, and non-idempotent because repeating a call can add undo history
+and parameter searches can perform transient writes. `fl_trigger_note` is also
+mutating and non-idempotent, but non-destructive; it returns a bounded dispatch
+receipt rather than claiming state verification.
 
 ## Inspection tools
 
@@ -19,10 +22,12 @@ change the open FL Studio project immediately.
 | `fl_get_selected_range` | Return repeated raw Playlist endpoints and project PPQ without interpreting render semantics. |
 | `fl_list_mixer_tracks` | List mixer tracks, levels, selection state, routing, and loaded effects. `only_used=false` is authoritative; peaks and a page limit are optional. |
 | `fl_inspect_mixer_track` | Read one track's state, effects, built-in EQ, and outgoing routes. Track 0 is Master. |
-| `plugins_scan_loaded_plugins` | Inventory the effects loaded on the observed mixer tracks. |
-| `plugins_inspect_parameter_map` | Read a bounded page of one plug-in's exposed parameters by track and slot. |
-| `plugins_scan_parameters` | Walk a bounded parameter range inside FL Studio and return named or display-bearing controls without VST padding. |
+| `plugins_scan_loaded_plugins` | Inventory effects loaded on observed mixer tracks; optionally include Channel Rack generators with explicit target kinds. |
+| `plugins_inspect_parameter_map` | Read a bounded page of one mixer effect or Channel Rack generator's exposed parameters. |
+| `plugins_scan_parameters` | Walk a bounded parameter range for either plug-in target and return named or display-bearing controls without VST padding. |
 | `copilot_capture_readonly_inspection` | Capture project, mixer, and bounded plug-in previews under one observation ID. |
+| `fl_list_channels` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
+| `fl_get_step_sequence` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |
 
 ### Unprofiled parameters
 
@@ -51,10 +56,17 @@ complete control map.
 
 ## Write tools
 
-Writes are available only when the live bridge reports
-`verified_writes_enabled: true`. Each tool changes one target, yields to a
+State writes are available only when the live bridge reports
+`verified_writes_enabled: true` and its stamped source SHA-256 matches the
+bridge packaged with the server. Each tool changes one target, yields to a
 later FL Studio idle tick, reads the target back, and returns a verdict. There
 is no MCP-level confirmation round-trip and no automatic rollback.
+
+Every state tool accepts an optional bridge-lifetime `session_fingerprint` and
+a typed `expected_before`, except `fl_set_step_sequence`, whose required
+`expected_digest` is its stronger state guard. The bridge checks supplied
+guards immediately before undo and mutation. Omitting them preserves the 0.11
+call shape; supplying them makes stale decisions fail closed.
 
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
@@ -69,6 +81,56 @@ is no MCP-level confirmation round-trip and no automatic rollback.
 | `fl_set_plugin_param_display` | track and slot; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` | `plugin.set_param_display` |
 | `fl_set_plugin_param_option` | track and slot; parameter index or text; option text; optional sweep resolution and `allow_master` | `plugin.set_param_option` |
 
+The three plug-in reads and three plug-in setters also accept an explicit
+discriminated target. `mixer_effect` names `track_index`, slot 0–9, and optional
+Master authorization. `channel_generator` names a global `channel_index`; the
+bridge uses FL's separate `slotIndex=-1` form internally. A call may use that
+target or the legacy mixer track/slot pair, never both.
+
+### Transport, Channel Rack, and sequencer state
+
+| Tool | Required target and value | Bridge command |
+| --- | --- | --- |
+| `fl_set_playing` | absolute `playing` boolean | `transport.set_playing` |
+| `fl_stop` | no value; absolute stopped state plus normalized position 0 | `transport.stop` |
+| `fl_set_song_position` | normalized position 0–1; transport must be stopped | `transport.set_song_position` |
+| `fl_set_loop_mode` | absolute `pattern` or `song` mode | `transport.set_loop_mode` |
+| `fl_set_tempo` | absolute 10–522 BPM; playback and recording must be stopped | `transport.set_tempo` |
+| `fl_set_channel_mix` | global channel; volume, pan, mute, or any combination | `channel.set_mix` |
+| `fl_set_channel_identity` | global channel; name, color, or both. Color observations preserve FL's unsigned 32-bit `0x--BBGGRR` word; guards and proof compare the controllable low 24 bits because FL owns the high byte. | `channel.set_identity` |
+| `fl_route_channel_to_mixer` | global channel and absolute mixer destination; `-1` is unassigned | `channel.route_to_mixer` |
+| `fl_set_step_sequence` | explicit current pattern, global channel, required prior digest, and unique absolute cell updates | `sequencer.set` |
+
+Multi-field stop, channel, EQ, and step responses include a proof flag for each
+requested field or cell. Aggregate `verified` is the logical AND of those
+flags. Step reads and writes refuse when `pattern_number` differs from FL's
+current pattern; the connector never changes patterns implicitly.
+
+Step reads can observe grids of up to 512 cells. A verified step write refuses
+a grid longer than 256 cells because its final digest recheck and complete
+batch must remain atomic within one FL idle tick. For an eligible grid, the
+batch must satisfy:
+
+```text
+step_count + update_count + 8 <= 320
+```
+
+Thus a 256-cell pattern permits at most 56 updates in one call. Split a larger
+edit into multiple batches and call `fl_get_step_sequence` again after every
+successful batch; each subsequent call must use the newly returned digest.
+These limits preserve headroom beneath the repository's fewer-than-400 FL API
+calls per idle-tick gate.
+
+### Bounded note audition
+
+`fl_trigger_note` dispatches one note-on/note-off pair to a global Channel Rack
+target with bounded note, velocity, MIDI channel, and duration. It can use the
+same session and channel-fingerprint guards, but returns
+`verification_basis="dispatch_only_no_state_readback"`. `dispatched: true`
+means the bounded event pair was sent, not that sound was produced or heard.
+While an audition is active, another audition for the same channel, note, and
+MIDI-channel tuple is refused so the first note-off cannot release a later note.
+
 The volume and send scales follow FL Studio's normalized controls: `0.8` is
 unity/0 dB. Built-in EQ gain uses `0.5` as flat. An empty mixer name restores
 FL Studio's default track label.
@@ -78,7 +140,8 @@ Sending *to* Master does not require `allow_master`; sending *from* mixer track
 
 ### Write response contract
 
-Every write response identifies the bridge command and target and includes:
+Every readback-verified state-write response identifies the bridge command and
+target and includes:
 
 - the requested value;
 - `before` and `after` observations;
@@ -87,6 +150,11 @@ Every write response identifies the bridge command and target and includes:
 - `undo_point_created: true`, `false`, or `null`;
 - `project_saved: false`; and
 - warnings, with an `UNVERIFIED:` warning first when applicable.
+
+State-write results additionally report the echoed session fingerprint plus
+`session_precondition_applied` and `expected_before_applied`. These fields are
+strictly validated; a malformed or contradictory bridge reply is an error, not
+a plausible-looking success.
 
 `undo_point_created: true` means the exposed undo-history count or position
 changed around the request. False means it demonstrably did not, and null
@@ -106,14 +174,16 @@ proof strengths:
 `verified: false` is a result, not a transport error. FL Studio accepted the
 call but the later observation did not prove the requested outcome.
 
-The setter itself is repeated inside a single write, because FL drops a lone
-`setParamValue`: a mixer write makes up to `WRITE_ATTEMPTS` (2) attempts and a
-plug-in parameter write up to four attempts of two calls each, each judged by
-readback. What never happens is the part that would be unsafe — an unproven or
-ambiguous write is not replayed afterwards, and a write that landed is not
-rolled back. The one exception is a failed option search, which moved the
-control to look and therefore attempts a *verified* restore and tells you
-whether the restore itself was proven.
+Mixer and plug-in parameter handlers may repeat an FL-facing setter inside one
+dispatched bridge command because FL drops a lone `setParamValue`: a mixer
+write makes up to `WRITE_ATTEMPTS` (2) calls and a plug-in parameter write up to
+four attempts of two calls each, each judged by readback. Transport, direct
+Channel Rack state, routing, and step setters are issued once. What never
+happens is the unsafe part — a mutating bridge command is not dispatched again
+after an ambiguous transport outcome, an unverified result is not retried for
+the caller, and a write that landed is not rolled back. The one exception is a
+failed option search, which moved the control to look and therefore attempts a
+*verified* restore and tells you whether the restore itself was proven.
 
 ### Setting plug-in parameters
 
@@ -130,7 +200,10 @@ key, scale, mode, or input type. FL Studio cannot list an enumeration, so the
 tool sweeps normalized values while recording the displayed options. **This
 moves the control through intermediate values.** If the requested option is
 not found, the bridge attempts to restore the original value before returning
-an error. Do not run this tool during recording.
+an error. The requested text must use FL's actual parameter readback label;
+that label can differ from the conceptual term used by a plug-in's UI or
+manual (for example, 3x Osc exposes `pulse` for its square-shaped LFO mode).
+Do not run this tool during recording.
 
 Native Image-Line effects and third-party VST3 effects can both expose
 addressable parameters. A reported VST count can contain thousands of padding
@@ -142,8 +215,9 @@ reported count as proof that an index is a meaningful control.
 | Refusal | Meaning |
 | --- | --- |
 | `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface. Relaunch FL Studio with `FL_BRIDGE_ENABLE_WRITES=1`. |
+| `TrackBMutationsUnavailable` | A Track B mutation is disabled, the bridge provenance does not match, or a supplied session changed before dispatch. |
 | `IncompatibleFLStudio` | The live handshake failed the FL Studio version, program-title, MIDI API, or bridge-protocol gate. |
-| `ValueError` | A value is out of range, an EQ call names no field to change, a route is invalid, or mixer track 0 lacks explicit authorization. |
+| `ValueError` | A value is out of range, a multi-field call names no field to change, a route/current-pattern/digest/precondition is invalid, a plug-in selector is ambiguous, or mixer track 0 lacks explicit authorization. |
 | Argument validation | An unknown, misspelled, or incorrectly typed MCP argument was rejected by the strict schema. |
 
 ## Audio tools
@@ -189,11 +263,14 @@ The MCP server maps its tools to these local protocol commands.
 | `plugin.params` | track, slot, page and filter arguments | One bounded parameter page. |
 | `plugin.scan_params` | track, slot, and bounded scan arguments | De-padded controls and scan progress. |
 | `channels.list` | none | Channel Rack contents. |
+| `sequencer.get` | explicit current pattern and global channel | Absolute bounded cells and canonical digest. |
 
 ### Verified writes
 
-The verified bridge commands use the same names shown in the write-tool table.
-All refuse a Master source unless `allow_master` is true, request one undo
-point, report readback, and never save the project. A command disabled by the
-active mode is absent from `available`; it is not merely rejected inside its
-handler.
+The verified state commands use the same names shown in the write-tool tables.
+Mixer sources and mixer-effect targets refuse Master unless `allow_master` is
+true. Every state command reports an undo observation, later-tick readback, and
+`project_saved: false`. `channel.trigger_note` is the sole dispatch-only
+mutation and reports its note-off receipt without an undo or verified-state
+claim. A command disabled by the active mode is absent from `available`; it is
+not merely rejected inside its handler.

@@ -59,9 +59,9 @@ jobs:
         run: python scripts/run_safe_tests.py
 
   package:
-    name: Build and inspect distributions
+    name: Build and inspect release artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -70,6 +70,11 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Set up Node for the MCPB packager
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Build wheel and sdist
         run: |
@@ -119,8 +124,13 @@ jobs:
                           "postfader-plugin-report = fl_studio_mcp.plugin_report:main"):
               if command not in scripts:
                   failures.append(f"missing console entry point: {command}")
-          for required_module in ("fl_studio_mcp/plugin_profile.py",
-                                  "fl_studio_mcp/plugin_report.py"):
+          for required_module in (
+              "fl_studio_mcp/_bridge/device_UniversalBridge.py",
+              "fl_studio_mcp/performance.py",
+              "fl_studio_mcp/plugin_profile.py",
+              "fl_studio_mcp/plugin_report.py",
+              "fl_studio_mcp/track_b_contracts.py",
+          ):
               if required_module not in names:
                   failures.append(f"wheel does not carry {required_module}")
           if any(n.startswith("fl_studio_mcp/") and "prototype" in n for n in names):
@@ -152,8 +162,25 @@ jobs:
           /tmp/postfader-wheel-smoke/bin/python -m pip install dist/*.whl
           /tmp/postfader-wheel-smoke/bin/postfader-plugin-report --help
 
-      - name: Upload distributions
+      # scripts/build_mcpb.py validates with an exact
+      # @anthropic-ai/mcpb@2.1.2 pin before it creates the archive.
+      - name: Validate and build Claude Desktop extension
+        run: python scripts/build_mcpb.py --output-dir mcpb-dist
+
+      # Keep the MCPB archive out of dist/: the PyPI publisher consumes that
+      # directory verbatim and must receive only Python distributions.
+      - name: Upload Python distributions
         uses: actions/upload-artifact@v5
         with:
-          name: distributions
-          path: dist/
+          name: python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Claude Desktop extension
+        uses: actions/upload-artifact@v5
+        with:
+          name: desktop-extension
+          path: mcpb-dist/*.mcpb
+          if-no-files-found: error

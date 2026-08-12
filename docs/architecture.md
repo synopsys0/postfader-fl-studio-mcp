@@ -1,8 +1,9 @@
 # Architecture
 
 Postfader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The public MCP surface contains 24 tools: ten inspection
-tools, ten opt-in verified-write tools, and four audio-file tools.
+controller script. The public MCP surface contains 36 tools: 12 inspection
+tools, 19 opt-in readback-verified state tools, one bounded live-note audition
+tool, and four audio-file tools.
 
 ```text
 MCP-compatible client
@@ -10,7 +11,8 @@ MCP-compatible client
         ▼
 fl_studio_mcp/mcp_server.py
         ├── readonly_inspector.py ─┐
-        ├── verified_writer.py ────┼── bridge_client.py
+        ├── verified_writer.py ────┤
+        ├── performance.py ──────┼── bridge_client.py
         │                          │        │
         │                          │        │ local MIDI SysEx over CoreMIDI/IAC
         │                          │        ▼
@@ -30,7 +32,7 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 24 tools and their annotations. It
+`fl_studio_mcp/mcp_server.py` defines all 36 tools and their annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
 and audio work runs off the MCP event loop.
@@ -51,20 +53,33 @@ inspector does not infer what the control means.
 
 ### Verified writes
 
-`fl_studio_mcp/verified_writer.py` has a separate allowlist containing only the
-ten supported write commands. It validates normalized ranges, rejects an
-implicit Master target, and passes through the bridge's readback verdict
-without inventing a default. A missing `verified` field is a protocol error.
+`fl_studio_mcp/verified_writer.py` has a separate allowlist containing the ten
+0.11 mixer and plug-in write commands. `fl_studio_mcp/performance.py` adds
+separate read and non-replayable mutation gateways for transport, global
+Channel Rack targets, current-pattern step cells, live-note audition, and
+target-aware generator parameters. Both paths validate ranges and pass through
+the bridge's proof fields without inventing defaults. A missing or
+contradictory verification field is a protocol error.
 
 Write availability comes only from the live bridge handshake. If FL Studio was
 not launched with `FL_BRIDGE_ENABLE_WRITES=1`, the writer raises an error that
 names the missing opt-in rather than attempting a command.
 
+Before dispatch, every mutation also requires the running bridge's stamped
+source SHA-256 to match the bridge packaged with the server. Reads remain
+available when provenance is missing or stale, but carry an explicit warning.
+An optional 32-character bridge-lifetime session fingerprint and typed
+`expected_before` state can close stale-decision races; the bridge rechecks
+both after resolving the target and immediately before it requests undo or
+mutates FL. The fingerprint is a concurrency token, not authentication or a
+durable project identity.
+
 ### Contracts
 
-`fl_studio_mcp/contracts.py` contains immutable Pydantic response models.
-Unknown fields and non-finite numbers are rejected so a malformed bridge reply
-cannot become a plausible-looking result.
+`fl_studio_mcp/contracts.py` and `fl_studio_mcp/track_b_contracts.py` contain
+immutable Pydantic response and precondition models. Unknown fields and
+non-finite numbers are rejected so a malformed bridge reply cannot become a
+plausible-looking result.
 
 ### Transport
 
@@ -110,8 +125,9 @@ Normal operation has two disjoint command sets:
 
 | Surface | Gate | Commands |
 | --- | --- | --- |
-| Read-only | Always | `ping`, `project.info`, `arrangement.selection`, `mixer.list`, `mixer.track`, `plugin.params`, `plugin.scan_params`, `channels.list` |
-| Verified writes | `FL_BRIDGE_ENABLE_WRITES=1` in the FL Studio process | `mixer.set_volume`, `mixer.set_pan`, `mixer.set_mute`, `mixer.set_eq`, `mixer.set_name`, `mixer.set_send`, `mixer.set_send_level`, `plugin.set_param`, `plugin.set_param_display`, `plugin.set_param_option` |
+| Read-only | Always | `ping`, `project.info`, `arrangement.selection`, `mixer.list`, `mixer.track`, `plugin.params`, `plugin.scan_params`, `channels.list`, `sequencer.get` |
+| Verified state changes | `FL_BRIDGE_ENABLE_WRITES=1` in the FL Studio process | Ten mixer/plug-in commands; `transport.set_playing`, `transport.stop`, `transport.set_song_position`, `transport.set_loop_mode`, `transport.set_tempo`; `channel.set_mix`, `channel.set_identity`, `channel.route_to_mixer`; and `sequencer.set` |
+| Dispatch-only audition | Same write opt-in | `channel.trigger_note` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
 the bridge's `available` list.
@@ -119,22 +135,43 @@ the bridge's `available` list.
 ## Verified-write sequence
 
 ```text
-validate → write → yield one FL idle tick → read back → report verdict
+handshake/provenance → resolve target → check session/expected state
+                     → request undo → write → yield an FL idle tick
+                     → read back → report per-field and aggregate verdicts
 ```
 
 The idle-tick yield is required. FL Studio can return the previous value when
-a control is read in the same callback that wrote it. Mixer controls are
-verified by numeric readback within a narrow tolerance. Plug-in controls use
-their display string and numeric readback because the two FL accessors can lag
-differently.
+a control is read in the same callback that wrote it. Mixer, transport,
+channel, and sequencer controls are verified by absolute readback within their
+declared tolerance. Multi-field operations expose a proof flag for each
+requested field, and aggregate `verified` is their logical AND. Plug-in
+controls use their display string and numeric readback because the two FL
+accessors can lag differently.
 
 `verified: false` is a normal result: the setter returned without raising, but
 the later observation did not prove the requested outcome. The bridge does not
-retry or roll the write back.
+replay the mutating command or roll the write back. Some mixer and plug-in
+handlers deliberately repeat their FL-facing setter inside that single command
+because FL can drop a lone call; the response still reports only readback proof.
 
-Each write requests one FL Studio undo point, then observes the undo-history
-count and position. The response reports `undo_point_created` as true, false,
-or null. The bridge never calls `saveProject`.
+Persistent mixer, Channel Rack, sequencer, tempo, and plug-in mutations request
+one FL Studio undo point, then observe the undo-history count and position.
+Every mutation reports `undo_point_created` as true, false, or null; transient
+transport actions and live-note audition report null. Live-note audition only
+proves that bounded note-on and note-off dispatch completed; it does not claim
+state readback. The bridge never calls `saveProject`.
+
+The step-grid API is explicitly current-pattern-only. A read or write names the
+pattern number and a global channel index; the bridge refuses if that pattern
+is not still current. A write additionally requires the canonical SHA-256
+digest returned by the read and checks it immediately before changing any
+cell. It never switches patterns implicitly.
+
+Plug-in commands use a discriminated target. A `mixer_effect` keeps the
+track/slot 0–9 contract and explicit Master authorization. A
+`channel_generator` uses a global Channel Rack index and FL's separate
+`slotIndex=-1` addressing form. The legacy track/slot MCP arguments remain
+available for compatibility, but callers may not mix the two forms.
 
 ## Idle-tick budget
 
@@ -151,6 +188,10 @@ and holds the worst simulated tick under a fixed ceiling.
 - MCP input and bridge output use strict schemas and bounded values.
 - Mutating commands are narrow, separately gated, and never replayed after an
   ambiguous response.
+- Stale or unrecognized bridge provenance fails closed for mutation while
+  preserving warning-bearing reads.
+- Optional session and expected-state preconditions are enforced inside the
+  bridge immediately before mutation.
 - Master writes require explicit targeting.
 - Readback is observation, not rollback or an audible-quality guarantee.
 - The IAC transport is local but unauthenticated.

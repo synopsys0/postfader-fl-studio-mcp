@@ -1,0 +1,51 @@
+# Source-control and local development state.
+.git/
+.github/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+mcpb-dist/
+
+# Tests, maintainer scripts, and source-only documentation are not required at
+# runtime. README/LICENSE/NOTICE/SECURITY remain in the bundle.
+tests/
+scripts/
+docs/
+CONTRIBUTING.md
+MANIFEST.in
+
+# Local connector configuration and credentials must never enter an archive.
+.mcp.json
+.mcp.json.*
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# User project/audio material and generated extension archives.
+artifacts/
+bounces/
+renders/
+*.flp
+*.flp~
+*.wav
+*.wave
+*.aif
+*.aiff
+*.flac
+*.mp3
+*.ogg
+*.m4a
+*.mid
+*.midi
+*.mcpb
+.DS_Store

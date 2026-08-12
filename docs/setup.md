@@ -22,7 +22,18 @@ The IAC bus is shared and unauthenticated. Use it only on a trusted,
 single-user Mac. The connector takes an exclusive process lock while connected
 to prevent accidental duplicate clients, but that lock is not authentication.
 
-## 2. Clone and install
+## 2. Install the server and FL bridge
+
+### Claude Desktop extension
+
+Download the `postfader-fl-studio-mcp-0.12.0.mcpb` asset from the GitHub
+Release and open it with Claude Desktop. The extension installs and registers
+the local MCP server, but it cannot configure FL Studio's hardware-script
+folder or CoreMIDI for you. Run the packaged bridge installer (or use the
+source-install path below), then complete the IAC and FL Studio steps in this
+guide. The extension does not enable writes.
+
+### Python package or source checkout
 
 Either install the published package:
 
@@ -182,7 +193,8 @@ same. Only one MCP server process can own the resolved IAC port at a time.
 
 ## Read-only mode and write mode
 
-Read-only mode is the default. In that mode the ten bridge write commands are
+Read-only mode is the default. In that mode all 20 bridge mutation commands
+(19 readback-verified state commands plus bounded live-note dispatch) are
 absent from the active dispatch allowlist rather than merely rejected after
 dispatch.
 
@@ -204,10 +216,25 @@ Launching FL Studio normally returns to read-only mode. Do not add
 `FL_BRIDGE_ENABLE_WRITES` to the MCP server configuration: the flag must be in
 FL Studio's own launch environment.
 
-Write tools act immediately and do not add a second confirmation prompt. They
-request an undo point, but `undo_point_created: false` or `null` means that
-undo cannot be relied upon. The bridge never saves the project, but a later
-manual or application save can persist its changes.
+Mutation tools act immediately and do not add a second confirmation prompt.
+Every result reports `undo_point_created`. Commands that request an undo point
+report whether one was observed; transient transport actions and live-note
+dispatch truthfully report `null`. False or null means undo cannot be relied
+upon. The bridge never saves the project, but a later manual or application
+save can persist its changes.
+
+Every mutation also compares the bridge source digest reported by the running
+FL script with the bridge packaged beside the server. A missing, malformed, or
+stale digest fails closed before dispatch; inspection continues with a warning
+so the mismatch can be diagnosed. Re-run the installer and reload the FL
+script after every bridge update.
+
+Mutation tools accept an optional bridge-lifetime `session_fingerprint` and,
+except for the step sequencer's required digest guard, an optional typed
+`expected_before`. The bridge checks supplied guards immediately before the
+mutation and before any applicable undo request. Use values from a fresh read
+when multiple people or clients might touch the project. The fingerprint is
+not authentication and does not identify a project.
 
 ### Optional write validation
 
@@ -277,7 +304,7 @@ install; the rest exist for automation and for hosts that cannot use CoreMIDI.
 | Variable | Read by | Effect |
 |---|---|---|
 | `FL_BRIDGE_ENABLE_MIDI` | MCP server, scripts | `1` builds the MIDI SysEx transport. Without it that transport is never constructed, so the connector cannot reach FL Studio. Set in `.mcp.json`; the bundled scripts set it themselves |
-| `FL_BRIDGE_ENABLE_WRITES` | **the FL Studio process** | `1` adds the ten verified write commands to the bridge allowlist. Read once when the script loads, so it must be set on FL Studio itself, not on the MCP server |
+| `FL_BRIDGE_ENABLE_WRITES` | **the FL Studio process** | `1` adds the narrowly allowlisted mutation commands to the bridge. Read once when the script loads, so it must be set on FL Studio itself, not on the MCP server |
 | `FL_STUDIO_USER_DATA_DIR` | `install.sh`, `doctor.py` | FL Studio's user-data folder when it is not `~/Documents/Image-Line/FL Studio` |
 | `FL_BRIDGE_SANDBOXED` | MCP server, `doctor.py` | `1` declares that this process cannot open CoreMIDI. The MIDI transport reports itself unavailable and no probe subprocess is created. Use it in CI and automation harnesses, where a native CoreMIDI abort would otherwise raise a crash report |
 | `FL_BRIDGE_MIDI_PORT` | MCP server, scripts | CoreMIDI port name to use. Default `IAC Driver` |

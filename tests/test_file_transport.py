@@ -6,6 +6,7 @@ server uses, preserving coverage for its request/reply framing and cleanup.
 """
 
 import os
+import json
 import shutil
 import sys
 import tempfile
@@ -92,6 +93,30 @@ def main():
     check("ping answered", info.get("pong") is True, info)
     check("client reports the file transport", client.transport == "files",
           client.transport)
+
+    print("\n-- malformed envelopes over files --")
+    token = "non-object"
+    request_path = os.path.join(
+        MAILBOX, bridge.REQ_PREFIX + token + ".json"
+    )
+    response_path = os.path.join(
+        MAILBOX, bridge.RESP_PREFIX + token + ".json"
+    )
+    with open(request_path, "w", encoding="utf-8") as handle:
+        json.dump([], handle)
+    deadline = time.time() + 2
+    while time.time() < deadline and not os.path.isfile(response_path):
+        time.sleep(0.005)
+    malformed = None
+    if os.path.isfile(response_path):
+        with open(response_path, encoding="utf-8") as handle:
+            malformed = json.load(handle)
+        os.remove(response_path)
+    check("file transport rejects a non-object request",
+          malformed is not None and not malformed["ok"]
+          and "JSON object" in malformed["error"], malformed)
+    check("file bridge remains alive after malformed envelope",
+          client.ping().get("pong") is True)
 
     print("\n-- commands round trip --")
     proj = client.call("project.info")
