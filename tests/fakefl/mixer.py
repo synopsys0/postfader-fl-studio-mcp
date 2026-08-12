@@ -235,4 +235,14 @@ def setTrackNumber(trackNumber, flags=0):
 
 
 def getTrackInfo(mode):
-    return 0
+    import midi
+
+    if mode == midi.TN_Master:
+        return 0
+    if mode == midi.TN_FirstIns:
+        return 1
+    if mode == midi.TN_LastIns:
+        return len(_state.TRACKS) - 1
+    if mode == midi.TN_Sel:
+        return 0
+    raise ValueError("unknown track-info mode")

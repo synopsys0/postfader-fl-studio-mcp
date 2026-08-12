@@ -1,10 +1,8 @@
 name: Release
 
-# Publishes to PyPI when a version tag is pushed, using PyPI Trusted
-# Publishing. No API token exists anywhere: GitHub mints a short-lived OIDC
-# credential for this specific workflow in this specific repository, and PyPI
-# accepts it only because it was told to expect exactly that. Nothing to store,
-# nothing to rotate, nothing to leak.
+# A version tag publishes the Python distributions through PyPI Trusted
+# Publishing, publishes server.json to the MCP Registry, and creates a GitHub
+# Release carrying the wheel, sdist, and Claude Desktop .mcpb extension.
 on:
   push:
     tags:
@@ -28,8 +26,28 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Set up Node for the MCPB packager
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Check public tree
         run: python scripts/check_public_tree.py
+
+      # Registry validation belongs before either publication job. Discovering
+      # a malformed server.json only after PyPI accepted the version would
+      # leave an irreparable partial release.
+      - name: Validate MCP Registry manifest before publishing
+        run: |
+          mkdir -p /tmp/postfader-mcp-publisher
+          curl --fail --location --silent --show-error \
+            https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz \
+            --output /tmp/postfader-mcp-publisher.tar.gz
+          echo "ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac  /tmp/postfader-mcp-publisher.tar.gz" | sha256sum --check
+          tar -xzf /tmp/postfader-mcp-publisher.tar.gz \
+            -C /tmp/postfader-mcp-publisher mcp-publisher
+          /tmp/postfader-mcp-publisher/mcp-publisher --version
+          /tmp/postfader-mcp-publisher/mcp-publisher validate server.json
 
       - name: Install hermetic test environment
         run: |
@@ -73,6 +91,18 @@ jobs:
                         f"expected {declared}")
                   sys.exit(1)
               print("server.json agrees")
+
+          desktop_manifest = pathlib.Path("manifest.json")
+          if not desktop_manifest.is_file():
+              print("::error::manifest.json is missing")
+              sys.exit(1)
+          import json
+          data = json.loads(desktop_manifest.read_text(encoding="utf-8"))
+          if data.get("version") != declared:
+              print(f"::error::manifest.json declares {data.get('version')!r}, "
+                    f"expected {declared}")
+              sys.exit(1)
+          print("manifest.json agrees")
           print("versions agree")
           PY
 
@@ -119,8 +149,12 @@ jobs:
           # Without the bridge, an installed copy can never reach FL Studio.
           if "fl_studio_mcp/_bridge/device_UniversalBridge.py" not in names:
               failures.append("the packaged bridge script is missing from the wheel")
-          for required_module in ("fl_studio_mcp/plugin_profile.py",
-                                  "fl_studio_mcp/plugin_report.py"):
+          for required_module in (
+              "fl_studio_mcp/performance.py",
+              "fl_studio_mcp/plugin_profile.py",
+              "fl_studio_mcp/plugin_report.py",
+              "fl_studio_mcp/track_b_contracts.py",
+          ):
               if required_module not in names:
                   failures.append(f"wheel does not carry {required_module}")
           for command in ("fl-studio-mcp = fl_studio_mcp.mcp_server:main",
@@ -156,11 +190,28 @@ jobs:
           /tmp/postfader-wheel-smoke/bin/python -m pip install dist/*.whl
           /tmp/postfader-wheel-smoke/bin/postfader-plugin-report --help
 
-      - name: Upload distributions for the publish job
+      # scripts/build_mcpb.py validates with an exact
+      # @anthropic-ai/mcpb@2.1.2 pin before it creates the archive.
+      - name: Validate and build Claude Desktop extension
+        run: python scripts/build_mcpb.py --output-dir mcpb-dist
+
+      # These artifacts stay separate by design: the PyPI action below reads
+      # dist/ wholesale and must never be handed a .mcpb file.
+      - name: Upload Python distributions for publishing
         uses: actions/upload-artifact@v5
         with:
-          name: release-distributions
-          path: dist/
+          name: release-python-distributions
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+
+      - name: Upload Claude Desktop extension for the GitHub Release
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-desktop-extension
+          path: mcpb-dist/*.mcpb
+          if-no-files-found: error
 
   publish:
     name: Publish to PyPI
@@ -180,11 +231,48 @@ jobs:
       - name: Fetch the verified distributions
         uses: actions/download-artifact@v5
         with:
-          name: release-distributions
+          name: release-python-distributions
           path: dist/
 
       - name: Publish
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    name: Attach verified artifacts to GitHub Release
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch Python distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-python-distributions
+          path: release-assets/
+
+      - name: Fetch Claude Desktop extension
+        uses: actions/download-artifact@v5
+        with:
+          name: release-desktop-extension
+          path: release-assets/
+
+      - name: Create the release or replace its assets on a retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # This job deliberately does not check out the repository. Tell gh
+          # which repository to address instead of relying on local Git state.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" release-assets/* \
+              --verify-tag \
+              --generate-notes \
+              --title "Postfader $GITHUB_REF_NAME"
+          fi
 
   publish-mcp-registry:
     name: Publish to MCP Registry
@@ -203,18 +291,20 @@ jobs:
       # release path between a rehearsed commit and its tag.
       - name: Install MCP Registry publisher v1.7.9
         run: |
+          mkdir -p /tmp/postfader-mcp-publisher
           curl --fail --location --silent --show-error \
             https://github.com/modelcontextprotocol/registry/releases/download/v1.7.9/mcp-publisher_linux_amd64.tar.gz \
             --output /tmp/mcp-publisher.tar.gz
           echo "ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac  /tmp/mcp-publisher.tar.gz" | sha256sum --check
-          tar -xzf /tmp/mcp-publisher.tar.gz mcp-publisher
-          ./mcp-publisher --version
+          tar -xzf /tmp/mcp-publisher.tar.gz \
+            -C /tmp/postfader-mcp-publisher mcp-publisher
+          /tmp/postfader-mcp-publisher/mcp-publisher --version
 
       - name: Validate MCP Registry manifest
-        run: ./mcp-publisher validate server.json
+        run: /tmp/postfader-mcp-publisher/mcp-publisher validate server.json
 
       - name: Authenticate to MCP Registry
-        run: ./mcp-publisher login github-oidc
+        run: /tmp/postfader-mcp-publisher/mcp-publisher login github-oidc
 
       - name: Publish MCP server version
-        run: ./mcp-publisher publish server.json
+        run: /tmp/postfader-mcp-publisher/mcp-publisher publish server.json

@@ -245,6 +245,17 @@ class BridgeClientRecoveryTests(unittest.TestCase):
         self.assertEqual(transport.close_calls, 2)
         self.assertEqual(client.transport, "none")
 
+    def test_step_sequence_read_is_replay_safe(self):
+        self.assertIn("sequencer.get", bridge_client.IDEMPOTENT_READ_COMMANDS)
+        transport = ScriptedTransport(
+            requests=[TimeoutError("response lost"), ok_result(cells=[False] * 16)]
+        )
+        client = client_with(transport)
+        client._active = transport
+        result = client.call("sequencer.get", pattern=1, channel=0)
+        self.assertEqual(result["cells"], [False] * 16)
+        self.assertEqual(len(transport.request_calls), 2)
+
     def test_non_read_timeout_is_never_replayed(self):
         transport = ScriptedTransport(
             requests=[TimeoutError("response lost"), ok_result(applied=True)]
@@ -275,6 +286,16 @@ class BridgeClientRecoveryTests(unittest.TestCase):
             "plugin.set_param",
             "plugin.set_param_display",
             "plugin.set_param_option",
+            "transport.set_playing",
+            "transport.stop",
+            "transport.set_song_position",
+            "transport.set_loop_mode",
+            "transport.set_tempo",
+            "channel.set_mix",
+            "channel.set_identity",
+            "channel.route_to_mixer",
+            "sequencer.set",
+            "channel.trigger_note",
         ):
             with self.subTest(command=command):
                 self.assertNotIn(command, bridge_client.IDEMPOTENT_READ_COMMANDS)

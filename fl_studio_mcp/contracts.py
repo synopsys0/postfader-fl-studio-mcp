@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 SCHEMA_VERSION = "1.0"
@@ -69,6 +69,17 @@ class ConnectionInfo(ContractModel):
     # verified write commands.  The bridge is the sole authority: this mirrors
     # its ping, and no client-side flag can turn it on.
     verified_writes_enabled: bool = False
+    bridge_source_sha256: str | None = None
+    expected_bridge_source_sha256: str | None = None
+    bridge_provenance: Literal[
+        "matching", "missing", "malformed", "mismatched", "unavailable"
+    ] = "unavailable"
+    bridge_provenance_verified: bool = False
+    # Generated when FL loads the bridge and stable only for that bridge
+    # lifetime. Callers may pass it back to a write as an optional stale-
+    # session precondition.
+    session_fingerprint: str | None = None
+    warnings: list[str] = Field(default_factory=list)
     error: str | None = None
 
 
@@ -82,6 +93,7 @@ class CapabilitiesReport(ContractModel):
 class TransportState(ContractModel):
     playing: bool | None = None
     recording: bool | None = None
+    tempo_bpm: float | None = Field(default=None, ge=0.0)
     song_position_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
     song_position_display: str | None = None
     song_length_ms: int | None = Field(default=None, ge=0)
@@ -324,6 +336,9 @@ class VerifiedWrite(ContractModel):
     # surface, so a caller must be able to tell these apart.
     undo_point_created: bool | None = None
     project_saved: Literal[False] = False
+    session_fingerprint: str | None = None
+    session_precondition_applied: bool = False
+    expected_before_applied: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -461,6 +476,36 @@ class PluginParameterObservation(ContractModel):
     normalized_value: float | None = None
     display_text: str | None = None
     display_text_available: bool
+
+
+class ExpectedEqBandState(ContractModel):
+    """Optional before-state guard for a built-in mixer EQ write."""
+
+    gain_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
+    frequency_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedEqBandState":
+        if self.gain_normalized is None and self.frequency_normalized is None:
+            raise ValueError(
+                "expected_before needs gain_normalized, frequency_normalized, or both"
+            )
+        return self
+
+
+class ExpectedPluginParameterState(ContractModel):
+    """Optional before-state guard for a plug-in parameter write."""
+
+    normalized_value: float | None = Field(default=None, ge=0.0, le=1.0)
+    display_text: str | None = Field(default=None, max_length=256)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedPluginParameterState":
+        if self.normalized_value is None and self.display_text is None:
+            raise ValueError(
+                "expected_before needs normalized_value, display_text, or both"
+            )
+        return self
 
 
 PluginVerificationBasis = Literal[

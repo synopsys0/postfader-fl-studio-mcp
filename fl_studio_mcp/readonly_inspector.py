@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .bridge_client import BridgeError, get_client
+from .bridge_install import BridgeInstallError, expected_bridge_deployment
 from .contracts import (
     CapabilitiesReport,
     CapabilityEvidence,
@@ -224,6 +225,62 @@ def connection_from_ping(
     # Only a literal true from the bridge enables the write tools. A missing
     # or non-boolean field means an older bridge that cannot dispatch them.
     writes_enabled = ping.get("verified_writes_enabled") is True and bridge_mode == "write_test"
+    warnings: list[str] = []
+
+    reported_digest_value = ping.get("bridge_source_sha256")
+    reported_digest = (
+        reported_digest_value
+        if isinstance(reported_digest_value, str)
+        and len(reported_digest_value) <= 128
+        else None
+    )
+    expected_digest: str | None = None
+    try:
+        _deployed, expected_digest = expected_bridge_deployment()
+    except BridgeInstallError as exc:
+        bridge_provenance = "unavailable"
+        warnings.append(
+            "The packaged bridge source could not be hashed, so bridge provenance "
+            f"could not be checked: {exc}"
+        )
+    else:
+        if reported_digest_value in (None, ""):
+            bridge_provenance = "missing"
+            warnings.append(
+                "The running bridge did not report its source SHA-256. Reads may "
+                "continue, but every write will refuse until the packaged bridge is "
+                "installed and reloaded."
+            )
+        elif not isinstance(reported_digest_value, str) or re.fullmatch(
+            r"[0-9a-f]{64}", reported_digest_value
+        ) is None:
+            bridge_provenance = "malformed"
+            warnings.append(
+                "The running bridge reported a malformed source SHA-256. Reads may "
+                "continue, but every write will refuse."
+            )
+        elif reported_digest_value != expected_digest:
+            bridge_provenance = "mismatched"
+            warnings.append(
+                "The running bridge is stale or belongs to another Postfader build. "
+                "Reads may continue, but every write will refuse until the packaged "
+                "bridge is installed and reloaded."
+            )
+        else:
+            bridge_provenance = "matching"
+
+    session_value = ping.get("session_fingerprint")
+    session_fingerprint = (
+        session_value
+        if isinstance(session_value, str)
+        and re.fullmatch(r"[0-9a-f]{32}", session_value) is not None
+        else None
+    )
+    if session_value not in (None, "") and session_fingerprint is None:
+        warnings.append(
+            "The running bridge reported a malformed session fingerprint; reads "
+            "may continue, but it cannot be used as a write precondition."
+        )
 
     if error is not None:
         compatible = False
@@ -293,6 +350,12 @@ def connection_from_ping(
         bridge_mode=bridge_mode,
         bridge_read_only_enforced=protocol is not None and protocol >= 2 and bridge_mode == "read_only",
         verified_writes_enabled=writes_enabled,
+        bridge_source_sha256=reported_digest,
+        expected_bridge_source_sha256=expected_digest,
+        bridge_provenance=bridge_provenance,
+        bridge_provenance_verified=bridge_provenance == "matching",
+        session_fingerprint=session_fingerprint,
+        warnings=warnings,
         error=error,
     )
 
@@ -706,7 +769,7 @@ class ReadOnlyInspector:
         connection = self._require_compatible()
         raw = self.gateway.call("project.info")
         dirty = _dirty(raw.get("unsaved_changes"))
-        warnings = []
+        warnings = list(connection.warnings)
         if "project_title" not in raw:
             warnings.append(
                 "The installed bridge protocol does not yet return the project title."
@@ -740,6 +803,7 @@ class ReadOnlyInspector:
             transport=TransportState(
                 playing=_bool(raw.get("playing")),
                 recording=_bool(raw.get("recording")),
+                tempo_bpm=_float(raw.get("tempo_bpm")),
                 song_position_normalized=_float(raw.get("song_pos")),
                 song_position_display=str(raw.get("song_pos_hint") or "") or None,
                 song_length_ms=_int(raw.get("song_length_ms")),
@@ -753,7 +817,7 @@ class ReadOnlyInspector:
 
     def selected_range(self) -> SelectedRangeObservation:
         """Return raw selection data without unverifiable meter semantics."""
-        self._require_compatible()
+        connection = self._require_compatible()
         before = self.gateway.call("project.info")
         raw = self.gateway.call("arrangement.selection")
         after = self.gateway.call("project.info")
@@ -775,7 +839,7 @@ class ReadOnlyInspector:
             raise ValueError(
                 "selection endpoints or PPQ changed within the bounded observation; retry"
             )
-        warnings = _observation_warnings(before, after)
+        warnings = list(connection.warnings) + _observation_warnings(before, after)
         warnings.extend(
             [
                 "Raw selection endpoints and project PPQ are preserved, but selection state, presence, units, and normalized ticks remain unvalidated.",
@@ -810,7 +874,7 @@ class ReadOnlyInspector:
         include_peaks: bool = False,
         max_tracks: int | None = None,
     ) -> MixerTrackList:
-        self._require_compatible()
+        connection = self._require_compatible()
         before = self.gateway.call("project.info")
         arguments: dict[str, Any] = {
             "only_used": only_used,
@@ -820,7 +884,7 @@ class ReadOnlyInspector:
             arguments["max_tracks"] = max_tracks
         raw = self.gateway.call("mixer.list", **arguments)
         after = self.gateway.call("project.info")
-        warnings = _observation_warnings(before, after)
+        warnings = list(connection.warnings) + _observation_warnings(before, after)
         after_dirty = _dirty(after.get("unsaved_changes"))
         if only_used:
             warnings.append(
@@ -849,11 +913,11 @@ class ReadOnlyInspector:
         )
 
     def inspect_mixer_track(self, track_index: int) -> MixerTrackInspection:
-        self._require_compatible()
+        connection = self._require_compatible()
         before = self.gateway.call("project.info")
         raw = self.gateway.call("mixer.track", track=track_index)
         after = self.gateway.call("project.info")
-        warnings = _observation_warnings(before, after)
+        warnings = list(connection.warnings) + _observation_warnings(before, after)
         after_dirty = _dirty(after.get("unsaved_changes"))
         routes = [
             MixerRoute(
@@ -903,7 +967,7 @@ class ReadOnlyInspector:
         offset: int = 0,
         name_filter: str | None = None,
     ) -> PluginParameterPage:
-        self._require_compatible()
+        connection = self._require_compatible()
         before = self.gateway.call("project.info")
         arguments: dict[str, Any] = {
             "track": track_index,
@@ -921,7 +985,7 @@ class ReadOnlyInspector:
             raise ValueError("FL bridge did not report the plug-in parameter count")
         scanned = min(limit, max(0, total - offset))
         next_offset = offset + scanned if offset + scanned < total else None
-        warnings = _observation_warnings(before, after) + [
+        warnings = list(connection.warnings) + _observation_warnings(before, after) + [
             "Parameter values are read-only and unprofiled; indices are not a durable plug-in identity."
         ]
         parameters = []
@@ -984,7 +1048,7 @@ class ReadOnlyInspector:
         Every returned parameter is still `safe_to_modify=False`. Knowing a
         control is real is not the same as knowing what it does.
         """
-        self._require_compatible()
+        connection = self._require_compatible()
         before = self.gateway.call("project.info")
         arguments: dict[str, Any] = {"track": track_index, "slot": slot_index}
         for key, value in (
@@ -1017,7 +1081,7 @@ class ReadOnlyInspector:
             )
 
         truncated = bool(raw.get("truncated"))
-        warnings = _observation_warnings(before, after) + [
+        warnings = list(connection.warnings) + _observation_warnings(before, after) + [
             "Parameter values are read-only and unprofiled; indices are not a "
             "durable plug-in identity."
         ]

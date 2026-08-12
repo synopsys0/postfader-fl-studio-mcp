@@ -46,6 +46,16 @@ class BridgeSourceTests(unittest.TestCase):
         raw = bridge_install.bridge_source_path().read_bytes()
         self.assertTrue(all(byte < 128 for byte in raw))
 
+    def test_expected_deployment_uses_the_same_stamped_bytes_and_digest(self):
+        source = bridge_install.bridge_source_path().read_bytes()
+        expected_bytes, expected_digest = stamp_bridge_source(source)
+
+        deployed_bytes, deployed_digest = bridge_install.expected_bridge_deployment()
+
+        self.assertEqual(deployed_bytes, expected_bytes)
+        self.assertEqual(deployed_digest, expected_digest)
+        self.assertEqual(len(deployed_digest), 64)
+
 
 class UserDataResolutionTests(unittest.TestCase):
     def setUp(self):

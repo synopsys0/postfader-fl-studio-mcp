@@ -10,7 +10,7 @@ a publishable result yet; it does not mean unsupported.**
 
 | Axis | Values | Meaning |
 |---|---|---|
-| Architectural scope | Compatible by design / Out of scope | Native, VST, VST3, and AU effects in mixer slots 0-9 use the generic path. Channel Rack instruments and generators use a separate FL API addressing form that Postfader's current mixer-only contracts do not expose. |
+| Architectural scope | Compatible by design / Unavailable through backend | Native, VST, VST3, and AU plug-ins exposed as mixer effects or Channel Rack generators use the generic parameter path through distinct target types. Insertion, removal, and reordering remain unavailable through the public MIDI scripting backend. |
 | Evidence level | Detected / Read-profiled / Write-validated | Detected means FL exposed the effect but the scan was partial. Read-profiled means every reported index was examined. Write-validated adds one representative normalized write and an independently confirmed exact restore. |
 | Evidence source | Maintainer / Community | Who supplied the observation. Community is provenance, not a stronger capability claim. |
 
@@ -36,9 +36,10 @@ three examples are not extrapolated to the whole stock class.
 | Fruity Filter | stock / native | read-profiled | complete; 6/6 real-looking; no padding | not run | not run | FL Studio 26.1.3 build 5336; Producer; Apple silicon | maintainer | Historical read profile predates report schema 1.0; exact Postfader revision was not recorded |
 
 The next stock pass should use a new blank project, load each available mixer
-effect into a slot, and generate a report for each one. Stock generators belong
-in the out-of-scope inventory for this release; Channel Rack support would need
-a deliberate new contract rather than a wider mixer scan.
+effect into a slot, and generate a report for each one. The current shareable
+reporter validates mixer effects only. Generator parameters are reachable at
+runtime in 0.12 through an explicit `channel_generator` target, but they have
+no publishable matrix evidence yet and must not inherit mixer-effect evidence.
 
 ## Third-party mixer effects
 

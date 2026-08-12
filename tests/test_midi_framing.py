@@ -88,6 +88,20 @@ class BridgeFramingTests(unittest.TestCase):
         self.assertEqual(self.transport.partial, {})
         self.assertEqual(self.transport.partial_bytes, 0)
 
+    def test_shared_dispatch_rejects_non_object_request_and_args(self):
+        for request in (
+            [],
+            {"id": 8, "cmd": "ping", "args": []},
+        ):
+            with self.subTest(request=request):
+                response = bridge._dispatch(request)
+                self.assertFalse(response["ok"])
+                self.assertIn("JSON object", response["error"])
+
+        healthy = bridge._dispatch({"id": 9, "cmd": "ping", "args": {}})
+        self.assertTrue(healthy["ok"])
+        self.assertTrue(healthy["result"]["pong"])
+
     def test_oversized_and_invalid_sequence_frames_are_dropped(self):
         invalid = (
             frame(
