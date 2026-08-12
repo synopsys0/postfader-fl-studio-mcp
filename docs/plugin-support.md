@@ -51,13 +51,33 @@ returns a partial list — and a partial list looks exactly like a complete one.
 A wavetable, preset, or impulse-response selector with hundreds of entries is
 the common case.
 
-**What to do:** raise `sweep_steps` toward its maximum of 256 on that call. The
-MCP argument is spelled `sweep_steps`, and arguments are validated strictly, so
-a misspelling is rejected rather than quietly ignored.
+**How many steps a control actually needs.** Measured against a live VST3: a
+29-option Scale control resolved *completely* at the default 64 steps, and
+re-sweeping the same control at 256 found the identical 29 options and nothing
+more. Options partition the normalised range into roughly equal contiguous
+bands, so the sweep does not need fine sampling -- it needs to land in each
+band at least once. About two samples per option is the working rule.
 
-If a control has more than 256 options, address it with `fl_set_plugin_param`
-on the normalised range instead. The sweep is a discovery aid, not the only way
-in.
+That gives a usable guide:
+
+| Options on the control | Steps needed | At the default 64 |
+|---|---|---|
+| up to 32 | up to 64 | fine |
+| 33 - 128 | 66 - 256 | raise `sweep_steps` |
+| over 128 | over 256 | cannot be fully enumerated |
+
+**What to do:** raise `sweep_steps` toward its maximum of 256. The MCP argument
+is spelled `sweep_steps`, and arguments are validated strictly, so a
+misspelling is rejected rather than quietly ignored. Past 256 options, sweeping
+cannot see the whole list at all; address the control with
+`fl_set_plugin_param` on the normalised range instead.
+
+**Sweeping is not free.** It moves the control to look. Asking for the option a
+control is *already* showing keeps the displayed setting, but the control lands
+on the nearest sweep step rather than its exact previous value, and each sweep
+creates undo points and marks the project dirty. Two sweeps on one control took
+a clean project to `dirty_flag: 1` with four undo entries. Do this in a
+disposable project, and undo or close without saving afterwards.
 
 ### Parameter search: `PARAM_SEARCH_RUN = 256`
 
@@ -117,10 +137,18 @@ sit, whether they are named, what kind they are, what units they use -- and
 discards every value. Read what it prints before sharing it, but there should
 be nothing left to redact.
 
-Option lists are the one thing it cannot fill in. Discovering them means moving
-the control to see what it displays, which mutates the project, so enumerated
-controls are reported as existing with their options undiscovered. If you want
-to contribute those, do it in a disposable project with write mode on.
+Option lists are the one thing the read-only run cannot fill in. Add `--sweep`
+to discover them, but only in a disposable project with write mode enabled --
+it moves every enumerated control it surveys:
+
+```bash
+./scripts/plugin_report.py --track 3 --slot 1 --sweep
+```
+
+Option *text* is the plug-in's own vocabulary and is the same for everyone who
+owns it, so the report prints it. The exception is a control that enumerates
+things you made -- a preset or sample selector -- where a single personal-looking
+entry causes the whole list to be withheld rather than published.
 
 ## When a plug-in misbehaves
 
