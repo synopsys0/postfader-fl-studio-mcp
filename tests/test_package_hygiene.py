@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-import importlib.metadata
+import ast
+import json
 import unittest
 from importlib.resources import files
 from pathlib import Path
@@ -25,17 +26,17 @@ class PackageHygieneTests(unittest.TestCase):
         expected = project["project"]["version"]
         self.assertEqual(expected, fl_studio_mcp.__version__)
 
-        # Scope the metadata check to this checkout.  A developer may still
-        # have an older editable install in the virtualenv when the offline
-        # build backend is unavailable; that must not override the metadata
-        # generated in the repository itself.
-        repository_versions = {
-            distribution.version
-            for distribution in importlib.metadata.distributions(path=[str(ROOT)])
-            if distribution.metadata.get("Name", "").lower().replace("_", "-")
-            == "postfader-fl-studio-mcp"
-        }
-        self.assertEqual(repository_versions, {expected})
+        # server.json is committed release metadata, so both its server version
+        # and every package version must agree with the source declaration.
+        # Do not consult generated *.egg-info here: ignored editable-install
+        # metadata may legitimately lag a source version bump. CI separately
+        # checks the freshly built wheel's METADATA.
+        manifest = json.loads((ROOT / "server.json").read_text(encoding="utf-8"))
+        self.assertEqual(expected, manifest["version"])
+        self.assertEqual(
+            {expected},
+            {package["version"] for package in manifest["packages"]},
+        )
 
     def test_no_author_host_records_are_shipped(self) -> None:
         # An installed copy must describe the user's own FL Studio, never the
@@ -48,7 +49,7 @@ class PackageHygieneTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertFalse((package / name).is_file())
 
-    def test_entry_points_are_exactly_the_supported_three(self) -> None:
+    def test_entry_points_are_exactly_the_supported_four(self) -> None:
         # Pinned as a set, not merely checked for presence: a stray console
         # script is a public surface, and this file is where that gets caught.
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -58,6 +59,7 @@ class PackageHygieneTests(unittest.TestCase):
                 "fl-studio-mcp": "fl_studio_mcp.mcp_server:main",
                 "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
                 "postfader-doctor": "fl_studio_mcp.diagnostics:main",
+                "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
             },
         )
 
@@ -74,10 +76,31 @@ class PackageHygieneTests(unittest.TestCase):
             declared["tool"]["setuptools"]["package-data"]["fl_studio_mcp"],
         )
 
-    def test_the_packaged_bridge_is_data_rather_than_a_module(self) -> None:
-        # It calls FL Studio's embedded API at import time, so it must not be
-        # reachable by `import fl_studio_mcp._bridge...`.
-        self.assertFalse((ROOT / "fl_studio_mcp" / "_bridge" / "__init__.py").exists())
+    def test_runtime_modules_do_not_import_the_fl_controller_body(self) -> None:
+        # `_bridge` has no __init__.py, but its directory may still be found as
+        # a PEP 420 namespace package. That is not the safety boundary. The
+        # controller body imports FL-only modules at top level and therefore
+        # must be executed only by FL Studio; ordinary package modules must
+        # never import it. Inspect their syntax without importing the body.
+        package = ROOT / "fl_studio_mcp"
+        controller = package / "_bridge" / "device_UniversalBridge.py"
+        self.assertTrue(controller.is_file())
+        self.assertFalse((controller.parent / "__init__.py").exists())
+
+        for module in package.glob("*.py"):
+            tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
+            imports = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    imports.extend(alias.name for alias in node.names)
+                elif isinstance(node, ast.ImportFrom):
+                    base = "." * node.level + (node.module or "")
+                    imports.extend(f"{base}.{alias.name}" for alias in node.names)
+            with self.subTest(module=module.name):
+                self.assertFalse(
+                    any("_bridge" in imported.split(".") for imported in imports),
+                    f"{module.name} imports the FL-only controller body",
+                )
 
     def test_public_metadata_and_direct_test_dependencies_are_declared(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[

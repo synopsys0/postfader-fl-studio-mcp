@@ -5,9 +5,11 @@
 **Mixer effect slots only.** A plug-in is addressed by mixer track and slot
 0-9, so this covers effects on a mixer track and nothing else. Instruments in
 the Channel Rack -- Serum, Sytrus, Harmor, a Kontakt library -- are not
-addressable, however well discovery works, because FL's scripting API exposes
-no parameter access for them here. `fl_get_project_summary` can count channels;
-it cannot reach inside one.
+addressable through Postfader's current contracts, which always require a mixer
+track and effect slot 0-9. FL's scripting API defines a separate Channel Rack
+parameter-addressing form; this release does not expose it.
+`fl_get_project_summary` can count channels, but Postfader cannot yet reach
+inside one.
 
 That limit is worth checking first: no amount of scan tuning helps a plug-in
 that is not on a mixer track.
@@ -16,8 +18,8 @@ that is not on a mixer track.
 
 There is no list of supported plug-ins, and no per-plug-in profiles. The
 connector never models a plug-in; it discovers one at runtime. So there is
-nothing to add for a plug-in it has not seen: it will attempt any VST, VST3, or
-native FL effect loaded in a mixer slot.
+nothing to add for a plug-in it has not seen: it will attempt any VST, VST3,
+AU, or native FL effect loaded in a mixer slot.
 
 Attempt is the honest verb. What you get back depends on what FL chooses to
 report for that plug-in and on the scan bounds below, and a write is reported
@@ -64,7 +66,8 @@ musical key selector.
 returns a partial list — and a partial list looks exactly like a complete one.
 An impulse-response picker on a convolution reverb, or a preset selector on a
 large effect, is where this bites. (A synth wavetable list would be the obvious
-example, but Channel Rack instruments are out of reach entirely -- see above.)
+example, but Channel Rack instruments are outside Postfader's current surface --
+see above.)
 
 **How many steps a control actually needs.** Measured against a live VST3: a
 29-option Scale control resolved *completely* at the default 64 steps, and
@@ -119,60 +122,45 @@ across everything measured so far.
 bare-zero display is classified as padding. In practice nameless controls
 display something meaningful, which is what the rule keys on.
 
-## Validated against
+## Validated observations
 
-Rows record what a contributor actually observed. "Parameter slots" is what FL
-*reported*, not what the plug-in has.
+The [validated plug-in matrix](plugin-matrix.md) lists each observed product
+separately. Its evidence level and source are different axes: a community
+report may be read-profiled or write-validated, and an unlisted effect remains
+compatible by design rather than being blocked.
 
-**FL's stock effects are the easy case and share one row.** They report their
-real parameter count, name their parameters, and pad nothing: Fruity Limiter
-reports 18 for 18, Fruity Delay 3 reports 26, Fruity Filter reports 6. Nothing
-about them needs tuning, so listing them individually would pad this table
-without informing anyone. A stock effect gets its own row only if it
-misbehaves.
-
-Third-party plug-ins are where a row earns its place.
-
-| Plug-in | Format | Slots reported | What is worth knowing |
-|---|---|---|---|
-| FL stock effects (as a class) | internal | real count | Named parameters, no padding, no tuning needed |
-| A vocal-tuning plug-in | VST3 | ~4240 | ~40 real controls; widest gap 15; 38% nameless, identified only by display. A 29-option Scale control resolved fully at the default 64 sweep steps |
-| A harmony plug-in | VST3 | ~4240 | Real controls sparse and interleaved with padding rather than contiguous at the start |
-
-This table is deliberately short. It reflects one contributor's plug-in folder,
-not a survey. **Pull requests adding rows are welcome and are the main way this
-grows** — see [CONTRIBUTING.md](../CONTRIBUTING.md).
-
-To add a row, run the report against your own plug-in:
+To generate a read-only community report against a loaded effect:
 
 ```bash
-./scripts/plugin_report.py --track 3 --slot 1
+postfader-plugin-report \
+  --track 3 --slot 1 \
+  --plugin-version 2.1 \
+  --plugin-origin third-party \
+  --plugin-format VST3 \
+  --fl-edition Producer
 ```
 
-It prints a pasteable table row and the reasoning behind it. The scan it uses
-is on the bridge's read-only allowlist, so it is safe against a project you are
-working in and needs no write mode.
+From a source checkout, `./scripts/plugin_report.py` invokes the same installed
+implementation. The scan command is on the bridge's read-only allowlist and
+needs no write mode.
 
-**It reports the plug-in, never your settings.** A scan returns current values,
-and those describe your session rather than the plug-in: a control reading
-`Key = A` states what key your song is in, and a retune speed is a mixing
-decision. The report keeps the shape -- how many controls exist, where they
-sit, whether they are named, what kind they are, what units they use -- and
-discards every value. Read what it prints before sharing it, but there should
-be nothing left to redact.
+**It reports structural evidence, never your settings.** A scan necessarily
+reads current values and display strings to distinguish real controls from
+padding. The shareable reducer discards them, parameter names, option text,
+mixer locations, project metadata, paths, and timestamps. Aggregate display-
+derived kinds and units are also omitted because they can reveal a coarse
+mode. Read the result before sharing it and do not attach the source scan.
 
-Option lists are the one thing the read-only run cannot fill in. Add `--sweep`
-to discover them, but only in a disposable project with write mode enabled --
-it moves every enumerated control it surveys:
+The reporter does not sweep enumerated controls and never publishes their
+option strings: preset and sample selectors may expose user-created names.
+The MCP `fl_set_plugin_param_option` tool still supports an intentional live
+option write, under the mutation warnings above, but that output is not a
+community compatibility artifact.
 
-```bash
-./scripts/plugin_report.py --track 3 --slot 1 --sweep
-```
-
-Option *text* is the plug-in's own vocabulary and is the same for everyone who
-owns it, so the report prints it. The exception is a control that enumerates
-things you made -- a preset or sample selector -- where a single personal-looking
-entry causes the whole list to be withheld rather than published.
+Representative write validation is a separate, explicit mode. It requires a
+blank disposable project and only earns `write-validated` when both the test
+move and exact restore are confirmed. See the matrix for the command and
+refusal conditions.
 
 ## When a plug-in misbehaves
 

@@ -45,6 +45,7 @@ SAFE_TESTS = (
     "tests/test_midi_framing.py",
     "tests/test_resource_bounds.py",
     "tests/test_plugin_profile.py",
+    "tests/test_plugin_report.py",
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
