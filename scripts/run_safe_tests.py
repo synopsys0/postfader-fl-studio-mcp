@@ -43,6 +43,7 @@ SAFE_TESTS = (
     "tests/test_readonly_mcp.py",
     "tests/test_tick_budget.py",
     "tests/test_midi_framing.py",
+    "tests/test_resource_bounds.py",
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
