@@ -99,15 +99,28 @@ This table is deliberately short. It reflects one contributor's plug-in folder,
 not a survey. **Pull requests adding rows are welcome and are the main way this
 grows** — see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-To add a row, run against your own plug-in:
+To add a row, run the report against your own plug-in:
 
 ```bash
-./.venv/bin/python scripts/inspect_readonly.py --capabilities
+./scripts/plugin_report.py --track 3 --slot 1
 ```
 
-then use `plugins_scan_parameters` on the slot and report the reported count,
-the real count, and anything that surprised you. Do not include project audio,
-a project file, or a path from your machine.
+It prints a pasteable table row and the reasoning behind it. The scan it uses
+is on the bridge's read-only allowlist, so it is safe against a project you are
+working in and needs no write mode.
+
+**It reports the plug-in, never your settings.** A scan returns current values,
+and those describe your session rather than the plug-in: a control reading
+`Key = A` states what key your song is in, and a retune speed is a mixing
+decision. The report keeps the shape -- how many controls exist, where they
+sit, whether they are named, what kind they are, what units they use -- and
+discards every value. Read what it prints before sharing it, but there should
+be nothing left to redact.
+
+Option lists are the one thing it cannot fill in. Discovering them means moving
+the control to see what it displays, which mutates the project, so enumerated
+controls are reported as existing with their options undiscovered. If you want
+to contribute those, do it in a disposable project with write mode on.
 
 ## When a plug-in misbehaves
 
