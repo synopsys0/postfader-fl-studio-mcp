@@ -7,7 +7,7 @@
 Explore the project you already have open, make carefully checked changes, and
 compare exported mixes—all from an MCP-compatible AI client.
 
-[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.13.0%20RC-orange)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.13.0-blue)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [Features](#what-you-can-do) · [Quick start](#quick-start) · [Supported versions](#supported-versions) · [Safety](#safe-by-default) · [Documentation](#documentation)
 
@@ -111,7 +111,7 @@ does not provide live audio buffers.
 
 | Component | Support |
 | --- | --- |
-| Postfader | 0.13.0 release candidate |
+| Postfader | 0.13.0 |
 | FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer |
 | FL MIDI scripting API | Version 44 or newer |
 | Python | 3.10 through 3.14 |
