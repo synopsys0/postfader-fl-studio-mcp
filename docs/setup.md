@@ -1,13 +1,5 @@
 # Setup and usage
 
-Postfader 0.13.0 is a cross-platform release candidate. Its changed MIDI
-framing/correlation path has fresh supervised evidence on macOS 27.0 arm64
-with FL Studio 2026 Producer Edition 26.1.3 build 5336 and MIDI scripting API
-44. Windows implementation and hermetic coverage are complete, but the
-supervised FL Studio/virtual-MIDI evidence in
-[windows-acceptance.md](windows-acceptance.md) is still required before calling
-that path validated.
-
 Postfader does not install or configure virtual MIDI software. Configure one
 bidirectional virtual endpoint yourself, then give Postfader its exact name.
 
@@ -260,108 +252,7 @@ The bridge reads that legacy flag only when FL loads the script. It is no
 longer required for ordinary AI-client use. Never place
 `FL_BRIDGE_ENABLE_WRITES` in MCP configuration.
 
-## 7. Supervised live acceptance
-
-Plan and evidence modes are separated. These entry points contact FL/MIDI in
-non-plan mode. Invoke them with the checkout interpreter.
-
-Windows PowerShell:
-
-```powershell
-& .\.venv\Scripts\python.exe .\scripts\live_read_acceptance.py --help
-& .\.venv\Scripts\python.exe .\scripts\live_write_acceptance.py --help
-& .\.venv\Scripts\python.exe .\scripts\live_note_acceptance.py --help
-```
-
-macOS:
-
-```bash
-./.venv/bin/python scripts/live_read_acceptance.py --help
-./.venv/bin/python scripts/live_write_acceptance.py --help
-./.venv/bin/python scripts/live_note_acceptance.py --help
-```
-
-### macOS v0.13 transport evidence
-
-The v0.13 MIDI wire protocol completed this fresh regression on macOS 27.0
-arm64 with FL Studio 2026 Producer Edition 26.1.3 build 5336 and MIDI scripting
-API 44. The procedure below is the reproducible full mutation check. It uses
-the exact IAC bus and private outputs, runs reads with FL in normal read-only
-mode, then enables writes only for a reviewed disposable-project session:
-
-```bash
-PORT='IAC Driver Bus 1'
-mkdir -p .private
-./.venv/bin/postfader-doctor --midi-port "$PORT" --json
-./.venv/bin/python scripts/live_read_acceptance.py --midi-port "$PORT" --mixer-track 1 --plugin-track 1 --plugin-slot 0 --pattern 1 --channel 0 --output .private/macos-read.json
-cp docs/windows-write-scenario-v1.json .private/macos-write-scenario-reviewed.json
-# Review every target/value and set the required reviewed fixture marker.
-./.venv/bin/python scripts/live_write_acceptance.py --plan --midi-port "$PORT" --scenario .private/macos-write-scenario-reviewed.json
-./.venv/bin/python scripts/live_write_acceptance.py --midi-port "$PORT" --scenario .private/macos-write-scenario-reviewed.json --confirm-user-present --confirm-disposable-project --confirm-safe-to-edit --output .private/macos-write.json
-./.venv/bin/python scripts/live_note_acceptance.py --plan --midi-port "$PORT" --channel 0
-./.venv/bin/python scripts/live_note_acceptance.py --midi-port "$PORT" --channel 0 --note 60 --velocity 80 --duration-ms 250 --confirm-user-present --confirm-disposable-project --confirm-live-note-dispatch --output .private/macos-note.json
-```
-
-The release gate requires command protocol 2 and MIDI wire protocol 2 in the
-doctor, the runtime mode transition proven by a post-transition handshake,
-every read passing, every persistent write independently restored, a live-note
-dispatch receipt, and a final ordinary session proving read-only mode. Each
-output path is create-only, so use a new name for every rerun.
-
-The read harness derives the read surface from actual MCP annotations and
-exercises every read tool with atomic per-tool checkpoints, isolated workers,
-and validated per-tool and overall deadlines. A timed-out worker is terminated
-and reaped before all later reads are skipped. The write scenario must contain exactly one
-operation for each authoritative persistent write tool. Each operation names:
-
-```json
-{
-  "tool": "fl_set_mixer_volume",
-  "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
-  "mutation_arguments": {"track_index": 1, "volume_normalized": 0.73},
-  "restore": [{
-    "tool": "fl_set_mixer_volume",
-    "arguments": {
-      "track_index": 1,
-      "volume_normalized": {"$before": "track.volume_normalized"}
-    }
-  }],
-  "verify_paths": ["track.volume_normalized"]
-}
-```
-
-The reviewed scenario is validated against the public surface before any
-preflight. Real execution requires `scenario_version: 1`, the exact
-`fixture_status: "REVIEWED_FOR_THIS_DISPOSABLE_PROJECT"` marker,
-`safe_to_edit: true`, and the user-present, disposable-project, and
-safe-to-edit CLI confirmations. Plan mode can still validate the public
-`TEMPLATE_REQUIRES_REVIEW` fixture without making it live-eligible. Live mode
-refuses playing/recording, unverified provenance, read-only mode, or a missing
-session fingerprint. Master-targeting operations require per-tool
-acknowledgements. A mutation is attempted once, never retried after an
-exception, then restored and reread. A failed restore stops the run loudly.
-Nothing saves the project.
-
-List state can use a `$select` reference containing `path`, `where`, and
-`value`. It resolves exactly one member by logical identity and refuses absent
-or ambiguous matches before the first mutation. The Windows fixture uses this
-for mixer destinations, plug-in parameter indices, and EQ band indices; do not
-replace those identities with list positions. When adapting plug-in controls,
-update mutation indices, before selectors, restore indices, and verification
-selectors together. The playing operation restores both stopped playback and
-the captured song position, in that order, and independently verifies both.
-
-Each live evidence update is a same-directory atomic snapshot containing an
-append-only logical checkpoint journal. Completed preflight, before-state,
-mutation, restoration, and independent-reread phases are flushed durably, so
-an unexpected exception leaves the last completed state visible instead of a
-truncated file. Every snapshot continues to report `project_saved: false`.
-
-Live note has a separate confirmation and evidence path because it is
-ephemeral rather than restorable persistent state. Complete the full morning
-procedure in [windows-acceptance.md](windows-acceptance.md).
-
-## 8. Troubleshooting
+## 7. Troubleshooting
 
 **Universal Bridge is not listed.** Quit FL, rerun the native installer with
 the correct absolute user-data path, reopen FL, and reload scripts.
@@ -401,7 +292,7 @@ verification detail, warnings, and the project itself.
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
 
-## 9. Hermetic tests
+## 8. Hermetic tests
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_safe_tests.py
