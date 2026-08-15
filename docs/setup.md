@@ -1,11 +1,12 @@
 # Setup and usage
 
-Postfader 0.13.0 is a cross-platform release candidate. macOS retains v0.12
-Apple-silicon live evidence, but v0.13 changes MIDI framing/correlation and
-therefore requires a fresh macOS live smoke. Windows implementation and
-hermetic coverage are complete, but the supervised FL Studio/virtual-MIDI
-evidence in [windows-acceptance.md](windows-acceptance.md) is still required
-before calling that path validated.
+Postfader 0.13.0 is a cross-platform release candidate. Its changed MIDI
+framing/correlation path has fresh supervised evidence on macOS 27.0 arm64
+with FL Studio 2026 Producer Edition 26.1.3 build 5336 and MIDI scripting API
+44. Windows implementation and hermetic coverage are complete, but the
+supervised FL Studio/virtual-MIDI evidence in
+[windows-acceptance.md](windows-acceptance.md) is still required before calling
+that path validated.
 
 Postfader does not install or configure virtual MIDI software. Configure one
 bidirectional virtual endpoint yourself, then give Postfader its exact name.
@@ -254,13 +255,13 @@ macOS:
 ./.venv/bin/python scripts/live_note_acceptance.py --help
 ```
 
-### Required macOS v0.13 transport smoke
+### macOS v0.13 transport evidence
 
-Before tagging v0.13, run a fresh macOS regression against the new MIDI wire
-protocol, in addition to completing the Windows checklist. Use the exact IAC
-bus, create private outputs, run the read phase with FL in normal read-only
-mode, then review the platform-neutral scenario fixture and relaunch only the
-disposable project with writes enabled for the write phase:
+The v0.13 MIDI wire protocol completed this fresh regression on macOS 27.0
+arm64 with FL Studio 2026 Producer Edition 26.1.3 build 5336 and MIDI scripting
+API 44. The procedure below is the reproducible release check. It uses the
+exact IAC bus and private outputs, runs reads with FL in normal read-only mode,
+then relaunches only a reviewed disposable project with writes enabled:
 
 ```bash
 PORT='IAC Driver Bus 1'

@@ -2020,8 +2020,8 @@ def cmd_plugin_set_param_option(a):
     Arguments:
         track, slot   where the plug-in is
         param         index, or a name/display string
-        option        the option text to land on, matched case-insensitively
-                      and then as a substring
+        option        the exact option text to land on, matched
+                      case-insensitively
         steps         sweep resolution, 2..256 (default 64)
     """
     target_info = _plugin_target(a, writing=True)
@@ -2079,11 +2079,6 @@ def cmd_plugin_set_param_option(a):
         if display.lower() == low:
             target = (display, value)
             break
-    if target is None:
-        for display, value in options:
-            if display and low in display.lower():
-                target = (display, value)
-                break
 
     if target is None:
         # The sweep moved the control to look. Putting it back is not enough:

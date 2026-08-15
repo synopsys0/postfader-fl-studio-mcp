@@ -28,9 +28,10 @@ the FL-side allowlist unless FL Studio itself starts in write mode.
 
 Version 0.13.0 is a cross-platform release candidate:
 
-- macOS retains the v0.12 Apple-silicon evidence for FL Studio 2026 Producer
-  Edition 26.1.3 build 5336 and MIDI scripting API 44, but v0.13 changes MIDI
-  framing/correlation, so a fresh macOS live smoke is a release gate;
+- the v0.13 MIDI framing/correlation path has fresh supervised evidence on
+  macOS 27.0 arm64 with FL Studio 2026 Producer Edition 26.1.3 build 5336 and
+  MIDI scripting API 44, including all reads, 19 restored writes, live-note
+  dispatch, and return to a new read-only session;
 - Windows 11 x64 has native path discovery, process ownership, bootstrap,
   diagnostics, configuration generation, CI, packaging, and hermetic tests;
 - the Windows FL Studio and virtual-MIDI path still requires the supervised
@@ -298,8 +299,8 @@ own harness because it has no persistent-state restoration contract.
 
 These scripts perform real FL/MIDI activity unless `--plan` is used. Windows
 release owners must follow [docs/windows-acceptance.md](docs/windows-acceptance.md);
-macOS release owners must also complete the concise v0.13 transport smoke in
-[docs/setup.md](docs/setup.md#required-macos-v013-transport-smoke).
+the completed macOS v0.13 transport-smoke procedure and acceptance criteria are
+recorded in [docs/setup.md](docs/setup.md#macos-v013-transport-evidence).
 
 ## Testing and release verification
 
@@ -317,8 +318,6 @@ wheel into a clean temporary venv before executing every console `--help`.
 
 ## Important limitations
 
-- Fresh macOS v0.13 live transport regression is pending after the MIDI wire
-  framing/correlation change; retained v0.12 evidence is not a substitute.
 - Windows live FL/MIDI validation is pending the supervised acceptance record.
 - Plug-in insertion, removal, and reordering are not exposed.
 - Playback speed lacks an authoritative public getter and is not exposed.

@@ -17,9 +17,10 @@ Consequences:
   copy;
 - the TCP and file-mailbox transports remain useful to deterministic tests but
   are not the production connection; and
-- the validated macOS transport is local MIDI SysEx over CoreMIDI/IAC; the
-  Windows release candidate uses the same protocol over an explicitly
-  configured virtual endpoint and awaits supervised live evidence.
+- the v0.13 transport is live-validated as local MIDI SysEx over CoreMIDI/IAC
+  on macOS 27.0 arm64; the Windows release candidate uses the same protocol
+  over an explicitly configured virtual endpoint and awaits supervised live
+  evidence.
 
 ## Mode flags are fixed when FL Studio loads the script
 
@@ -139,7 +140,8 @@ safe test suite.
 
 FL Studio exposes no function that lists the valid text options for a plug-in
 parameter. `fl_set_plugin_param_option` learns them by sweeping normalized
-values and recording the displayed text, then lands on the requested option.
+values and recording the displayed text, then lands on the requested exact
+label. Matching ignores case but refuses substrings.
 
 This is a mutating search. It can move the control through intermediate values
 and should not be run during recording or on an irreplaceable project. If the

@@ -53,12 +53,13 @@ So there are three ways to name the control you mean.
 |---|---|---|
 | `fl_set_plugin_param` | target, parameter index, normalised `0..1` | You know the curve, or the control is a plain fader |
 | `fl_set_plugin_param_display` | target, index/name, and the number the plug-in shows | You want "20 ms" and do not know the curve |
-| `fl_set_plugin_param_option` | target, index/name, and option text | The control is enumerated: a key, a scale, a mode |
+| `fl_set_plugin_param_option` | target, index/name, and exact option text | The control is enumerated: a key, a scale, a mode |
 
 Prefer the second and third. `fl_set_plugin_param_display` searches the control
 until FL's own readback agrees, so it never assumes a curve.
 `fl_set_plugin_param_option` also returns every option it discovered, which is
-the fastest way to learn what an unfamiliar control can do.
+the fastest way to learn what an unfamiliar control can do. Copy the exact
+label from that list; matching ignores case but refuses substrings.
 
 A text selector is resolved one priority tier at a time: exact name, exact
 display, name substring, then display substring. If the first matching tier
