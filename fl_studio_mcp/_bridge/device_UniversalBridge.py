@@ -6,7 +6,8 @@ Universal Bridge - FL Studio MIDI Controller Script.
 
 Exposes a narrow FL Studio scripting surface to an external MCP server. The
 bridge is locked read-only by default. A small, readback-verified write surface
-can be turned on with FL_BRIDGE_ENABLE_WRITES=1.
+can be enabled for the current bridge session by an explicit, user-confirmed
+control request. FL_BRIDGE_ENABLE_WRITES=1 remains a startup compatibility path.
 
 Design constraints this file works within:
 
@@ -66,6 +67,11 @@ MAX_CLIENTS = 4
 # chunks of this many tracks and resumed on later ticks.
 TRACKS_PER_TICK = 12
 MIXER_SLOTS = 10
+# FL scripting API 45 reports mixer.trackCount() == 127, but index 126 is the
+# non-addressable Current pseudo-track. API 44 and the documented mixer surface
+# report the 126 real targets directly (Master plus inserts 1..125). Never let
+# the host's sentinel inflate a public count or reach a track-addressed API.
+MAX_ADDRESSABLE_MIXER_TRACKS = 126
 PARAMS_PER_TICK = 64
 CHANNELS_PER_TICK = 8
 # Every plug-in parameter write passes this. FL's default pickup behaviour can
@@ -102,8 +108,35 @@ MAX_PARAM_INDEX_SCAN = 8192
 SYSEX_ID = 0x7D
 TAG_REQUEST = 0x01
 TAG_RESPONSE = 0x02
-SYSEX_CHUNK = 1024
-MAX_SYSEX_PER_TICK = 8
+# Command/result semantics remain bridge protocol 2. MIDI has a separate wire
+# version because v0.13 added correlated responses and changed the frame size;
+# v0.12 is the implicit wire protocol 1.
+LEGACY_MIDI_WIRE_PROTOCOL_VERSION = 1
+MIDI_WIRE_PROTOCOL_VERSION = 2
+MIDI_WIRE_PROTOCOL_FIELD = "midi_wire_protocol_version"
+# RtMidi's Windows MM input backend uses 1,024-byte SysEx buffers by
+# default.  Account for the nine-byte wire header and F7 terminator so a full
+# frame reaches the client intact; 1,000 also leaves modest driver headroom.
+WINMM_SYSEX_BUFFER_BYTES = 1024
+SYSEX_FRAME_OVERHEAD_BYTES = 10
+MIDI_WIRE_SYSEX_CHUNKS = {
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION: 1024,
+    MIDI_WIRE_PROTOCOL_VERSION: 1000,
+}
+MIDI_WIRE_FRAME_BYTES = {
+    version: SYSEX_FRAME_OVERHEAD_BYTES + chunk
+    for version, chunk in MIDI_WIRE_SYSEX_CHUNKS.items()
+}
+SYSEX_CHUNK = MIDI_WIRE_SYSEX_CHUNKS[MIDI_WIRE_PROTOCOL_VERSION]
+# A v0.12 client ignores the new heartbeat field. Accept its larger incoming
+# request frames so old client -> new bridge remains an upgrade-safe direction;
+# all new bridge responses still use the WinMM-safe current chunk size.
+MAX_SYSEX_INPUT_CHUNK = MIDI_WIRE_SYSEX_CHUNKS[
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+# WinMM/virtualMIDI can discard a burst of long SysEx messages even though
+# each individual message is valid. Pace Windows responses one frame per FL
+# idle callback; CoreMIDI retains the already-verified eight-frame window.
+MAX_SYSEX_PER_TICK = 1 if os.name == "nt" else 8
 
 # A request contains only one command and its bounded arguments. Responses can
 # be much larger (a full mixer or de-padded parameter scan), but both directions
@@ -121,13 +154,34 @@ MAX_SYSEX_REQUEST_BYTES = 256 * 1024
 MAX_SYSEX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYSEX_REQUEST_PARTS = (
     MAX_SYSEX_REQUEST_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
-MAX_SYSEX_RESPONSE_PARTS = (
+_CURRENT_MIDI_RESPONSE_PARTS = (
     MAX_SYSEX_RESPONSE_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
-MAX_SYSEX_FRAME_BYTES = 10 + SYSEX_CHUNK
+# A v0.12 receiver permits at most 4,096 response parts. Reducing the current
+# payload from 1,024 to 1,000 bytes must not let a new bridge advertise a total
+# that an old client rejects before reassembly. Keep the rolling-upgrade
+# direction within that published receiver ceiling.
+LEGACY_MIDI_RESPONSE_PART_CEILING = (
+    MAX_SYSEX_RESPONSE_BYTES
+    + MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+    - 1
+) // MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+MAX_SYSEX_RESPONSE_PARTS = min(
+    _CURRENT_MIDI_RESPONSE_PARTS,
+    LEGACY_MIDI_RESPONSE_PART_CEILING,
+)
+MAX_SYSEX_RESPONSE_WIRE_BYTES = min(
+    MAX_SYSEX_RESPONSE_BYTES,
+    MAX_SYSEX_RESPONSE_PARTS * SYSEX_CHUNK,
+)
+MAX_SYSEX_FRAME_BYTES = MIDI_WIRE_FRAME_BYTES[MIDI_WIRE_PROTOCOL_VERSION]
+MAX_SYSEX_INPUT_FRAME_BYTES = MIDI_WIRE_FRAME_BYTES[
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
 MAX_SYSEX_PARTIAL_MESSAGES = 8
 MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_REQUEST_BYTES
 MAX_SYSEX_READY_MESSAGES = 16
 MAX_SYSEX_OUTBOX_FRAMES = MAX_SYSEX_RESPONSE_PARTS + MAX_SYSEX_PER_TICK
+if MAX_SYSEX_FRAME_BYTES > WINMM_SYSEX_BUFFER_BYTES:
+    raise RuntimeError("SysEx framing exceeds the Windows MM input buffer")
 # OnIdle is normally about 50 Hz, making this roughly a ten-second deadline.
 # Tick time is used instead of wall time so the FL callback never depends on a
 # clock call and deterministic tests can advance it directly.
@@ -159,10 +213,15 @@ SESSION_FINGERPRINT = "%016x%016x" % (
 
 # The bounded mutation surface: persistent commands read FL back after a later
 # idle tick, while live-note dispatch reports only note-on/note-off delivery.
-# It is off unless FL is launched with this flag. Setting it never enables
-# anything outside the twenty explicit command names below.
-LEAN_WRITES_ENABLED = (
+# It is off unless FL is launched with this flag or a user-confirmed runtime
+# control request enables it. Neither path enables anything outside the twenty
+# explicit command names below.
+STARTUP_WRITES_ENABLED = (
     os.environ.get("FL_BRIDGE_ENABLE_WRITES", "").strip() == "1"
+)
+LEAN_WRITES_ENABLED = STARTUP_WRITES_ENABLED
+WRITE_MODE_ORIGIN = (
+    "startup_environment" if STARTUP_WRITES_ENABLED else "disabled"
 )
 READ_ONLY_COMMANDS = frozenset({
     "ping",
@@ -176,6 +235,9 @@ READ_ONLY_COMMANDS = frozenset({
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
+})
+SESSION_CONTROL_COMMANDS = frozenset({
+    "session.set_write_mode",
 })
 LEAN_WRITE_COMMANDS = frozenset({
     "mixer.set_volume",
@@ -325,10 +387,21 @@ def _fl_colors_equivalent(left, right):
     )
 
 
+def _mixer_track_count():
+    """Return the count of indices that track-addressed mixer APIs accept."""
+    try:
+        count = int(mixer.trackCount())
+    except Exception as exc:
+        raise ValueError("FL did not report a valid mixer track count") from exc
+    if count < 0:
+        raise ValueError("FL reported a negative mixer track count")
+    return min(count, MAX_ADDRESSABLE_MIXER_TRACKS)
+
+
 def _mixer_track_index(value):
     """Return a valid live mixer index, never a fabricated empty track."""
     index = _strict_integer(value, "mixer track index")
-    count = int(mixer.trackCount())
+    count = _mixer_track_count()
     if index < 0 or index >= count:
         raise ValueError(
             "mixer track index %d is outside the live range 0..%d"
@@ -528,7 +601,11 @@ def cmd_ping(a):
     return {
         "pong": True,
         "protocol": PROTOCOL_VERSION,
+        MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
         "verified_writes_enabled": bool(LEAN_WRITES_ENABLED),
+        "runtime_write_mode_control": True,
+        "write_mode_origin": WRITE_MODE_ORIGIN,
+        "startup_write_mode_enabled": bool(STARTUP_WRITES_ENABLED),
         "fl_version": _safe(lambda: ui.getVersion(), ""),
         # Keep the old key for protocol-1 clients, but name the value accurately
         # for new clients: this is the MIDI scripting API version, not the FL
@@ -540,6 +617,71 @@ def cmd_ping(a):
         "bridge_source_sha256": BRIDGE_SOURCE_SHA256,
         "session_fingerprint": SESSION_FINGERPRINT,
         "program_title": _safe(lambda: ui.getProgTitle(), ""),
+    }
+
+
+def cmd_session_set_write_mode(a):
+    """Set the bounded write surface for this loaded bridge session only."""
+    global LEAN_WRITES_ENABLED, WRITE_MODE_ORIGIN
+
+    allowed = {
+        "enabled",
+        "confirm_user_present",
+        "session_fingerprint",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "session.set_write_mode received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+
+    enabled = _lean_bool(a, "enabled")
+    confirmed = _lean_bool(a, "confirm_user_present")
+    session = a.get("session_fingerprint")
+    if not isinstance(session, str) or session != SESSION_FINGERPRINT:
+        raise ValueError(
+            "session precondition failed: the bridge was reloaded or the "
+            "fingerprint is invalid; read the connection state again"
+        )
+    if enabled and not confirmed:
+        raise ValueError(
+            "enabling write mode requires confirm_user_present=true from an "
+            "explicit user request"
+        )
+
+    # A long-running write may already have touched FL and still be waiting for
+    # its later-idle-tick readback. Do not claim the gate is closed until that
+    # command has completed and reported its outcome.
+    pending_mutations = sorted({
+        job.cmd for job in _jobs if job.cmd in LEAN_WRITE_COMMANDS
+    })
+    if not enabled and pending_mutations:
+        raise ValueError(
+            "cannot disable write mode while mutation commands are still in "
+            "flight: %s; wait for them to finish and try again"
+            % ", ".join(pending_mutations)
+        )
+
+    before = bool(LEAN_WRITES_ENABLED)
+    LEAN_WRITES_ENABLED = enabled
+    WRITE_MODE_ORIGIN = "runtime_request" if enabled else "disabled"
+    return {
+        "command": "session.set_write_mode",
+        "requested_enabled": enabled,
+        "before_enabled": before,
+        "after_enabled": bool(LEAN_WRITES_ENABLED),
+        "changed": before != bool(LEAN_WRITES_ENABLED),
+        "bridge_mode": "write_test" if LEAN_WRITES_ENABLED else "read_only",
+        "write_mode_origin": WRITE_MODE_ORIGIN,
+        "runtime_write_mode_control": True,
+        "confirmation_required": enabled,
+        "confirmation_applied": enabled and confirmed,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": True,
+        "session_only": True,
+        "startup_default_enabled": bool(STARTUP_WRITES_ENABLED),
+        "project_saved": False,
     }
 
 
@@ -557,7 +699,7 @@ def cmd_project_info(a):
         "song_length_ms": _safe(lambda: transport.getSongLength(midi.SONGLENGTH_MS), None),
         "loop_mode": _safe(lambda: transport.getLoopMode(), None),
         "ppq": _safe(lambda: general.getRecPPQ(), None),
-        "mixer_track_count": _safe(lambda: mixer.trackCount(), None),
+        "mixer_track_count": _safe(lambda: _mixer_track_count(), None),
         "channel_count": _safe(lambda: channels.channelCount(), None),
         "pattern_count": _safe(lambda: patterns.patternCount(), None),
         "playlist_track_count": _safe(lambda: playlist.trackCount(), None),
@@ -616,7 +758,7 @@ def cmd_mixer_list(a):
     on later idle ticks, which keeps each callback well inside its budget even
     on a full 126-track project.
     """
-    n = mixer.trackCount()
+    n = _mixer_track_count()
     only_used = a.get("only_used", True)
     peaks = a.get("peaks", False)
     limit = a.get("max_tracks")
@@ -658,7 +800,7 @@ def cmd_mixer_track(a):
     t = _track_summary(i, with_slots=True, with_peaks=True)
     t["eq"] = cmd_mixer_eq_get({"track": i})
     routes = []
-    for d in range(mixer.trackCount()):
+    for d in range(_mixer_track_count()):
         if d == i:
             continue
         if _safe(lambda: mixer.getRouteSendActive(i, d), False):
@@ -1074,7 +1216,7 @@ def cmd_channels_list(a):
 
 
 # ---------------------------------------------------------------------------
-# lean verified write surface (FL_BRIDGE_ENABLE_WRITES=1)
+# lean verified write surface (current bridge session write gate)
 #
 # Bounded commands, each changing one narrowly scoped state or dispatching one
 # live note. Persistent changes read FL back to say what actually happened.
@@ -1955,8 +2097,8 @@ def cmd_plugin_set_param_option(a):
     Arguments:
         track, slot   where the plug-in is
         param         index, or a name/display string
-        option        the option text to land on, matched case-insensitively
-                      and then as a substring
+        option        the exact option text to land on, matched
+                      case-insensitively
         steps         sweep resolution, 2..256 (default 64)
     """
     target_info = _plugin_target(a, writing=True)
@@ -2014,11 +2156,6 @@ def cmd_plugin_set_param_option(a):
         if display.lower() == low:
             target = (display, value)
             break
-    if target is None:
-        for display, value in options:
-            if display and low in display.lower():
-                target = (display, value)
-                break
 
     if target is None:
         # The sweep moved the control to look. Putting it back is not enough:
@@ -2665,7 +2802,10 @@ def cmd_channel_route_to_mixer(a):
     destination = a.get("destination")
     if isinstance(destination, bool) or not isinstance(destination, int):
         raise ValueError("destination must be an integer")
-    last_insert = int(mixer.getTrackInfo(midi.TN_LastIns))
+    last_insert = min(
+        int(mixer.getTrackInfo(midi.TN_LastIns)),
+        _mixer_track_count() - 1,
+    )
     if last_insert < 0:
         raise ValueError("FL did not report a valid last mixer insert")
     if destination < -1 or destination > last_insert:
@@ -3035,6 +3175,7 @@ def cmd_channel_trigger_note(a):
 
 HANDLERS = {
     "ping": cmd_ping,
+    "session.set_write_mode": cmd_session_set_write_mode,
     "project.info": cmd_project_info,
     "arrangement.selection": cmd_arrangement_selection,
     "mixer.list": cmd_mixer_list,
@@ -3044,8 +3185,8 @@ HANDLERS = {
     "transport.set_song_position": cmd_transport_set_song_position,
     "transport.set_loop_mode": cmd_transport_set_loop_mode,
     "transport.set_tempo": cmd_transport_set_tempo,
-    # The lean verified write surface; reachable only with
-    # FL_BRIDGE_ENABLE_WRITES=1, see LEAN_WRITE_COMMANDS in _dispatch.
+    # The lean verified write surface; reachable only while the bridge session
+    # reports write_test mode, see LEAN_WRITE_COMMANDS in _dispatch.
     "mixer.set_volume": cmd_mixer_set_volume,
     "mixer.set_pan": cmd_mixer_set_pan,
     "mixer.set_mute": cmd_mixer_set_mute,
@@ -3071,12 +3212,24 @@ HANDLERS = {
 class _Job:
     """A command that spreads its work over several idle ticks."""
 
-    def __init__(self, handle, rid, gen, cmd):
+    def __init__(self, handle, rid, gen, cmd, client_session=None,
+                 request_token=None):
         self.handle = handle
         self.rid = rid
         self.gen = gen
         self.cmd = cmd
+        self.client_session = client_session
+        self.request_token = request_token
         self.chunks = 0
+
+
+def _correlated(response, client_session=None, request_token=None):
+    """Echo transport correlation without changing legacy command results."""
+    if client_session is not None:
+        response["client_session"] = client_session
+    if request_token is not None:
+        response["request_token"] = request_token
+    return response
 
 
 def _dispatch(req):
@@ -3092,39 +3245,78 @@ def _dispatch(req):
             "error": "bridge request must be a JSON object",
         }
     rid = req.get("id")
-    cmd = req.get("cmd", "")
-    args = req.get("args", {})
-    if not isinstance(args, dict):
+    client_session = req.get("client_session")
+    request_token = req.get("request_token")
+
+    if (client_session is None) != (request_token is None):
         return {
             "id": rid,
             "ok": False,
-            "error": "bridge request args must be a JSON object",
+            "error": "client_session and request_token must be supplied together",
         }
-    allowed = READ_ONLY_COMMANDS
+    if client_session is not None and (
+            not isinstance(client_session, str)
+            or len(client_session) != 32
+            or any(c not in "0123456789abcdef" for c in client_session)):
+        return {"id": rid, "ok": False,
+                "error": "client_session must be 32 lowercase hex characters"}
+    if request_token is not None and (
+            not isinstance(request_token, str)
+            or len(request_token) < 34
+            or len(request_token) > 64
+            or not request_token.startswith(client_session + "-")):
+        return _correlated(
+            {"id": rid, "ok": False,
+             "error": "request_token is invalid for client_session"},
+            client_session,
+        )
+
+    def response(value):
+        return _correlated(value, client_session, request_token)
+
+    cmd = req.get("cmd", "")
+    args = req.get("args", {})
+    if not isinstance(args, dict):
+        return response({
+            "id": rid,
+            "ok": False,
+            "error": "bridge request args must be a JSON object",
+        })
+    allowed = READ_ONLY_COMMANDS | SESSION_CONTROL_COMMANDS
     lock_reason = "bridge is locked read-only"
     if LEAN_WRITES_ENABLED:
         allowed = allowed | LEAN_WRITE_COMMANDS
-        lock_reason = "bridge exposes only read commands plus verified writes"
+        lock_reason = (
+            "bridge exposes only read commands, session control, and verified "
+            "writes"
+        )
     available = sorted(allowed)
     if cmd not in allowed:
-        return {
+        return response({
             "id": rid,
             "ok": False,
             "error": "%s; command %r is prohibited" % (lock_reason, cmd),
             "available": available,
-        }
+        })
     handler = HANDLERS.get(cmd)
     if handler is None:
-        return {"id": rid, "ok": False, "error": "unknown command %r" % cmd,
-                "available": available}
+        return response(
+            {"id": rid, "ok": False, "error": "unknown command %r" % cmd,
+             "available": available}
+        )
     try:
         result = handler(args)
         if isinstance(result, types.GeneratorType):
-            return _Job(None, rid, result, cmd)
-        return {"id": rid, "ok": True, "result": result}
+            return _Job(
+                None, rid, result, cmd, client_session, request_token
+            )
+        return response({"id": rid, "ok": True, "result": result})
     except Exception as e:
-        return {"id": rid, "ok": False, "error": "%s: %s" % (type(e).__name__, e),
-                "trace": traceback.format_exc(limit=6)}
+        return response(
+            {"id": rid, "ok": False,
+             "error": "%s: %s" % (type(e).__name__, e),
+             "trace": traceback.format_exc(limit=6)}
+        )
 
 
 def _advance_jobs():
@@ -3144,20 +3336,32 @@ def _advance_jobs():
         _jobs.append(job)
     except StopIteration as e:
         value = e.value if e.value is not None else {}
-        _queue(job.handle, {"id": job.rid, "ok": True, "result": value})
+        _queue(job.handle, _correlated(
+            {"id": job.rid, "ok": True, "result": value},
+            job.client_session,
+            job.request_token,
+        ))
     except Exception as e:
-        _queue(job.handle, {
+        _queue(job.handle, _correlated({
             "id": job.rid, "ok": False,
             "error": "%s: %s" % (type(e).__name__, e),
-            "trace": traceback.format_exc(limit=6)})
+            "trace": traceback.format_exc(limit=6)},
+            job.client_session,
+            job.request_token,
+        ))
 
 
 def _queue(handle, resp):
     try:
         json.dumps(resp, default=str)
     except Exception as e:
-        resp = {"id": resp.get("id"), "ok": False,
-                "error": "unserialisable result: %s" % e}
+        source = resp if isinstance(resp, dict) else {}
+        resp = _correlated(
+            {"id": source.get("id"), "ok": False,
+             "error": "unserialisable result: %s" % e},
+            source.get("client_session"),
+            source.get("request_token"),
+        )
     _transport.respond(handle, resp)
 
 
@@ -3468,8 +3672,12 @@ class _MidiTransport:
         return "MIDI SysEx"
 
     def _hello(self):
-        return json.dumps({"hello": True, "protocol": PROTOCOL_VERSION,
-                           "transport": self.name})
+        return json.dumps({
+            "hello": True,
+            "protocol": PROTOCOL_VERSION,
+            MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
+            "transport": self.name,
+        })
 
     def close(self):
         self.partial = {}
@@ -3498,7 +3706,7 @@ class _MidiTransport:
     def feed(self, data):
         """Called from OnSysEx with the raw bytes of one message."""
         self._expire_partial()
-        if (len(data) < 10 or len(data) > MAX_SYSEX_FRAME_BYTES
+        if (len(data) < 10 or len(data) > MAX_SYSEX_INPUT_FRAME_BYTES
                 or data[0] != 0xF0 or data[1] != SYSEX_ID):
             return
         if data[2] != TAG_REQUEST:
@@ -3568,8 +3776,12 @@ class _MidiTransport:
                                "error": "SysEx request must be a JSON object"})
             return
         if len(self.ready) >= MAX_SYSEX_READY_MESSAGES:
-            self.respond(mid, {"id": request.get("id"), "ok": False,
-                               "error": "bridge MIDI request queue is full"})
+            self.respond(mid, _correlated(
+                {"id": request.get("id"), "ok": False,
+                 "error": "bridge MIDI request queue is full"},
+                request.get("client_session"),
+                request.get("request_token"),
+            ))
             return
         self.ready.append((mid, request))
 
@@ -3585,16 +3797,27 @@ class _MidiTransport:
 
     def respond(self, handle, resp):
         text = json.dumps(resp, default=str)
-        if len(text) > MAX_SYSEX_RESPONSE_BYTES:
-            rid = resp.get("id") if isinstance(resp, dict) else None
-            text = json.dumps({
-                "id": rid,
-                "ok": False,
-                "error": "bridge response exceeds the MIDI size limit",
-            })
+        if len(text) > MAX_SYSEX_RESPONSE_WIRE_BYTES:
+            source = resp if isinstance(resp, dict) else {}
+            text = json.dumps(_correlated(
+                {
+                    "id": source.get("id"),
+                    "ok": False,
+                    "error": (
+                        "bridge response exceeds the MIDI size limit "
+                        "compatible with v0.12 receivers"
+                    ),
+                },
+                source.get("client_session"),
+                source.get("request_token"),
+            ))
         chunks = [text[i:i + SYSEX_CHUNK]
                   for i in range(0, len(text), SYSEX_CHUNK)] or [""]
         self._send(TAG_RESPONSE, handle, chunks)
+
+    def abandon_pending_responses(self):
+        """Drop frames for a requester that no longer owns the MIDI bus."""
+        self.outbox = []
 
     def _send(self, tag, mid, chunks):
         total = len(chunks)
@@ -3672,6 +3895,23 @@ _transport = _NullTransport()
 
 def _pump():
     for handle, req in _transport.poll():
+        if (
+            getattr(_transport, "name", None) == "midi"
+            and isinstance(req, dict)
+            and req.get("client_session") is not None
+            and req.get("request_token") is not None
+        ):
+            # The native endpoint ownership lock serializes MIDI clients. A
+            # new correlated request means any older job/reply was abandoned
+            # by a timed-out or exited process. Do not let that old response
+            # collide with the successor's 14-bit wire ID.
+            for abandoned in list(_jobs):
+                try:
+                    abandoned.gen.close()
+                except Exception:
+                    pass
+            del _jobs[:]
+            _transport.abandon_pending_responses()
         resp = _dispatch(req)
         if isinstance(resp, _Job):
             if len(_jobs) >= MAX_PENDING_JOBS:
@@ -3679,11 +3919,15 @@ def _pump():
                     resp.gen.close()
                 except Exception:
                     pass
-                _queue(handle, {
-                    "id": resp.rid,
-                    "ok": False,
-                    "error": "bridge command queue is full",
-                })
+                _queue(handle, _correlated(
+                    {
+                        "id": resp.rid,
+                        "ok": False,
+                        "error": "bridge command queue is full",
+                    },
+                    resp.client_session,
+                    resp.request_token,
+                ))
             else:
                 resp.handle = handle
                 _jobs.append(resp)  # first chunk runs on the next tick

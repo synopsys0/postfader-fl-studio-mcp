@@ -155,8 +155,9 @@ CURRENT_PATTERN_ONLY_WARNING = (
 
 WRITES_DISABLED_HELP = (
     "This FL Studio bridge cannot apply Track B mutations: it reports "
-    "bridge_mode={mode!r} and verified_writes_enabled={enabled!r}. Relaunch FL "
-    "Studio with FL_BRIDGE_ENABLE_WRITES=1 and reload the Universal Bridge."
+    "bridge_mode={mode!r} and verified_writes_enabled={enabled!r}. Ask the "
+    "connected AI client to call fl_set_write_mode with enabled=true and "
+    "confirm_user_present=true after the user explicitly requests write access."
 )
 
 
@@ -1727,14 +1728,9 @@ class TrackBController(_ConnectionController):
         ):
             raise ValueError("FL bridge returned malformed enumerated options")
         options = cast(list[str], options_raw)
-        wanted_folded = selected_option.lower()
-        selected_matches_request = (
-            landed_option.lower() == wanted_folded
-            or wanted_folded in landed_option.lower()
-        )
-        if not selected_matches_request:
+        if landed_option.casefold() != selected_option.casefold():
             raise ValueError(
-                "FL bridge selected an option that does not match the request"
+                "FL bridge selected an option that does not exactly match the request"
             )
         if landed_option not in options:
             raise ValueError(

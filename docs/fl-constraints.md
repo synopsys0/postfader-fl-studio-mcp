@@ -17,16 +17,26 @@ Consequences:
   copy;
 - the TCP and file-mailbox transports remain useful to deterministic tests but
   are not the production connection; and
-- the operational macOS transport is local MIDI SysEx over CoreMIDI/IAC.
+- production communication uses local MIDI SysEx over CoreMIDI/IAC on macOS
+  or an explicitly configured virtual endpoint through WinMM on Windows.
 
-## Mode flags are fixed when FL Studio loads the script
+## Process flags are fixed, but the session write gate can change
 
 FL Studio's embedded Python cannot change its own process environment. The
 bridge therefore reads mode flags once at module import.
 
-`FL_BRIDGE_ENABLE_WRITES=1` must be present in the FL Studio process when it
-launches. Adding the variable to the MCP server configuration or exporting it
-after FL Studio is already running does not enable writes.
+Postfader does not need to change that environment to enable writes. Protocol
+2 exposes one bounded `session.set_write_mode` control that changes the
+bridge's in-memory allowlist after it verifies the current session fingerprint
+and literal user-present confirmation. The MCP host then proves the result with
+a second handshake. This state is not written to a project, configuration, or
+environment variable.
+
+`FL_BRIDGE_ENABLE_WRITES=1` remains a legacy startup compatibility path and is
+still read only when the script loads. Changing that variable after FL Studio
+starts has no effect. A script reload resets the in-memory gate to the startup
+default; a normal FL Studio process with no startup opt-in therefore returns to
+read-only mode.
 
 ## The bridge source must be ASCII-only
 
@@ -137,7 +147,8 @@ safe test suite.
 
 FL Studio exposes no function that lists the valid text options for a plug-in
 parameter. `fl_set_plugin_param_option` learns them by sweeping normalized
-values and recording the displayed text, then lands on the requested option.
+values and recording the displayed text, then lands on the requested exact
+label. Matching ignores case but refuses substrings.
 
 This is a mutating search. It can move the control through intermediate values
 and should not be run during recording or on an irreplaceable project. If the

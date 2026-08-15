@@ -8,13 +8,12 @@ handshake gate so the FL Studio version rules are stated exactly once.
 
 Three things are worth reading before changing anything here:
 
-* **The bridge is the authority on whether writes are possible.**  FL Studio
-  must have been launched with ``FL_BRIDGE_ENABLE_WRITES=1``; the flag is read
-  once when FL loads the script, so it cannot be turned on from out here.  When
-  the running bridge does not report that surface, every write refuses locally
-  with :class:`VerifiedWritesUnavailable`, which names the flag.  There is
-  deliberately no second, client-side enable: a flag here could only ever
-  disagree with the bridge.
+* **The bridge is the authority on whether writes are possible.**  It starts
+  read-only by default and can accept one explicit, user-confirmed capability
+  transition for its current session. The host independently pings the bridge
+  after that transition; a client-side flag can never pretend writes are on.
+  When the running bridge does not report the surface, every write still
+  refuses locally with :class:`VerifiedWritesUnavailable`.
 
 * **``verified`` is never inferred.**  It is the bridge's own observation, made
   by reading FL back on a *later* idle tick, and it is passed through
@@ -56,6 +55,7 @@ from .contracts import (
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
+    WriteModeChange,
 )
 from .readonly_inspector import (
     BridgeLike,
@@ -64,7 +64,7 @@ from .readonly_inspector import (
 )
 
 
-# Exactly the commands the bridge locks behind FL_BRIDGE_ENABLE_WRITES=1.
+# Exactly the commands the bridge locks behind its current-session write gate.
 WRITE_COMMANDS = frozenset(
     {
         "mixer.set_volume",
@@ -88,12 +88,10 @@ MAX_EFFECT_SLOT_INDEX = 9
 
 WRITES_DISABLED_HELP = (
     "This FL Studio bridge cannot apply writes: it reports bridge_mode={mode!r} "
-    "and verified_writes_enabled={enabled!r}. Quit FL Studio and relaunch it "
-    "with FL_BRIDGE_ENABLE_WRITES=1 in its environment, then use Reload script "
-    "in View > Script output. The flag is read once when FL loads the bridge, "
-    "so it cannot be enabled from this connector; a bridge that can write "
-    "reports bridge_mode='write_test' and verified_writes_enabled=true. Reading "
-    "the project works either way."
+    "and verified_writes_enabled={enabled!r}. Ask the connected AI client to "
+    "enable write mode for this session. The user must explicitly request that "
+    "change, and the client must call fl_set_write_mode with enabled=true and "
+    "confirm_user_present=true. Reading the project works either way."
 )
 
 UNVERIFIED_WARNING = (
@@ -123,6 +121,18 @@ class VerifiedWritesUnavailable(RuntimeError):
 
 class WriteBoundaryViolation(RuntimeError):
     """Raised when code attempts a command outside the verified write surface."""
+
+
+class WriteModeBoundaryViolation(RuntimeError):
+    """Raised when code attempts anything but the runtime mode command."""
+
+
+class WriteModeConfirmationRequired(RuntimeError):
+    """The caller did not carry an explicit user-present confirmation."""
+
+
+class WriteModeUnavailable(RuntimeError):
+    """The running bridge cannot safely change mode in its current session."""
 
 
 def _now() -> datetime:
@@ -310,6 +320,207 @@ def _parameter_observation(raw: Any) -> PluginParameterObservation:
         display_text=text,
         display_text_available=text is not None,
     )
+
+
+class WriteModeGateway:
+    """Narrow adapter for the one non-project capability transition."""
+
+    ALLOWED_COMMANDS = frozenset({"session.set_write_mode"})
+
+    def __init__(self, client: BridgeLike | None = None):
+        self._client = client or get_client()
+
+    @property
+    def transport(self) -> str:
+        value = getattr(self._client, "transport", "unknown")
+        return value if value in {"tcp", "files", "midi", "none"} else "unknown"
+
+    def ping(self) -> dict[str, Any]:
+        result = self._client.ping()
+        if not isinstance(result, dict):
+            raise ValueError("FL bridge returned a malformed handshake")
+        return result
+
+    def call(self, command: str, **arguments: Any) -> dict[str, Any]:
+        if command not in self.ALLOWED_COMMANDS:
+            raise WriteModeBoundaryViolation(
+                f"bridge operation {command!r} is not the write-mode control command"
+            )
+        result = self._client.call(command, **arguments)
+        if not isinstance(result, dict):
+            raise ValueError(
+                f"FL bridge returned a malformed reply to {command!r}"
+            )
+        return result
+
+
+class WriteModeManager:
+    """Enable or disable writes for one loaded bridge, then prove the state."""
+
+    def __init__(self, gateway: WriteModeGateway | None = None):
+        self.gateway = gateway or WriteModeGateway()
+
+    def _connection(self, ping: dict[str, Any] | None = None) -> ConnectionInfo:
+        try:
+            payload = self.gateway.ping() if ping is None else ping
+        except BridgeError as exc:
+            raise WriteModeUnavailable(
+                "no live FL Studio 2026 handshake was available: %s" % exc
+            ) from exc
+        connection = connection_from_ping(payload, self.gateway.transport)
+        if not connection.connected or not connection.compatible:
+            raise IncompatibleFLStudio(
+                connection.error or connection.compatibility_reason
+            )
+        return connection
+
+    @staticmethod
+    def _require_control_ready(connection: ConnectionInfo) -> str:
+        if not connection.bridge_provenance_verified:
+            raise WriteModeUnavailable(
+                PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
+            )
+        if not connection.runtime_write_mode_control:
+            raise WriteModeUnavailable(
+                "the running bridge does not advertise session write-mode control; "
+                "install this package's bridge and reload the controller script"
+            )
+        session = connection.session_fingerprint
+        if session is None:
+            raise WriteModeUnavailable(
+                "the running bridge did not report a valid session fingerprint; "
+                "reload the packaged bridge and read the connection state again"
+            )
+        if connection.write_mode_origin == "legacy_unknown":
+            raise WriteModeUnavailable(
+                "the running bridge did not report a valid write-mode origin"
+            )
+        if connection.startup_write_mode_enabled is None:
+            raise WriteModeUnavailable(
+                "the running bridge did not report its startup write-mode default"
+            )
+        return session
+
+    def set_write_mode(
+        self,
+        *,
+        enabled: bool,
+        confirm_user_present: bool = False,
+    ) -> WriteModeChange:
+        """Apply one absolute session capability state and verify via a new ping."""
+        requested = _boolean(enabled, "enabled")
+        confirmed = _boolean(confirm_user_present, "confirm_user_present")
+        if requested and not confirmed:
+            raise WriteModeConfirmationRequired(
+                "enabling write mode requires confirm_user_present=true after an "
+                "explicit request from the user who is present in this session"
+            )
+
+        before = self._connection()
+        session = self._require_control_ready(before)
+        raw: dict[str, Any] | None = None
+        transition_error: Exception | None = None
+        try:
+            raw = self.gateway.call(
+                "session.set_write_mode",
+                enabled=requested,
+                confirm_user_present=confirmed,
+                session_fingerprint=session,
+            )
+        except (BridgeError, ValueError) as exc:
+            # The command is absolute, idempotent, and changes no project
+            # value. Do not replay an ambiguous outcome; a new handshake can
+            # still prove whether the requested capability state now holds.
+            transition_error = exc
+
+        # This second handshake is the proof. The mode command's own echo is
+        # useful protocol evidence, but it is not allowed to certify itself.
+        after = self._connection()
+        after_session = self._require_control_ready(after)
+        if after_session != session:
+            raise WriteModeUnavailable(
+                "FL reloaded the bridge during the mode transition; read the "
+                "connection state again before using any write tool"
+            )
+        if after.verified_writes_enabled != requested:
+            error = WriteModeUnavailable(
+                "the post-transition bridge handshake did not confirm the "
+                "requested write-mode state"
+            )
+            if transition_error is not None:
+                raise error from transition_error
+            raise error
+        expected_mode = "write_test" if requested else "read_only"
+        expected_origin = "runtime_request" if requested else "disabled"
+        if (
+            after.bridge_mode != expected_mode
+            or after.write_mode_origin != expected_origin
+        ):
+            raise WriteModeUnavailable(
+                "the post-transition bridge handshake reported contradictory "
+                "mode details"
+            )
+
+        startup_default = after.startup_write_mode_enabled
+        if startup_default is None:  # guarded above; keeps type narrowing explicit
+            raise WriteModeUnavailable(
+                "the post-transition bridge handshake omitted its startup default"
+            )
+
+        warnings: list[str] = []
+        if raw is not None:
+            expected_echoes = {
+                "command": "session.set_write_mode",
+                "requested_enabled": requested,
+                "before_enabled": before.verified_writes_enabled,
+                "after_enabled": requested,
+                "changed": before.verified_writes_enabled != requested,
+                "bridge_mode": expected_mode,
+                "write_mode_origin": expected_origin,
+                "runtime_write_mode_control": True,
+                "confirmation_required": requested,
+                "confirmation_applied": requested,
+                "session_fingerprint": session,
+                "session_precondition_applied": True,
+                "session_only": True,
+                "startup_default_enabled": startup_default,
+                "project_saved": False,
+            }
+            for field, expected in expected_echoes.items():
+                if (
+                    raw.get(field) != expected
+                    or type(raw.get(field)) is not type(expected)
+                ):
+                    raise WriteModeUnavailable(
+                        "write mode is %s, but the bridge returned contradictory %s "
+                        "metadata; re-read capabilities before continuing"
+                        % ("enabled" if requested else "disabled", field)
+                    )
+        else:
+            warnings.append(
+                "The mode-command reply was unavailable, so no command was replayed. "
+                "A new handshake independently confirmed the requested absolute "
+                "session state."
+            )
+        if not requested and startup_default:
+            warnings.append(
+                "This FL process started with FL_BRIDGE_ENABLE_WRITES=1, so reloading "
+                "the controller script will enable writes again."
+            )
+        return WriteModeChange(
+            changed_at=_now(),
+            requested_enabled=requested,
+            before_enabled=before.verified_writes_enabled,
+            after_enabled=after.verified_writes_enabled,
+            changed=before.verified_writes_enabled != after.verified_writes_enabled,
+            bridge_mode=after.bridge_mode,
+            write_mode_origin=after.write_mode_origin,
+            confirmation_required=requested,
+            confirmation_applied=requested,
+            session_fingerprint=session,
+            startup_default_enabled=startup_default,
+            warnings=warnings,
+        )
 
 
 class WriteGateway:
@@ -839,9 +1050,9 @@ class VerifiedWriter:
         FL cannot report a control's options, so the bridge finds them the only
         way available: by moving the control across its range and reading what
         it shows.  That means this call **moves the parameter while looking**.
-        If the requested option turns out not to exist, the original value is
-        put back before the error is raised, and the error names everything
-        that was found.
+        The requested text must exactly match one displayed option, ignoring
+        case. If it does not, the original value is put back before the error
+        is raised, and the error names everything that was found.
 
         The result carries ``options``, the whole enumeration in order, so one
         call is enough to learn what a control accepts.
@@ -857,6 +1068,9 @@ class VerifiedWriter:
             raise ValueError("parameter name must not be empty")
         if not isinstance(option, str) or not option.strip():
             raise ValueError("option must be a non-empty string")
+        requested_option = option.strip()
+        if len(requested_option) > 256:
+            raise ValueError("option must be at most 256 characters")
         steps = _index(sweep_steps, "sweep_steps", low=2, high=256)
         if expected_before is not None:
             expected_before = ExpectedPluginParameterState.model_validate(
@@ -868,7 +1082,7 @@ class VerifiedWriter:
                 "track": index,
                 "slot": slot,
                 "param": parameter,
-                "option": option.strip(),
+                "option": requested_option,
                 "steps": steps,
                 "allow_master": allow_master,
             },
@@ -876,17 +1090,45 @@ class VerifiedWriter:
             expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
-        selected = raw.get("selected")
-        selected = None if selected is None else str(selected)
+        selected_raw = raw.get("selected")
+        if (
+            not isinstance(selected_raw, str)
+            or not selected_raw
+            or len(selected_raw) > 256
+        ):
+            raise ValueError("FL bridge returned a malformed selected option")
+        selected = selected_raw
+        if selected.casefold() != requested_option.casefold():
+            raise ValueError(
+                "FL bridge selected an option that does not exactly match the request"
+            )
+        options_raw = raw.get("options")
+        if (
+            not isinstance(options_raw, list)
+            or any(not isinstance(item, str) for item in options_raw)
+        ):
+            raise ValueError("FL bridge returned malformed enumerated options")
+        options = cast(list[str], options_raw)
+        if selected not in options:
+            raise ValueError(
+                "FL bridge selected an option absent from its enumerated options"
+            )
         after = _parameter_observation(raw.get("after"))
+        later_display_matches = (
+            after.display_text is not None
+            and after.display_text.casefold() == selected.casefold()
+        )
+        if verified != later_display_matches:
+            raise ValueError(
+                "FL bridge returned contradictory plug-in option verification"
+            )
         summary, warnings = _verification(
             verified,
             f"FL now shows {selected!r} for this control, matching the "
-            f"requested {option!r}.",
+            f"requested {requested_option!r}.",
             f"FL was set to the value that showed {selected!r} during the "
             f"sweep, but it now reads {after.display_text!r}.",
         )
-        options = [str(item) for item in (raw.get("options") or [])]
         return VerifiedPluginOptionWrite(
             applied_at=_now(),
             undo_point_created=_optional_bool(raw.get("undo_point_created")),
@@ -902,7 +1144,7 @@ class VerifiedWriter:
             ),
             verified=verified,
             verification_summary=summary,
-            requested_option=option.strip(),
+            requested_option=requested_option,
             selected_option=selected,
             normalized_value=_optional_float(raw.get("normalised")),
             sweep_steps=_index(raw.get("steps", steps), "steps", low=2),

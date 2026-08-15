@@ -43,6 +43,7 @@ from fl_studio_mcp.contracts import (  # noqa: E402
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
+    WriteModeChange,
 )
 from fl_studio_mcp.readonly_inspector import (  # noqa: E402
     IncompatibleFLStudio,
@@ -56,6 +57,11 @@ from fl_studio_mcp.verified_writer import (  # noqa: E402
     VerifiedWritesUnavailable,
     WriteBoundaryViolation,
     WriteGateway,
+    WriteModeBoundaryViolation,
+    WriteModeConfirmationRequired,
+    WriteModeGateway,
+    WriteModeManager,
+    WriteModeUnavailable,
 )
 from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
@@ -115,9 +121,8 @@ class DownClient(DirectFakeClient):
         raise BridgeError("fixture disconnected")
 
 
-# The handshake a bridge produces when FL Studio was launched with
-# FL_BRIDGE_ENABLE_WRITES=1, and the one it produces when it was not. Only the
-# bridge decides this; there is no client-side enable to set here.
+# The handshakes a bridge produces with its bounded write surface enabled and
+# disabled. Only the bridge decides the actual state; the host must verify it.
 EXPECTED_BRIDGE_DIGEST = expected_bridge_deployment()[1]
 SESSION_FINGERPRINT = bridge.SESSION_FINGERPRINT
 WRITE_ENABLED_PING = {
@@ -128,11 +133,18 @@ WRITE_ENABLED_PING = {
     "midi_scripting_api_version": 44,
     "bridge_mode": "write_test",
     "verified_writes_enabled": True,
+    "runtime_write_mode_control": True,
+    "write_mode_origin": "startup_environment",
+    "startup_write_mode_enabled": True,
     "bridge_source_sha256": EXPECTED_BRIDGE_DIGEST,
     "session_fingerprint": SESSION_FINGERPRINT,
 }
 WRITES_DISABLED_PING = dict(
-    WRITE_ENABLED_PING, bridge_mode="read_only", verified_writes_enabled=False
+    WRITE_ENABLED_PING,
+    bridge_mode="read_only",
+    verified_writes_enabled=False,
+    write_mode_origin="disabled",
+    startup_write_mode_enabled=False,
 )
 
 
@@ -170,6 +182,73 @@ class WritesDisabledClient(DirectFakeClient):
         raise AssertionError(
             "the writer dispatched %r to a bridge that cannot write" % cmd
         )
+
+
+class RuntimeModeClient:
+    """Stateful protocol double for one runtime write-mode bridge session."""
+
+    transport = "midi"
+
+    def __init__(
+        self,
+        *,
+        enabled=False,
+        startup_default=False,
+        ping_overrides=None,
+        reply_overrides=None,
+    ):
+        self.enabled = enabled
+        self.startup_default = startup_default
+        self.origin = (
+            "startup_environment"
+            if enabled and startup_default
+            else "runtime_request"
+            if enabled
+            else "disabled"
+        )
+        self.ping_overrides = dict(ping_overrides or {})
+        self.reply_overrides = dict(reply_overrides or {})
+        self.commands = []
+        self.ping_count = 0
+
+    def ping(self):
+        self.ping_count += 1
+        response = dict(
+            WRITE_ENABLED_PING,
+            bridge_mode="write_test" if self.enabled else "read_only",
+            verified_writes_enabled=self.enabled,
+            write_mode_origin=self.origin,
+            startup_write_mode_enabled=self.startup_default,
+        )
+        response.update(self.ping_overrides)
+        return response
+
+    def call(self, cmd, **args):
+        self.commands.append((cmd, dict(args)))
+        if cmd != "session.set_write_mode":
+            raise AssertionError("unexpected command %r" % cmd)
+        before = self.enabled
+        self.enabled = args["enabled"]
+        self.origin = "runtime_request" if self.enabled else "disabled"
+        response = {
+            "command": cmd,
+            "requested_enabled": self.enabled,
+            "before_enabled": before,
+            "after_enabled": self.enabled,
+            "changed": before != self.enabled,
+            "bridge_mode": "write_test" if self.enabled else "read_only",
+            "write_mode_origin": self.origin,
+            "runtime_write_mode_control": True,
+            "confirmation_required": self.enabled,
+            "confirmation_applied": self.enabled,
+            "session_fingerprint": SESSION_FINGERPRINT,
+            "session_precondition_applied": True,
+            "session_only": True,
+            "startup_default_enabled": self.startup_default,
+            "project_saved": False,
+        }
+        response.update(self.reply_overrides)
+        return response
 
 
 def state_fingerprint():
@@ -543,6 +622,21 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertTrue(
             any("inactive selection" in limitation for limitation in capability.limitations)
         )
+
+    def test_midi_capability_names_the_native_host_transport(self):
+        with mock.patch(
+            "fl_studio_mcp.readonly_inspector.platform_family",
+            return_value="windows",
+        ):
+            windows = self.inspector.capabilities()
+        capability = next(
+            item
+            for item in windows.capabilities
+            if item.capability == "midi_sysex_bridge"
+        )
+        self.assertIn("configured virtual MIDI endpoint", capability.access_path)
+        self.assertIn("WinMM", capability.access_path)
+        self.assertNotIn("CoreMIDI", capability.access_path)
 
     def test_unstable_or_noninteger_selection_payload_fails_closed(self):
         class PayloadClient(DirectFakeClient):
@@ -918,6 +1012,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "fl_set_step_sequence",
         }
         audition_tools = {"fl_trigger_note"}
+        mode_tools = {"fl_set_write_mode"}
         audio_tools = {
             # File measurement, not FL control: these read a rendered
             # bounce from disk and never reach the bridge.
@@ -926,7 +1021,10 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "audio_analyze_masking",
             "audio_find_recent_bounces",
         }
-        self.assertEqual(names, read_tools | write_tools | audition_tools | audio_tools)
+        self.assertEqual(
+            names,
+            read_tools | write_tools | audition_tools | mode_tools | audio_tools,
+        )
         # Still no undo, render, approval ceremony or reflective escape hatch,
         # whatever it might be called.
         prohibited_fragments = (
@@ -975,6 +1073,15 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertIs(annotations.read_only_hint, False)
         self.assertIs(annotations.destructive_hint, False)
         self.assertIs(annotations.idempotent_hint, False)
+        mode_annotations = by_name["fl_set_write_mode"].annotations
+        self.assertIsNotNone(mode_annotations)
+        self.assertIs(mode_annotations.read_only_hint, False)
+        self.assertIs(mode_annotations.destructive_hint, True)
+        self.assertIs(mode_annotations.idempotent_hint, True)
+        self.assertEqual(
+            set(by_name["fl_set_write_mode"].input_schema["properties"]),
+            {"enabled", "confirm_user_present"},
+        )
         self.assertTrue(all(tool.output_schema for tool in tools))
         selection_schema = next(
             tool.output_schema
@@ -996,6 +1103,172 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertTrue(
             all(tool.input_schema.get("additionalProperties") is False for tool in tools)
         )
+
+
+class WriteModeTests(unittest.TestCase):
+    def setUp(self):
+        _state.reset()
+
+    def test_gateway_exposes_only_the_session_mode_command(self):
+        client = RuntimeModeClient()
+        gateway = WriteModeGateway(client)
+        self.assertEqual(
+            gateway.ALLOWED_COMMANDS,
+            {"session.set_write_mode"},
+        )
+        for command in (
+            "ping",
+            "project.info",
+            "mixer.set_volume",
+            "project.save",
+            "call",
+        ):
+            with self.subTest(command=command):
+                with self.assertRaises(WriteModeBoundaryViolation):
+                    gateway.call(command)
+        self.assertEqual(client.commands, [])
+
+    def test_enabling_requires_confirmation_before_contacting_the_bridge(self):
+        client = RuntimeModeClient()
+        manager = WriteModeManager(WriteModeGateway(client))
+        before = state_fingerprint()
+        with self.assertRaisesRegex(
+            WriteModeConfirmationRequired, "confirm_user_present=true"
+        ):
+            manager.set_write_mode(enabled=True)
+        self.assertEqual(client.ping_count, 0)
+        self.assertEqual(client.commands, [])
+        self.assertEqual(state_fingerprint(), before)
+
+    def test_runtime_enable_is_typed_and_verified_by_a_second_handshake(self):
+        client = RuntimeModeClient()
+        manager = WriteModeManager(WriteModeGateway(client))
+        before = state_fingerprint()
+        result = manager.set_write_mode(
+            enabled=True,
+            confirm_user_present=True,
+        )
+
+        self.assertIsInstance(result, WriteModeChange)
+        self.assertTrue(result.verified)
+        self.assertTrue(result.after_enabled)
+        self.assertTrue(result.changed)
+        self.assertEqual(result.bridge_mode, "write_test")
+        self.assertEqual(result.write_mode_origin, "runtime_request")
+        self.assertEqual(
+            result.verification_basis,
+            "post_transition_bridge_handshake",
+        )
+        self.assertTrue(result.session_only)
+        self.assertFalse(result.project_saved)
+        self.assertEqual(client.ping_count, 2)
+        self.assertEqual(
+            client.commands,
+            [
+                (
+                    "session.set_write_mode",
+                    {
+                        "enabled": True,
+                        "confirm_user_present": True,
+                        "session_fingerprint": SESSION_FINGERPRINT,
+                    },
+                )
+            ],
+        )
+        self.assertEqual(state_fingerprint(), before)
+        with self.assertRaises(ValidationError):
+            result.after_enabled = False
+
+    def test_disabling_needs_no_positive_confirmation_and_is_idempotent(self):
+        client = RuntimeModeClient(enabled=True)
+        manager = WriteModeManager(WriteModeGateway(client))
+        first = manager.set_write_mode(enabled=False)
+        second = manager.set_write_mode(enabled=False)
+
+        self.assertFalse(first.after_enabled)
+        self.assertTrue(first.changed)
+        self.assertFalse(second.after_enabled)
+        self.assertFalse(second.changed)
+        self.assertFalse(second.confirmation_required)
+        self.assertFalse(second.confirmation_applied)
+        self.assertEqual(second.write_mode_origin, "disabled")
+
+    def test_enable_refuses_stale_or_untrusted_bridge_before_dispatch(self):
+        cases = {
+            "mismatched": {"bridge_source_sha256": "0" * 64},
+            "missing control": {"runtime_write_mode_control": False},
+            "missing session": {"session_fingerprint": None},
+            "unknown origin": {"write_mode_origin": "mystery"},
+        }
+        for label, overrides in cases.items():
+            client = RuntimeModeClient(ping_overrides=overrides)
+            manager = WriteModeManager(WriteModeGateway(client))
+            with self.subTest(label=label):
+                with self.assertRaises(WriteModeUnavailable):
+                    manager.set_write_mode(
+                        enabled=True,
+                        confirm_user_present=True,
+                    )
+                self.assertEqual(client.commands, [])
+
+    def test_contradictory_command_metadata_never_becomes_success(self):
+        client = RuntimeModeClient(reply_overrides={"project_saved": True})
+        manager = WriteModeManager(WriteModeGateway(client))
+        with self.assertRaisesRegex(
+            WriteModeUnavailable, "write mode is enabled.*project_saved"
+        ):
+            manager.set_write_mode(
+                enabled=True,
+                confirm_user_present=True,
+            )
+        self.assertTrue(client.enabled)
+        self.assertEqual(client.ping_count, 2)
+
+    def test_lost_mode_reply_is_not_replayed_and_post_handshake_proves_state(self):
+        class LostReplyClient(RuntimeModeClient):
+            def call(self, cmd, **args):
+                super().call(cmd, **args)
+                raise BridgeError("fixture reply lost after dispatch")
+
+        client = LostReplyClient()
+        manager = WriteModeManager(WriteModeGateway(client))
+        result = manager.set_write_mode(
+            enabled=True,
+            confirm_user_present=True,
+        )
+
+        self.assertTrue(result.verified)
+        self.assertTrue(result.after_enabled)
+        self.assertTrue(result.warnings)
+        self.assertIn("no command was replayed", result.warnings[0])
+        self.assertEqual(len(client.commands), 1)
+        self.assertEqual(client.ping_count, 2)
+
+    def test_bridge_reload_during_transition_is_refused(self):
+        class ReloadingClient(RuntimeModeClient):
+            def ping(self):
+                response = super().ping()
+                if self.ping_count > 1:
+                    response["session_fingerprint"] = "b" * 32
+                return response
+
+        client = ReloadingClient()
+        manager = WriteModeManager(WriteModeGateway(client))
+        with self.assertRaisesRegex(WriteModeUnavailable, "reloaded"):
+            manager.set_write_mode(
+                enabled=True,
+                confirm_user_present=True,
+            )
+
+    def test_literal_booleans_are_required(self):
+        manager = WriteModeManager(WriteModeGateway(RuntimeModeClient()))
+        for enabled, confirmed in ((1, True), (True, 1), ("true", True)):
+            with self.subTest(enabled=enabled, confirmed=confirmed):
+                with self.assertRaisesRegex(ValueError, "true or false"):
+                    manager.set_write_mode(
+                        enabled=enabled,
+                        confirm_user_present=confirmed,
+                    )
 
 
 class VerifiedWriteTests(unittest.TestCase):
@@ -1168,7 +1441,8 @@ class VerifiedWriteTests(unittest.TestCase):
                 with self.assertRaises(VerifiedWritesUnavailable) as caught:
                     getattr(writer, method)(**arguments)
                 message = str(caught.exception)
-                self.assertIn("FL_BRIDGE_ENABLE_WRITES=1", message)
+                self.assertIn("fl_set_write_mode", message)
+                self.assertIn("confirm_user_present=true", message)
                 self.assertIn("bridge_mode='read_only'", message)
         self.assertEqual(before, state_fingerprint())
 
@@ -1482,6 +1756,31 @@ class VerifiedWriteTests(unittest.TestCase):
         )
         self.assertEqual(result.options, ["Chromatic", "Major", "Minor"])
         self.assertIs(result.verified, True)
+
+    def test_option_write_rejects_a_substring_and_restores(self):
+        before = _state.TRACKS[9].slots[0].values[0]
+        with self.assertRaisesRegex(Exception, "no option matching"):
+            self.writer.set_plugin_parameter_option(
+                track_index=9, slot_index=0, parameter="Key", option="#"
+            )
+        self.assertEqual(_state.TRACKS[9].slots[0].values[0], before)
+
+    def test_option_write_rejects_a_non_exact_bridge_receipt(self):
+        real_call = self.client.call
+
+        def substring_receipt(cmd, **args):
+            result = real_call(cmd, **args)
+            if cmd == "plugin.set_param_option":
+                result["selected"] = "Wide A"
+                result["after"]["display"] = "Wide A"
+                result["options"].append("Wide A")
+            return result
+
+        with mock.patch.object(self.client, "call", side_effect=substring_receipt):
+            with self.assertRaisesRegex(ValueError, "exactly match"):
+                self.writer.set_plugin_parameter_option(
+                    track_index=9, slot_index=0, parameter="Key", option="A"
+                )
 
     def test_a_missing_option_restores_the_control_it_moved(self):
         before = _state.TRACKS[9].slots[0].values[0]
@@ -1938,7 +2237,11 @@ class VerifiedWriteToolTests(unittest.TestCase):
             with self.subTest(tool=name):
                 with self.assertRaises(ToolError) as caught:
                     self.call(name, arguments, client=WritesDisabledClient())
-                self.assertIn("FL_BRIDGE_ENABLE_WRITES=1", str(caught.exception))
+                self.assertIn("fl_set_write_mode", str(caught.exception))
+                self.assertIn(
+                    "confirm_user_present=true",
+                    str(caught.exception),
+                )
 
     def test_write_tools_refuse_master_by_default_and_allow_it_explicitly(self):
         for name, arguments in self.TOOLS.items():

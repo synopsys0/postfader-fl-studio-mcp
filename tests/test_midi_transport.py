@@ -1,4 +1,4 @@
-"""Drive the SysEx transport over the real IAC bus.
+"""Drive the SysEx transport over a real local virtual-MIDI endpoint.
 
 FL Studio sandboxes its script interpreter: sockets fail and every filesystem
 write fails, both returning NULL with no exception set. MIDI is the only
@@ -23,6 +23,7 @@ sys.path.insert(0, ROOT)
 
 # Exercise the verified write framing as well as read-only traffic.
 os.environ["FL_BRIDGE_ENABLE_WRITES"] = "1"
+os.environ["FL_BRIDGE_ENABLE_MIDI"] = "1"
 
 import _state  # noqa: E402
 import device as fake_device  # noqa: E402
@@ -30,7 +31,9 @@ import device_UniversalBridge as bridge  # noqa: E402
 
 PASS = 0
 FAIL = 0
-PORT_HINT = "IAC Driver"
+PORT_HINT = os.environ.get("FL_BRIDGE_MIDI_PORT", "").strip()
+if not PORT_HINT and sys.platform == "darwin":
+    PORT_HINT = "IAC Driver"
 
 
 def check(label, cond, detail=""):
@@ -53,9 +56,22 @@ class Msg:
 
 def find_port(collection):
     ports = collection.get_ports()
-    for i, name in enumerate(ports):
-        if PORT_HINT.lower() in name.lower():
-            return i, ports
+    if not PORT_HINT:
+        return None, ports
+    exact = [
+        (index, name)
+        for index, name in enumerate(ports)
+        if PORT_HINT.casefold() == name.casefold()
+    ]
+    if len(exact) == 1:
+        return exact[0][0], ports
+    partial = [
+        (index, name)
+        for index, name in enumerate(ports)
+        if PORT_HINT.casefold() in name.casefold()
+    ]
+    if len(partial) == 1:
+        return partial[0][0], ports
     return None, ports
 
 
@@ -67,13 +83,25 @@ def main():
         print("python-rtmidi not installed; skipping")
         return 0
 
+    if not PORT_HINT:
+        print(
+            "FL_BRIDGE_MIDI_PORT is required outside macOS; skipping real "
+            "MIDI transport test."
+        )
+        return 0
+
     fl_out, fl_in = rtmidi.MidiOut(), rtmidi.MidiIn()
     oi, out_names = find_port(fl_out)
     ii, in_names = find_port(fl_in)
     if oi is None or ii is None:
-        print("No IAC Driver port found (out=%s in=%s); skipping."
-              % (out_names, in_names))
-        print("Enable it in Audio MIDI Setup to run this suite.")
+        print(
+            "No unique virtual MIDI endpoint matching %r was found "
+            "(out=%s in=%s); skipping." % (PORT_HINT, out_names, in_names)
+        )
+        print(
+            "Set FL_BRIDGE_MIDI_PORT to an exact input/output endpoint name "
+            "or a substring unique in each direction."
+        )
         return 0
 
     fl_out.open_port(oi)

@@ -69,6 +69,11 @@ class ConnectionInfo(ContractModel):
     # verified write commands.  The bridge is the sole authority: this mirrors
     # its ping, and no client-side flag can turn it on.
     verified_writes_enabled: bool = False
+    runtime_write_mode_control: bool = False
+    write_mode_origin: Literal[
+        "disabled", "startup_environment", "runtime_request", "legacy_unknown"
+    ] = "legacy_unknown"
+    startup_write_mode_enabled: bool | None = None
     bridge_source_sha256: str | None = None
     expected_bridge_source_sha256: str | None = None
     bridge_provenance: Literal[
@@ -311,6 +316,55 @@ class LoadedPluginInventory(ContractModel):
 # * The models are frozen.  A write report is a record of something that
 #   already happened to the user's project, so nothing downstream may edit it.
 # ---------------------------------------------------------------------------
+
+
+class WriteModeChange(ContractModel):
+    """Verified capability transition for one loaded bridge session."""
+
+    model_config = ConfigDict(frozen=True)
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    changed_at: datetime
+    bridge_command: Literal["session.set_write_mode"] = "session.set_write_mode"
+    requested_enabled: bool
+    before_enabled: bool
+    after_enabled: bool
+    changed: bool
+    verified: Literal[True] = True
+    verification_basis: Literal["post_transition_bridge_handshake"] = (
+        "post_transition_bridge_handshake"
+    )
+    bridge_mode: Literal["read_only", "write_test"]
+    runtime_write_mode_control: Literal[True] = True
+    write_mode_origin: Literal[
+        "disabled", "startup_environment", "runtime_request"
+    ]
+    confirmation_required: bool
+    confirmation_applied: bool
+    session_fingerprint: str = Field(pattern=r"^[0-9a-f]{32}$")
+    session_precondition_applied: Literal[True] = True
+    session_only: Literal[True] = True
+    startup_default_enabled: bool
+    project_saved: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_transition(self) -> "WriteModeChange":
+        if self.after_enabled != self.requested_enabled:
+            raise ValueError("after_enabled must match requested_enabled")
+        if self.changed != (self.before_enabled != self.after_enabled):
+            raise ValueError("changed must describe the before/after transition")
+        expected_mode = "write_test" if self.after_enabled else "read_only"
+        if self.bridge_mode != expected_mode:
+            raise ValueError("bridge_mode contradicts after_enabled")
+        expected_origin = "runtime_request" if self.after_enabled else "disabled"
+        if self.write_mode_origin != expected_origin:
+            raise ValueError("write_mode_origin contradicts the runtime transition")
+        if self.confirmation_required != self.requested_enabled:
+            raise ValueError("confirmation_required contradicts requested_enabled")
+        if self.confirmation_applied != self.requested_enabled:
+            raise ValueError("confirmation_applied contradicts requested_enabled")
+        return self
 
 
 class VerifiedWrite(ContractModel):

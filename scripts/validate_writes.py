@@ -21,11 +21,12 @@ bridge reads that flag once at script load:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
-sys.path.insert(0, __file__.rsplit("/scripts/", 1)[0])
-
-from fl_studio_mcp.bridge_client import BridgeClient, BridgeError  # noqa: E402
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, os.fspath(ROOT))
 
 PASS = 0
 FAIL = 0
@@ -60,7 +61,14 @@ def find_scratch_track(client) -> int | None:
     return None
 
 
-def parse_args() -> argparse.Namespace:
+def _midi_port_name(value: str) -> str:
+    query = value.strip()
+    if not query:
+        raise argparse.ArgumentTypeError("must not be empty")
+    return query
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Exercise the verified write commands and restore everything."
     )
@@ -73,7 +81,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--index", type=int, help="Parameter index on that plug-in to move and restore."
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--midi-port",
+        type=_midi_port_name,
+        help=(
+            "exact virtual MIDI endpoint name; required on Windows unless "
+            "FL_BRIDGE_MIDI_PORT is already set"
+        ),
+    )
+    args = parser.parse_args(argv)
     named = [value is not None for value in (args.track, args.slot, args.index)]
     if any(named) and not all(named):
         parser.error("--track, --slot and --index must be given together")
@@ -82,8 +98,13 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    os.environ["FL_BRIDGE_ENABLE_MIDI"] = "1"
+    if args.midi_port is not None:
+        os.environ["FL_BRIDGE_MIDI_PORT"] = args.midi_port
+    from fl_studio_mcp.bridge_client import BridgeClient, BridgeError
+
     client = BridgeClient(timeout=60)
     try:
         pong = client.ping()

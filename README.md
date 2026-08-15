@@ -2,358 +2,347 @@
 
 # Postfader
 
-**An AI copilot for FL Studio**
+### Give your AI assistant eyes and hands inside FL Studio
 
-Inspect a running project, measure your bounces, and make verified mixer and
-plug-in changes — from Claude or any MCP client.
+Explore the project you already have open, make carefully checked changes, and
+compare exported mixes—all from an MCP-compatible AI client.
 
-[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache_2.0-blue)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%20--%203.14-blue)](https://www.python.org/downloads/)
-[![Platform](https://img.shields.io/badge/platform-macOS-lightgrey)](#requirements)
-[![MCP](https://img.shields.io/badge/Model_Context_Protocol-server-8A2BE2)](https://modelcontextprotocol.io)
+[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.13.0%20RC-orange)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-[Setup](docs/setup.md) · [Tools](docs/tool-contracts.md) ·
-[Capabilities](docs/capability-matrix.md) ·
-[Plug-ins](docs/plugin-support.md) · [Architecture](docs/architecture.md) ·
-[Security](SECURITY.md)
+[Features](#what-you-can-do) · [Quick start](#quick-start) · [Supported versions](#supported-versions) · [Safety](#safe-by-default) · [Documentation](#documentation)
 
 </div>
 
----
+> [!NOTE]
+> Postfader is an unofficial community project. It is not made by or affiliated
+> with Image-Line.
 
-A local Model Context Protocol server and MIDI bridge for FL Studio 2026 on
-macOS. Among the FL Studio MCPs reviewed for this release, Postfader is the
-only one that verifies persistent writes actually landed. Reads are always
-available; writes stay off until enabled inside FL Studio, Master is protected,
-persistent mutations use absolute targets and report explicit undo evidence,
-and the hermetic suite runs without FL Studio.
+Postfader connects a local AI client to FL Studio through a small controller
+script. You can ask questions about the current project, change supported
+controls, audition a note, or measure audio files without building a custom FL
+Studio integration.
 
-An illustration of the shape of a session — not a captured transcript:
+It includes **37 focused tools**:
 
-```
-You:     the vocal is fighting the synth around 3k
-Client:  → fl_list_mixer_tracks        reads the mixer and its routing
-         → audio_analyze_masking       measures the overlap between two bounces
-         → fl_set_track_eq             cuts one EQ band on one track
-                                       verified: true
-```
+- 12 tools for reading the open FL Studio project;
+- 19 tools for changing supported project settings and checking the result;
+- one session control for enabling or disabling those changes without restarting FL Studio;
+- one short live-note audition tool; and
+- four tools for analyzing exported audio files.
 
-## Why another FL Studio MCP server
+## What you can do
 
-FL Studio accepts scripted writes and then silently ignores some of them. Most
-connectors report the write as sent. For state writes, Postfader reads the
-control back on a later idle tick and tells you `verified: true` or
-`verified: false` — and treats a false as the headline of the result, not a
-footnote.
+| 🔎 Understand your project | 🎚️ Shape the mix |
+| --- | --- |
+| See mixer tracks, effects, routing, channels, transport state, patterns, and plug-in parameters. | Change mixer volume, pan, mute, names, built-in EQ, sends, and send levels. |
+| **🎹 Work with channels and patterns** | **📊 Measure exported audio** |
+| Route channels, change channel mix and identity, edit step cells, control tempo and playback, or audition a bounded note. | Measure loudness, spectrum, dynamics, stereo image, optional monophonic pitch, masking, and differences between two bounces. |
 
-Mixer and plug-in handlers may repeat an FL-facing setter inside one dispatched
-command because FL drops a lone call. Transport, direct Channel Rack state,
-routing, and step setters are issued once. No mutating command is dispatched
-again after an ambiguous transport outcome; an unverified result is not retried
-for you, a write that landed is never rolled back, and where FL's own undo
-cannot be relied on the response says so instead of assuming.
+Postfader can also inspect and control parameters exposed by native FL effects,
+VST/VST3/AU effects, and Channel Rack generators. Plug-in support is discovered
+from FL Studio at runtime rather than limited to a fixed list.
 
-| | |
-|---|---|
-| **Verified writes** | Every state write is read back from FL and reported; note audition is dispatch-only |
-| **Read-only by default** | Writes need a flag set on the FL Studio process itself |
-| **Narrow on purpose** | 36 tools, each with a defined contract, not a generic API bridge |
-| **No plug-in database** | Parameters are discovered at runtime; nothing to add per plug-in |
-| **Hermetic tests** | 865 release-gated checks against a fake FL API and synthetic audio — no DAW, MIDI device, or user content |
+### Example requests
 
-## Status
+~~~text
+“Show me every used mixer track and where it routes.”
 
-A macOS-only beta, validated on Apple silicon with FL Studio 2026 Producer
-Edition 26.1.3 build 5336, MIDI scripting API 44, and Python 3.10 or newer.
-Other FL Studio editions and Intel Macs may work but are not currently
-validated; Windows is not supported by this release.
+“Which Channel Rack instruments are not assigned to a mixer insert?”
 
-This repository contains no user-created FL Studio projects, recordings, stems,
-samples, presets, mix exports, or session-derived evidence. Its three audio
-fixtures are deterministic and generated by a script in the repository.
+“Rename insert 4 to Lead Vocal, set its pan to 10% left, and confirm both changes.”
 
-## What it provides
+“Set the tempo to 128 BPM while the project is stopped.”
 
-The server exposes 36 MCP tools:
+“Enable write mode for this session, then rename insert 4 to Lead Vocal.”
 
-- **12 inspection tools** for capabilities, project and transport state,
-  Playlist selection observations, mixer tracks and routing, loaded effects,
-  Channel Rack state, current-pattern step cells, and bounded plug-in parameter
-  maps.
-- **19 opt-in, readback-verified state tools** for transport, mixer, Channel
-  Rack, current-pattern steps, and plug-in parameters. Multi-field changes
-  report every field and an aggregate AND verdict.
-- **1 bounded live-note audition tool** that reports note-on/note-off dispatch
-  without fabricating state verification.
-- **4 audio tools** for file analysis, reference comparison,
-  vocal/instrument masking measurements, and recent-bounce discovery.
+“Compare my latest bounce with the reference and summarize the loudness,
+stereo, dynamics, and frequency-band differences.”
+~~~
 
-The FL Studio scripting API exposes controls but no live audio buffers. Audio
-tools therefore operate on files you explicitly export or record to disk.
+## Why use Postfader?
 
-## Safety model
+- **Stay in the creative flow.** Ask for project information or routine changes
+  without hunting through several FL Studio windows.
+- **Know whether a change landed.** Postfader reads supported controls back
+  after changing them and reports the before state, after state, and result.
+- **Start safely.** Postfader connects in read-only mode. When you are ready,
+  ask your AI client to enable writes for the current session—no FL Studio
+  restart required.
+- **Use the plug-ins you already own.** Postfader discovers the parameter
+  surface FL Studio exposes instead of requiring a custom profile for every
+  plug-in.
+- **Keep it local.** Postfader has no hosted service, account, telemetry, or
+  project upload step.
 
-> Writes are disabled by default. When enabled, mutating tools apply changes
-> immediately to the open FL Studio project. Readback verifies whether a
-> control moved; it is not an automatic rollback, and FL may not create a
-> usable undo point. Work on a copy until you trust the workflow.
+## What “verified” means
 
-The write surface is intentionally narrow:
+For a supported change, Postfader:
 
-1. Each state write names an absolute target rather than exposing a nudge or
-   toggle. The option search and bounded note audition disclose their special
-   behavior explicitly.
-2. FL Studio is read back on a later idle tick and the result reports
-   `verified: true` or `verified: false`.
-3. Mixer track 0 (Master) is refused unless `allow_master` is explicitly true.
-4. Each mutation reports `undo_point_created`. Commands that request an undo
-   point report whether it was observed; transient actions may truthfully
-   report `null`.
-5. The bridge never calls `saveProject`; changes can still be saved later by
-   FL Studio or by the user.
-6. The packaged bridge source hash must match the running bridge; stale,
-   missing, or malformed provenance fails closed for writes while reads retain
-   an explicit warning.
-7. Optional bridge-session and expected-before guards reject stale decisions
-   immediately before mutation.
-8. Writes are absent from the active bridge allowlist unless FL Studio itself
-   was launched with `FL_BRIDGE_ENABLE_WRITES=1`.
+1. checks the target, value, current session, and any supplied before-state;
+2. asks FL Studio to make the change;
+3. waits for a later FL Studio update and reads the control again; and
+4. reports whether the requested state was actually observed.
 
-`fl_set_plugin_param_option` must sweep an enumerated control to discover the
-available option text because FL Studio exposes no enumeration API. Do not use
-write tools while recording or on irreplaceable material.
+This catches a common automation failure: FL Studio or a plug-in accepting a
+command but ignoring the value.
 
-## Plug-in compatibility
+> [!IMPORTANT]
+> A verified result means the control was observed at the requested setting. It
+> does not mean the musical choice sounds good. Writes affect the open project
+> immediately and are not automatically rolled back. Postfader never saves the
+> project for you.
 
-Effects use mixer track plus slot addressing. Channel Rack instruments use a
-separate, explicit `channel_generator` target with a global channel index;
-their FL slot remains `-1` internally and the mixer slot contract stays 0–9.
+## How it works
 
-Within that, there is no supported-plug-in list and no per-plug-in profiles:
-parameters are discovered at runtime, so a plug-in needs no support added for
-it. What varies is how much of a large parameter map a bounded scan can see,
-and whether FL reports a given control at all. See
-[Plug-in support](docs/plugin-support.md) for those bounds, how to raise them,
-and [the validated plug-in matrix](docs/plugin-matrix.md) for published
-evidence. The matrix records observations; it never enables or disables a
-plug-in.
+~~~mermaid
+flowchart LR
+    A["Your AI client<br/>(MCP)"] --> B["Postfader<br/>runs locally"]
+    B -->|"Virtual MIDI"| C["Universal Bridge<br/>inside FL Studio"]
+    C --> D["Your open project"]
+    B -->|"Files you choose"| E["Exported audio<br/>measurements"]
+~~~
 
-## Requirements
+MCP is the connection that lets an AI client call Postfader's named tools.
+Live FL Studio communication travels over one local virtual MIDI endpoint.
+Audio analysis reads exported files from disk because FL Studio's scripting API
+does not provide live audio buffers.
 
-- macOS with CoreMIDI and an enabled IAC Driver bus
-- FL Studio 2026 version 26.1.3 build 5336 or newer
-- MIDI scripting API 44 or newer
-- Python 3.10 or newer
-- An MCP-compatible client
+## Supported versions
 
-Launch FL Studio once before installing so its user settings folders exist.
+| Component | Support |
+| --- | --- |
+| Postfader | 0.13.0 release candidate |
+| FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer |
+| FL MIDI scripting API | Version 44 or newer |
+| Python | 3.10 through 3.14 |
+| macOS | Supported; v0.13 live-tested on macOS 27.0 arm64 using the built-in IAC bus |
+| Windows | Windows 11 x64 implementation, CI, installer, diagnostics, and packaging are complete; supervised FL/virtual-MIDI validation is still pending |
+| AI clients | Any MCP-compatible client that can start a local process; configuration helpers are included for Codex and Claude-compatible JSON, plus a Claude Desktop extension |
 
-## Install
+Python 3.13/3.14 and Windows ARM64 may need a native compiler for
+<code>python-rtmidi</code>. Current Windows CI runs on x64.
 
-### Claude Desktop extension
+## Quick start
 
-Download the `.mcpb` asset from the 0.12.0 GitHub Release and open it with
-Claude Desktop. The extension registers and runs the MCP server locally. It
-does not silently configure FL Studio: deploy the FL-side bridge and configure
-the IAC input/output pair using the steps below. Writes remain disabled because
-the extension never sets `FL_BRIDGE_ENABLE_WRITES`.
+### 1. Prepare a virtual MIDI endpoint
 
-### Python package or source checkout
+- **macOS:** enable an IAC bus in **Audio MIDI Setup**.
+- **Windows:** create one bidirectional endpoint with the virtual MIDI software
+  of your choice.
 
-Two setup paths put the same bridge in the same place — `scripts/install.sh`
-calls the same installer the console command does, so they cannot drift.
+Postfader does not install or configure virtual MIDI software. You will use the
+same endpoint for FL Studio's MIDI input and output.
 
-**From PyPI**, if you just want to use it:
+Launch FL Studio once before installing Postfader so it creates its user-data
+folders, then quit FL Studio.
 
-```bash
-pip install postfader-fl-studio-mcp
-postfader-install-bridge
-```
+### 2. Install Postfader
 
-**From a clone**, if you want the test suite and the validation scripts:
+**macOS**
 
-```bash
+~~~bash
 git clone https://github.com/synopsys0/postfader-fl-studio-mcp.git
 cd postfader-fl-studio-mcp
 ./scripts/install.sh
-```
+~~~
 
-If FL Studio's user-data folder is somewhere other than
-`~/Documents/Image-Line/FL Studio`, say so — every entry point honours it:
+**Windows PowerShell**
 
-```bash
-postfader-install-bridge --user-data-dir "/absolute/path/to/FL Studio"
-```
+~~~powershell
+git clone https://github.com/synopsys0/postfader-fl-studio-mcp.git
+Set-Location postfader-fl-studio-mcp
+.\scripts\install.ps1 -DryRun
+.\scripts\install.ps1
+~~~
 
-```bash
-FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./scripts/install.sh
-```
+The installers create a local <code>.venv</code>, install Postfader, and copy
+<code>Universal Bridge</code> into FL Studio's controller-script folder. They
+do not change your AI client's configuration.
 
-Then, in FL Studio:
+You can also install the published Python package:
 
-1. Open **Audio MIDI Setup → Window → Show MIDI Studio**.
-2. Open **IAC Driver**, enable **Device is online**, and apply the change.
-3. In FL Studio, open **Options → MIDI settings → Input**.
-4. Select the IAC port, enable it, and set **Controller type** to
-   `Universal Bridge`. Note the **Port** number it is given.
-5. In the same dialog, under **Output**, select the same IAC port and give it
-   **the same Port number**. The bridge replies over MIDI, so it refuses to
-   start without this and Script output will say so.
-6. Open **View → Script output** and press **Reload script**. The output should
-   end with `ready: MIDI SysEx`.
-7. Verify the installation:
+~~~text
+pip install postfader-fl-studio-mcp
+postfader-install-bridge
+~~~
 
-   ```bash
-   postfader-doctor
-   ```
+### 3. Connect FL Studio
 
-   From a clone, `./.venv/bin/python scripts/doctor.py` runs the same checks,
-   and `./scripts/inspect_readonly.py --capabilities` prints what the server
-   can currently see.
+Open **Options → MIDI settings** in FL Studio:
 
-See [Setup and usage](docs/setup.md) for detailed client configuration and
-troubleshooting.
+1. Enable your virtual endpoint under **Input**.
+2. Set its controller type to **Universal Bridge**.
+3. Give the input an FL Studio Port number.
+4. Enable the same endpoint under **Output** and give it the same Port number.
+5. Open **View → Script output** and reload the script.
 
-## MCP client configuration
+The script should report <code>ready: MIDI SysEx</code>.
 
-The installer writes a `.mcp.json` **inside this checkout**, with relative
-paths. That is deliberately the narrow case: it works when your client is
-launched from the connector directory, and it is the quickest way to try the
-server. It is not how you would normally live with it.
+### 4. Check the connection
 
-### Using it from your own projects
+**macOS**
 
-To reach FL Studio while working anywhere else, register the server once at
-user scope with absolute paths. For Claude Code:
+~~~bash
+./.venv/bin/postfader-doctor --midi-port "IAC Driver Bus 1" --json
+~~~
 
-```bash
-claude mcp add fl-studio --scope user \
-    --env FL_BRIDGE_ENABLE_MIDI=1 \
-    -- /absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python \
-       -m fl_studio_mcp.mcp_server
-```
+**Windows PowerShell**
 
-`--scope user` is the part that matters: a project-scoped entry only loads
-inside the directory it belongs to, which is why the installer's `.mcp.json`
-does not follow you around. Substitute your real checkout path — the venv
-interpreter must be named absolutely, because a relative command resolves
-against wherever the client happened to start.
+~~~powershell
+.\.venv\Scripts\postfader-doctor.exe --midi-port "Exact Virtual MIDI Endpoint Name" --json
+~~~
 
-For a client with no CLI, put the same absolute-path block in whichever config
-file that client treats as global rather than per-project:
+A healthy connection reports:
 
-```json
-{
-  "mcpServers": {
-    "fl-studio": {
-      "command": "/absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python",
-      "args": ["-m", "fl_studio_mcp.mcp_server"],
-      "cwd": "/absolute/path/to/postfader-fl-studio-mcp",
-      "env": {
-        "FL_BRIDGE_ENABLE_MIDI": "1"
-      }
-    }
-  }
-}
-```
+- <code>overall: "pass"</code>;
+- a live FL Studio connection;
+- a controller script that matches the installed Postfader version;
+- <code>bridge_mode: "read_only"</code>; and
+- <code>verified_writes_enabled: false</code>; and
+- <code>runtime_write_mode_control: true</code>.
 
-Do not assume that an MCP client expands `~` or shell variables in JSON paths;
-write them out in full. `.mcp.json.example` in this repository shows the same
-shape with relative paths, for the launched-from-the-checkout case only.
+### 5. Add Postfader to your AI client
 
-The Python distribution is `postfader-fl-studio-mcp`. The import path remains
-`fl_studio_mcp`, the MCP server command is `fl-studio-mcp`, and the MCP server
-ID is `fl-studio`. Installed utilities are `postfader-install-bridge`,
-`postfader-doctor`, and `postfader-plugin-report`.
+Use the included configuration generator so interpreter paths, repository
+paths, and endpoint names are explicit:
 
-Only one process can own the IAC port at a time, so if you register the server
-at user scope, close any project-scoped copy of it first.
+~~~bash
+./.venv/bin/python scripts/generate_mcp_config.py --help
+~~~
 
-## Enabling writes
+~~~powershell
+.\.venv\Scripts\python.exe scripts\generate_mcp_config.py --help
+~~~
 
-Quit FL Studio, then launch it from Terminal with:
+It can produce a Codex command, Codex TOML, or Claude-compatible JSON. See the
+[client configuration guide](docs/setup.md#4-generate-client-configuration)
+for complete macOS and Windows examples.
 
-```bash
-FL_BRIDGE_ENABLE_WRITES=1 open -a "FL Studio 2026"
-```
+Claude Desktop users can open the release <code>.mcpb</code>, but the extension
+does not install the FL Studio controller script or create the virtual MIDI
+endpoint. Complete steps 1–4 first.
 
-The bridge reads this variable once when its script loads. In write mode,
-`ping` reports `bridge_mode: "write_test"` and
-`verified_writes_enabled: true`. Launch FL Studio normally to return to its
-read-only mode. Do not put `FL_BRIDGE_ENABLE_WRITES` in the MCP server's
-environment; it must be present in the FL Studio process.
+## Safe by default
+
+### Read-only mode
+
+A normal FL Studio launch keeps Postfader read-only: project inspection works,
+but project-changing tools do not. Audio-file analysis also works without a
+live FL Studio connection. This is the recommended mode for exploring a real
+session.
+
+### Write mode
+
+When you want Postfader to make changes, ask your connected AI client:
+
+~~~text
+“Enable write mode for this session.”
+~~~
+
+Your client calls <code>fl_set_write_mode</code> and must carry an explicit
+user-present confirmation. Postfader then checks the running controller script,
+changes only that live session, and performs a second handshake before reporting
+that writes are available. FL Studio does not need to restart.
+
+Ask the client to “disable write mode” when you are done. The setting is never
+stored in your project or AI-client configuration, and an ordinary controller
+script reload or new FL Studio process starts read-only again. Use a blank or
+disposable project the first time you try writes.
+
+Additional safeguards include:
+
+- enabling writes requires an explicit user request and is exposed to MCP
+  clients as a destructive capability change;
+- writes to the Master track require explicit permission;
+- if the installed controller script and Postfader version do not match,
+  writes are blocked;
+- writes are never automatically repeated after a lost or ambiguous response;
+- supplied session and before-state checks can reject stale decisions;
+- only one local Postfader connection can use the selected virtual MIDI bus at
+  a time; and
+- the controller script never calls FL Studio's save-project function.
+
+See [Tool contracts](docs/tool-contracts.md#write-tools) for the exact behavior
+of every write.
+
+## Plug-in support
+
+Postfader can work with any mixer effect or Channel Rack generator whose
+parameters FL Studio exposes to controller scripts. That includes native
+Image-Line plug-ins and many VST, VST3, and AU plug-ins.
+
+Compatibility is intentionally honest:
+
+- an unfamiliar plug-in can be inspected without first adding it to Postfader;
+- a parameter that FL does not expose cannot be controlled;
+- very large parameter maps are scanned with explicit limits;
+- a write that FL accepts but ignores is reported as unverified; and
+- named options must use the exact label FL Studio reports, ignoring case.
+
+See [Plug-in support](docs/plugin-support.md) for parameter discovery, option
+searches, scan limits, troubleshooting, and the community evidence format.
 
 ## Important limitations
 
-- Plug-in insertion, removal, and reordering are unavailable through the public
-  MIDI scripting backend. This does not mean those operations are impossible
-  in FL Studio itself.
-- Playback-speed control is not exposed because the public backend provides a
-  setter but no authoritative getter for later-tick verification.
-- Step reads observe up to 512 cells. Verified step writes refuse grids longer
-  than 256 cells and enforce `step_count + update_count + 8 <= 320` so the final
-  digest check and batch stay atomic below the idle-tick call ceiling. A
-  256-cell grid therefore permits at most 56 updates per call; refresh the
-  digest between split batches.
-- FL Studio's scripted per-slot bypass and wet/dry setters are not reliable on
-  the validated host and are not exposed as MCP tools.
-- The bridge cannot render or access live audio; audio analysis requires a
-  file on disk.
-- Playlist selection endpoints are returned as raw observations and are
-  marked unsafe for automated rendering.
-- Unprofiled plug-in parameters are readable, but the bridge does not claim to
-  know their musical meaning or whether a target value is appropriate.
-- Readback verifies observed control movement, not audible correctness.
-- The local IAC transport is shared and unauthenticated, and only one bridge
-  client can own it at a time.
+Postfader cannot currently:
 
-See [FL Studio constraints](docs/fl-constraints.md) for the technical details.
+- add, remove, or reorder plug-ins;
+- reliably control an effect slot's bypass or wet/dry mix;
+- hear FL Studio's live output;
+- render, export, or save a project;
+- decide whether a mix sounds good; or
+- turn raw Playlist selection endpoints into a safe automatic render range.
 
-## Privacy and security
+Audio tools analyze files you explicitly select or recent bounces found in
+bounded FL Studio folders. They return measurements and comparisons, not audio
+samples or artistic judgments.
 
-The MCP server and bridge run locally and implement no telemetry or hosted
-service. Your MCP client may send tool arguments and results to its model
-provider; review that client's privacy policy.
+The local virtual MIDI bus is shared and unauthenticated. Use Postfader on a
+trusted, single-user workstation.
 
-Audio measurement tools can read an absolute audio-file path supplied by the
-MCP client. Results include measurements, a canonical path, and a file hash,
-but not the audio samples themselves. Recent-bounce discovery searches a
-bounded set of FL Studio output folders. Run the bridge only with a trusted MCP
-client on a trusted, single-user Mac. See [SECURITY.md](SECURITY.md) for the
-complete trust model.
+## Privacy
+
+Postfader itself runs locally and has no telemetry or cloud service. It does
+not store your projects, recordings, stems, presets, exports, or live-session
+evidence in this repository.
+
+Your AI client is a separate application and may send tool arguments and
+results to its model provider. Audio results can include file paths, hashes,
+and measurements, but never audio samples. Review your AI client's privacy
+policy and Postfader's [security policy](SECURITY.md) before using sensitive
+projects.
 
 ## Documentation
 
-- [Setup and usage](docs/setup.md)
-- [Tool and command reference](docs/tool-contracts.md)
-- [Capability and evidence matrix](docs/capability-matrix.md)
-- [Deferred demo plan](docs/demo-plan.md)
-- [Plug-in support](docs/plugin-support.md)
-- [Validated plug-in matrix](docs/plugin-matrix.md)
-- [Architecture](docs/architecture.md)
-- [FL Studio constraints](docs/fl-constraints.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
+| Guide | What it covers |
+| --- | --- |
+| [Setup and troubleshooting](docs/setup.md) | Installation, client configuration, upgrades, diagnostics, write mode, and common errors |
+| [Tool reference](docs/tool-contracts.md) | All 37 tools, accepted values, results, refusals, and safety rules |
+| [Plug-in support](docs/plugin-support.md) | Effects, generators, parameter scans, option controls, and compatibility evidence |
+| [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where Postfader deliberately stops |
+| [Architecture](docs/architecture.md) | Components, transport, bridge behavior, and trust boundaries |
+| [Security](SECURITY.md) | Threat model, privacy boundaries, and vulnerability reporting |
+| [Contributing](CONTRIBUTING.md) | Development workflow and contribution guidelines |
 
 ## Development
 
-Run the hermetic safe suite with:
+Run the safe, hardware-free test suite from the source checkout:
 
-```bash
+~~~bash
 ./.venv/bin/python scripts/run_safe_tests.py
-```
+~~~
 
-The 0.12.0 release candidate runs 865 checks across 18 explicitly allowlisted
-test files. The safe suite uses a fake FL API and deterministic synthetic audio. It does
-not require FL Studio, a MIDI device, a user project, or user audio, and it
-does not touch the physical IAC bus.
+~~~powershell
+.\.venv\Scripts\python.exe scripts\run_safe_tests.py
+~~~
 
-## Non-affiliation
+The safe suite prevents real MIDI access even when ambient environment
+variables request it. Any live hardware test must use a blank, unsaved project,
+and its logs, screenshots, and run notes must stay outside the public repository.
 
-FL Studio is a trademark of Image-Line Software. Postfader is an
-independent, unofficial project and is not affiliated with, endorsed by, or
-sponsored by Image-Line Software. FL Studio is not distributed with this
-repository.
+## License
+
+Postfader is available under the [Apache License 2.0](LICENSE). See
+[NOTICE](NOTICE) for attribution details.
 
 <!-- mcp-name: io.github.synopsys0/postfader-fl-studio-mcp -->

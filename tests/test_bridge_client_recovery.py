@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -69,6 +70,120 @@ def client_with(*transports):
 
 
 class BridgeClientRecoveryTests(unittest.TestCase):
+    def test_enabled_midi_requires_an_explicit_windows_port_before_any_probe(self):
+        with (
+            mock.patch.object(bridge_client, "MIDI_ENABLED", True),
+            mock.patch.object(
+                bridge_client.subprocess,
+                "run",
+                side_effect=AssertionError("native MIDI probe spawned"),
+            ) as probe,
+        ):
+            with self.assertRaises(BridgeError) as refused:
+                BridgeClient(port=1, mailbox="/nonexistent", midi_port=None)
+        self.assertIn("FL_BRIDGE_MIDI_PORT", str(refused.exception))
+        probe.assert_not_called()
+
+    def test_enabled_midi_accepts_a_configured_port_name_with_spaces(self):
+        configured = "Configured Loopback With Spaces"
+        with mock.patch.object(bridge_client, "MIDI_ENABLED", True):
+            client = BridgeClient(
+                port=1,
+                mailbox="/nonexistent",
+                midi_port=configured,
+            )
+        self.assertEqual(client.midi_port, configured)
+        self.assertEqual(client._transports[-1].port_name, configured)
+
+    def test_midi_ownership_acquire_is_idempotent_and_metadata_is_bounded(self):
+        identity = "input=" + ("very-long-port-name-" * 1000)
+        with tempfile.TemporaryDirectory(prefix="flmcp-lock-test-") as lock_dir:
+            owner = _MidiPortOwnership(identity, lock_dir=lock_dir)
+            owner.acquire()
+            first_fd = owner._fd
+            owner.acquire()
+
+            self.assertEqual(owner._fd, first_fd)
+            self.assertEqual(
+                owner.evidence(),
+                {
+                    "port_identity": identity,
+                    "lock_path": owner.path,
+                    "owner_pid": os.getpid(),
+                    "acquired": True,
+                },
+            )
+            metadata = owner._owner_metadata(owner._fd)
+            self.assertEqual(
+                metadata["port_sha256"],
+                hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24],
+            )
+            self.assertEqual(metadata["pid"], os.getpid())
+            self.assertNotIn("port", metadata)
+            self.assertLess(os.fstat(owner._fd).st_size, 256)
+
+            owner.release()
+            self.assertFalse(owner.evidence()["acquired"])
+
+    def test_default_lock_namespace_is_stable_for_current_platform(self):
+        identity = "input=Stable; output=Stable"
+        if os.name == "nt":
+            with (
+                tempfile.TemporaryDirectory(prefix="flmcp-local-app-data-") as local,
+                tempfile.TemporaryDirectory(prefix="flmcp-cwd-one-") as first_cwd,
+                tempfile.TemporaryDirectory(prefix="flmcp-cwd-two-") as second_cwd,
+                mock.patch.dict(os.environ, {"LOCALAPPDATA": local}, clear=False),
+            ):
+                original_cwd = os.getcwd()
+                try:
+                    os.chdir(first_cwd)
+                    first = _MidiPortOwnership(identity)
+                    os.chdir(second_cwd)
+                    second = _MidiPortOwnership(identity)
+                finally:
+                    os.chdir(original_cwd)
+
+                self.assertEqual(first.path, second.path)
+                self.assertTrue(os.path.isabs(first.path))
+                self.assertEqual(
+                    os.path.commonpath([first.path, local]),
+                    os.path.abspath(local),
+                )
+                self.assertIn(
+                    os.path.join("Postfader", "midi-locks"), first.path
+                )
+                first.acquire()
+                self.assertTrue(os.path.isdir(first.root))
+                first.release()
+        else:
+            owner = _MidiPortOwnership(identity)
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+            self.assertEqual(
+                owner.path,
+                "/tmp/fl-studio-mcp-iac-%s-%s.lock" % (os.getuid(), digest),
+            )
+
+    def test_posix_dispatch_retains_flock_acquire_and_release(self):
+        fake_fcntl = types.SimpleNamespace(
+            LOCK_EX=0x02,
+            LOCK_NB=0x04,
+            LOCK_UN=0x08,
+            flock=mock.Mock(),
+        )
+        with tempfile.TemporaryDirectory(prefix="flmcp-posix-lock-test-") as lock_dir:
+            owner = _MidiPortOwnership("input=POSIX; output=POSIX", lock_dir=lock_dir)
+            # Exercise the POSIX dispatcher even in the Windows acceptance run.
+            owner._windows = False
+            owner._metadata_offset = 0
+            with mock.patch.object(bridge_client, "fcntl", fake_fcntl):
+                owner.acquire()
+                locked_fd = owner._fd
+                fake_fcntl.flock.assert_called_once_with(
+                    locked_fd, fake_fcntl.LOCK_EX | fake_fcntl.LOCK_NB
+                )
+                owner.release()
+                fake_fcntl.flock.assert_called_with(locked_fd, fake_fcntl.LOCK_UN)
+
     def test_midi_transport_locks_resolved_ports_before_open_and_releases(self):
         events = []
 
@@ -131,6 +246,265 @@ class BridgeClientRecoveryTests(unittest.TestCase):
         self.assertEqual(transport.partial, {})
         self.assertEqual(transport.replies, {})
 
+    def test_midi_exact_match_takes_precedence_over_substring_matches(self):
+        events = []
+
+        class FakePort:
+            def __init__(self, direction):
+                self.direction = direction
+
+            def get_ports(self):
+                return ["Configured Port Extended", "cOnFiGuReD pOrT"]
+
+            def open_port(self, index):
+                events.append(("open", self.direction, index))
+
+            def close_port(self):
+                events.append(("close", self.direction))
+
+            def ignore_types(self, **_kwargs):
+                pass
+
+        class FakeOwnership:
+            def __init__(self, identity):
+                self.identity = identity
+
+            def acquire(self):
+                events.append(("acquire", self.identity))
+
+            def release(self):
+                events.append(("release", self.identity))
+
+        fake_rtmidi = types.SimpleNamespace(
+            MidiIn=lambda: FakePort("in"),
+            MidiOut=lambda: FakePort("out"),
+        )
+        with (
+            mock.patch.dict(sys.modules, {"rtmidi": fake_rtmidi}),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._midi_preflight",
+                return_value=True,
+            ),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._MidiPortOwnership",
+                FakeOwnership,
+            ),
+        ):
+            transport = _MidiTransport("Configured Port", timeout=1)
+            self.assertTrue(transport._open())
+            self.assertEqual(
+                transport.resolved_input_name, "cOnFiGuReD pOrT"
+            )
+            self.assertEqual(
+                transport.resolved_output_name, "cOnFiGuReD pOrT"
+            )
+            transport.close()
+
+        self.assertIn(("open", "in", 1), events)
+        self.assertIn(("open", "out", 1), events)
+
+    def test_midi_unique_substring_match_remains_compatible(self):
+        events = []
+
+        class FakePort:
+            def __init__(self, direction):
+                self.direction = direction
+
+            def get_ports(self):
+                return ["Other", "Virtual IAC Driver Bus 1"]
+
+            def open_port(self, index):
+                events.append(("open", self.direction, index))
+
+            def close_port(self):
+                pass
+
+            def ignore_types(self, **_kwargs):
+                pass
+
+        class FakeOwnership:
+            def __init__(self, identity):
+                self.identity = identity
+
+            def acquire(self):
+                pass
+
+            def release(self):
+                pass
+
+        fake_rtmidi = types.SimpleNamespace(
+            MidiIn=lambda: FakePort("in"),
+            MidiOut=lambda: FakePort("out"),
+        )
+        with (
+            mock.patch.dict(sys.modules, {"rtmidi": fake_rtmidi}),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._midi_preflight",
+                return_value=True,
+            ),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._MidiPortOwnership",
+                FakeOwnership,
+            ),
+        ):
+            transport = _MidiTransport("IAC Driver", timeout=1)
+            self.assertTrue(transport._open())
+            transport.close()
+
+        self.assertEqual(events, [("open", "in", 1), ("open", "out", 1)])
+
+    def test_midi_ambiguity_is_bounded_and_precedes_ownership_and_open(self):
+        events = []
+        candidates = ["Configured Port %d" % index for index in range(10)]
+
+        class FakePort:
+            def __init__(self, direction):
+                self.direction = direction
+
+            def get_ports(self):
+                events.append(("get", self.direction))
+                return candidates
+
+            def open_port(self, index):
+                events.append(("open", self.direction, index))
+
+            def close_port(self):
+                events.append(("close", self.direction))
+
+        class UnexpectedOwnership:
+            def __init__(self, _identity):
+                events.append(("ownership",))
+
+            def acquire(self):
+                events.append(("acquire",))
+
+        fake_rtmidi = types.SimpleNamespace(
+            MidiIn=lambda: FakePort("in"),
+            MidiOut=lambda: FakePort("out"),
+        )
+        with (
+            mock.patch.dict(sys.modules, {"rtmidi": fake_rtmidi}),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._midi_preflight",
+                return_value=True,
+            ),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._MidiPortOwnership",
+                UnexpectedOwnership,
+            ),
+        ):
+            transport = _MidiTransport("Configured Port", timeout=1)
+            with self.assertRaises(BridgeError) as raised:
+                transport._open()
+
+        message = str(raised.exception)
+        self.assertIn("ambiguous", message)
+        self.assertIn("Configured Port 0", message)
+        self.assertIn("Configured Port 7", message)
+        self.assertNotIn("Configured Port 8", message)
+        self.assertNotIn("Configured Port 9", message)
+        self.assertIn("(+2 more)", message)
+        self.assertFalse(
+            any(event[0] in {"ownership", "acquire", "open"} for event in events),
+            events,
+        )
+
+    def test_missing_midi_match_precedes_ownership_and_open(self):
+        events = []
+
+        class FakePort:
+            def __init__(self, direction):
+                self.direction = direction
+
+            def get_ports(self):
+                return ["Other Port"]
+
+            def open_port(self, index):
+                events.append(("open", self.direction, index))
+
+            def close_port(self):
+                pass
+
+        class UnexpectedOwnership:
+            def __init__(self, _identity):
+                events.append(("ownership",))
+
+            def acquire(self):
+                events.append(("acquire",))
+
+        fake_rtmidi = types.SimpleNamespace(
+            MidiIn=lambda: FakePort("in"),
+            MidiOut=lambda: FakePort("out"),
+        )
+        with (
+            mock.patch.dict(sys.modules, {"rtmidi": fake_rtmidi}),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._midi_preflight",
+                return_value=True,
+            ),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._MidiPortOwnership",
+                UnexpectedOwnership,
+            ),
+        ):
+            transport = _MidiTransport("Missing Port", timeout=1)
+            with self.assertRaisesRegex(BridgeError, "matched no endpoint"):
+                transport._open()
+
+        self.assertFalse(
+            any(event[0] in {"ownership", "acquire", "open"} for event in events),
+            events,
+        )
+
+    def test_midi_ownership_failure_happens_before_either_endpoint_opens(self):
+        events = []
+
+        class FakePort:
+            def __init__(self, direction):
+                self.direction = direction
+
+            def get_ports(self):
+                return ["Configured Port"]
+
+            def open_port(self, index):
+                events.append(("open", self.direction, index))
+
+            def close_port(self):
+                events.append(("close", self.direction))
+
+        class RefusingOwnership:
+            def __init__(self, _identity):
+                pass
+
+            def acquire(self):
+                events.append(("ownership-refused",))
+                raise MidiTransportOwnedError("already owned")
+
+            def release(self):
+                events.append(("release",))
+
+        fake_rtmidi = types.SimpleNamespace(
+            MidiIn=lambda: FakePort("in"),
+            MidiOut=lambda: FakePort("out"),
+        )
+        with (
+            mock.patch.dict(sys.modules, {"rtmidi": fake_rtmidi}),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._midi_preflight",
+                return_value=True,
+            ),
+            mock.patch(
+                "fl_studio_mcp.bridge_client._MidiPortOwnership",
+                RefusingOwnership,
+            ),
+        ):
+            transport = _MidiTransport("Configured Port", timeout=1)
+            with self.assertRaises(MidiTransportOwnedError):
+                transport._open()
+
+        self.assertIn(("ownership-refused",), events)
+        self.assertFalse(any(event[0] == "open" for event in events), events)
+
     def test_physical_iac_ownership_is_exclusive_across_processes(self):
         identity = "input=IAC Driver Bus Test; output=IAC Driver Bus Test"
         with tempfile.TemporaryDirectory(prefix="flmcp-lock-test-") as lock_dir:
@@ -157,6 +531,57 @@ class BridgeClientRecoveryTests(unittest.TestCase):
             successor = _MidiPortOwnership(identity, lock_dir=lock_dir)
             successor.acquire()
             successor.release()
+
+    def test_midi_ownership_is_reclaimed_after_owner_process_exits(self):
+        identity = "input=Exit Test; output=Exit Test"
+        with tempfile.TemporaryDirectory(prefix="flmcp-lock-test-") as lock_dir:
+            source = (
+                "import sys; "
+                "from fl_studio_mcp.bridge_client import _MidiPortOwnership; "
+                "lock=_MidiPortOwnership(sys.argv[1], lock_dir=sys.argv[2]); "
+                "lock.acquire(); "
+                "print('READY:%d' % __import__('os').getpid(), flush=True); "
+                "sys.stdin.buffer.read(1)"
+            )
+            child = subprocess.Popen(
+                [sys.executable, "-B", "-c", source, identity, lock_dir],
+                cwd=ROOT,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            try:
+                ready = child.stdout.readline().strip()
+                if not ready.startswith("READY:"):
+                    child.stdin.close()
+                    child.wait(timeout=5)
+                    self.fail(child.stderr.read() or "owner child did not become ready")
+                owner_pid = int(ready.split(":", 1)[1])
+
+                contender = _MidiPortOwnership(identity, lock_dir=lock_dir)
+                with self.assertRaises(MidiTransportOwnedError) as raised:
+                    contender.acquire()
+                # Some Windows Python launchers create the interpreter as a
+                # child process, so Popen.pid need not be the lock owner's PID.
+                self.assertEqual(raised.exception.owner_pid, owner_pid)
+
+                # Do not call release in the child. A normal process exit must
+                # close the descriptor and make the lock reclaimable.
+                child.stdin.close()
+                child.wait(timeout=5)
+                self.assertEqual(child.returncode, 0, child.stderr.read())
+
+                successor = _MidiPortOwnership(identity, lock_dir=lock_dir)
+                successor.acquire()
+                successor.release()
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                    child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    if stream is not None and not stream.closed:
+                        stream.close()
 
     def test_restart_reselects_a_different_transport_for_read(self):
         stopped = ScriptedTransport(
@@ -215,8 +640,13 @@ class BridgeClientRecoveryTests(unittest.TestCase):
         self.assertEqual(result, {"state": "ready"})
         self.assertEqual(reloaded.close_calls, 1)
         self.assertEqual(reloaded.available_calls, 1)
+        request_ids = [request_id for request_id, _ in reloaded.request_calls]
         self.assertEqual(
-            [request_id for request_id, _ in reloaded.request_calls], [1, 2]
+            request_ids[1], (request_ids[0] % bridge_client.MAX_WIRE_ID) + 1
+        )
+        self.assertNotEqual(
+            reloaded.request_calls[0][1]["request_token"],
+            reloaded.request_calls[1][1]["request_token"],
         )
         self.assertTrue(
             all(
@@ -315,8 +745,8 @@ class BridgeClientRecoveryTests(unittest.TestCase):
     def test_remote_rejection_is_not_a_reconnect_signal(self):
         transport = ScriptedTransport(
             requests=[
-                {
-                    "id": 1,
+                lambda rid, _payload: {
+                    "id": rid,
                     "ok": False,
                     "error": "bridge is locked read-only",
                 }

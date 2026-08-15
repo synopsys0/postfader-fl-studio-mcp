@@ -17,8 +17,21 @@ python3 -m venv .venv
 ./.venv/bin/python scripts/run_safe_tests.py
 ```
 
-Use Python 3.10 or newer on macOS. The production bridge is currently
-macOS-only because it uses CoreMIDI/IAC.
+On Windows PowerShell, create the development environment without contacting
+FL Studio or deploying a controller script:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install --editable '.[dev]'
+.\.venv\Scripts\python.exe scripts\run_safe_tests.py
+```
+
+Use `scripts\install.ps1` separately only when intentionally preparing a live
+Windows FL Studio integration; that path requires FL to have created its
+`Settings\Hardware` directory.
+
+Use Python 3.10 or newer.
 
 ## Public-content rule
 
@@ -33,7 +46,8 @@ harmless or is intended only as test evidence. Prohibited content includes:
 - absolute home-directory paths, usernames, machine identifiers, process
   dumps, or unredacted logs;
 - credentials, tokens, cookies, private keys, and client-local configuration;
-  and
+- internal demo scripts, release plans, acceptance checklists, handoffs, status
+  notes, and unreviewed validation records; and
 - generated caches, build products, or test output containing any of the
   above.
 
@@ -64,6 +78,7 @@ Generate a read-only report with the installed command:
 
 ```bash
 postfader-plugin-report \
+  --midi-port "Exact Endpoint Name" \
   --track 3 --slot 1 \
   --plugin-version 2.1 \
   --plugin-origin third-party \
@@ -106,10 +121,10 @@ It runs an explicit allowlist against fake transports, a fake FL API, and
 synthetic audio. A test that exits successfully without reporting any checks
 is treated as a failure.
 
-`tests/test_midi_transport.py` is excluded because it touches the real shared
-IAC bus. Live FL Studio validation is optional, must use a new blank disposable
-project, and must never commit the project, audio, screenshots, paths, or raw
-output it produces.
+`tests/test_midi_transport.py` is excluded because it touches a real shared
+MIDI endpoint. Any live FL Studio validation must use a new blank, unsaved
+project. Keep run instructions, raw results, screenshots, paths, and other
+operator notes under the ignored `.private/` directory and never commit them.
 
 If a live result changes a documented constraint, reduce it to the smallest
 generic fake-API regression test and describe only the technical behavior in
@@ -131,7 +146,7 @@ Changes to it must preserve these properties:
 - no background-thread access to the FL Studio API;
 - bounded work per idle tick;
 - read-only mode by default;
-- separate allowlists for read and verified-write commands;
+- separate allowlists for reads, session capability control, and verified-write commands;
 - no `saveProject` call;
 - no automatic replay of a write after an ambiguous transport failure; and
 - later-tick readback for every public write.
@@ -142,7 +157,7 @@ run the complete safe suite.
 ## MCP surface changes
 
 The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the current public surface contains 36 tools. Preserve
+`fl-studio`, and the current public surface contains 37 tools. Preserve
 existing names and response contracts unless a deliberate compatibility change
 has been discussed.
 
@@ -165,12 +180,16 @@ search.
 - [ ] The change contains no user project, user audio, private path, secret, or
       session-derived material.
 - [ ] The safe suite passes from a clean clone.
+- [ ] Platform/setup changes cover both PowerShell/Windows and shell/macOS
+      behavior, or clearly document why one host is unaffected.
 - [ ] The public-tree check passes.
 - [ ] Bridge changes remain ASCII-only and within the tick budget.
 - [ ] New mutations are off by default, narrowly allowlisted, and verified by
       later readback.
 - [ ] Documentation describes current behavior without host-specific paths or
       private-session examples.
+- [ ] The public tree contains no internal plan, demo script, release checklist,
+      handoff, status note, or raw validation record.
 - [ ] Security-sensitive changes include refusal and adversarial tests.
 
 ## Security reports

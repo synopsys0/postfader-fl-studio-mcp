@@ -13,8 +13,10 @@ import sys
 import tempfile
 import unittest
 import wave
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -47,6 +49,66 @@ def path_of(fixture: Path) -> str:
 
 def temporary_tree() -> tempfile.TemporaryDirectory:
     return tempfile.TemporaryDirectory(prefix="flmcp-advisory-")
+
+
+@contextmanager
+def symlink_or_windows_metadata_simulation(link: Path, target: Path):
+    """Create a link, or emulate the same metadata answers on locked-down Windows.
+
+    Ordinary Windows accounts commonly lack SeCreateSymbolicLinkPrivilege.  The
+    fallback is deliberately not a skip: it makes the production code observe a
+    final-component symlink and its real target, exercising the same refusal or
+    acceptance branch as a real link.
+    """
+    try:
+        link.symlink_to(target)
+    except OSError as exc:
+        if os.name != "nt" or getattr(exc, "winerror", None) != 1314:
+            raise
+
+        link.write_bytes(b"simulated-symlink-placeholder")
+        original_is_symlink = Path.is_symlink
+        original_realpath = os.path.realpath
+        link_key = os.path.normcase(os.path.abspath(os.fspath(link)))
+        target_realpath = original_realpath(target)
+
+        def is_link_path(value) -> bool:
+            return (
+                os.path.normcase(os.path.abspath(os.fspath(value))) == link_key
+            )
+
+        def simulated_is_symlink(value: Path) -> bool:
+            if is_link_path(value):
+                return True
+            return original_is_symlink(value)
+
+        def simulated_realpath(value, *args, **kwargs):
+            if is_link_path(value):
+                return target_realpath
+            return original_realpath(value, *args, **kwargs)
+
+        with (
+            mock.patch.object(Path, "is_symlink", simulated_is_symlink),
+            mock.patch.object(os.path, "realpath", simulated_realpath),
+        ):
+            yield True
+    else:
+        yield False
+
+
+class SimulatedSymlinkDirEntry:
+    """DirEntry view used only when Windows cannot create a test symlink."""
+
+    def __init__(self, entry):
+        self._entry = entry
+        self.name = entry.name
+        self.path = entry.path
+
+    def is_symlink(self) -> bool:
+        return True
+
+    def __getattr__(self, name):
+        return getattr(self._entry, name)
 
 
 def write_audio_file(directory: Path, name: str, *, mtime: datetime) -> Path:
@@ -274,19 +336,21 @@ class PathRuleTests(unittest.TestCase):
     def test_a_symlink_escaping_the_allowed_roots_is_refused(self):
         # A link named like a bounce is the cheapest way to turn a read tool
         # into a general file reader.
-        with temporary_tree() as raw:
+        with temporary_tree() as raw, temporary_tree() as outside_raw:
             link = Path(raw) / "innocent_stem.wav"
-            link.symlink_to("/etc/hosts")
-            with self.assertRaises(AdvisoryError) as refused:
-                analyze_audio_file(os.fspath(link))
+            outside = Path(outside_raw) / "private.wav"
+            outside.write_bytes(b"not opened")
+            with symlink_or_windows_metadata_simulation(link, outside):
+                with self.assertRaises(AdvisoryError) as refused:
+                    analyze_audio_file(os.fspath(link))
         self.assertIn("outside the allowed", str(refused.exception))
 
     def test_a_symlink_resolving_inside_the_repository_is_allowed(self):
         # The rule is about where a link points, not that links are banned.
         with temporary_tree() as raw:
             link = Path(raw) / "linked_reference.wav"
-            link.symlink_to(REFERENCE)
-            self.assertEqual(resolve_audio_path(os.fspath(link)), REFERENCE)
+            with symlink_or_windows_metadata_simulation(link, REFERENCE):
+                self.assertEqual(resolve_audio_path(os.fspath(link)), REFERENCE)
 
     def test_an_oversized_file_is_refused_before_it_is_opened(self):
         # The real cap is half a gigabyte; lowering it is the only offline way
@@ -356,8 +420,22 @@ class DiscoveryTests(unittest.TestCase):
             write_audio_file(tree, "keep.wav", mtime=now)
             (tree / "notes.txt").write_text("not audio", encoding="utf-8")
             write_audio_file(tree, ".hidden.wav", mtime=now)
-            (tree / "linked.wav").symlink_to(REFERENCE)
-            listing = find_recent_audio_files(roots=[tree])
+            link = tree / "linked.wav"
+            with symlink_or_windows_metadata_simulation(
+                link, REFERENCE
+            ) as simulated:
+                if simulated:
+                    entries = list(os.scandir(tree))
+                    entries = [
+                        SimulatedSymlinkDirEntry(entry)
+                        if Path(entry.path) == link
+                        else entry
+                        for entry in entries
+                    ]
+                    with mock.patch.object(os, "scandir", return_value=entries):
+                        listing = find_recent_audio_files(roots=[tree])
+                else:
+                    listing = find_recent_audio_files(roots=[tree])
             self.assertEqual(
                 [Path(item.path).name for item in listing.files], ["keep.wav"]
             )
