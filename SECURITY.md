@@ -7,8 +7,7 @@ security boundary between mutually untrusted local processes.
 ## Supported versions
 
 Security fixes are made on the default branch and included in the next tagged
-release. Until a stable release line exists, only the latest public version is
-supported.
+release. Only the latest tagged release is supported.
 
 The runtime compatibility gate requires FL Studio 2026 version 26.1.3 build
 5336 or newer, MIDI scripting API 44 or newer, and supported bridge command
