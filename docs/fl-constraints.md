@@ -22,14 +22,23 @@ Consequences:
   over an explicitly configured virtual endpoint and awaits supervised live
   evidence.
 
-## Mode flags are fixed when FL Studio loads the script
+## Process flags are fixed, but the session write gate can change
 
 FL Studio's embedded Python cannot change its own process environment. The
 bridge therefore reads mode flags once at module import.
 
-`FL_BRIDGE_ENABLE_WRITES=1` must be present in the FL Studio process when it
-launches. Adding the variable to the MCP server configuration or exporting it
-after FL Studio is already running does not enable writes.
+Postfader does not need to change that environment to enable writes. Protocol
+2 exposes one bounded `session.set_write_mode` control that changes the
+bridge's in-memory allowlist after it verifies the current session fingerprint
+and literal user-present confirmation. The MCP host then proves the result with
+a second handshake. This state is not written to a project, configuration, or
+environment variable.
+
+`FL_BRIDGE_ENABLE_WRITES=1` remains a legacy startup compatibility path and is
+still read only when the script loads. Changing that variable after FL Studio
+starts has no effect. A script reload resets the in-memory gate to the startup
+default; a normal FL Studio process with no startup opt-in therefore returns to
+read-only mode.
 
 ## The bridge source must be ASCII-only
 

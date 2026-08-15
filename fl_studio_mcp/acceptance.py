@@ -1,8 +1,9 @@
 """Reusable, evidence-producing live acceptance harness primitives.
 
 The public MCP registry is the authority for coverage.  The harness derives
-read, persistent-write, and ephemeral mutation surfaces from tool annotations
-at runtime and rejects scenario drift instead of maintaining a second count.
+read, session-control, persistent-write, and ephemeral mutation surfaces from
+tool annotations at runtime and rejects scenario drift instead of maintaining
+a second count.
 """
 
 from __future__ import annotations
@@ -70,6 +71,7 @@ class ReadToolInvocationResult:
 class ToolSurface:
     all_tools: tuple[str, ...]
     read_tools: tuple[str, ...]
+    session_control_tools: tuple[str, ...]
     persistent_write_tools: tuple[str, ...]
     ephemeral_tools: tuple[str, ...]
     input_schemas: Mapping[str, Mapping[str, Any]]
@@ -104,6 +106,17 @@ async def authoritative_tool_surface() -> ToolSurface:
             if tool.annotations
             and tool.annotations.read_only_hint is False
             and tool.annotations.destructive_hint is True
+            and tool.annotations.idempotent_hint is False
+        )
+    )
+    session_controls = tuple(
+        sorted(
+            tool.name
+            for tool in tools
+            if tool.annotations
+            and tool.annotations.read_only_hint is False
+            and tool.annotations.destructive_hint is True
+            and tool.annotations.idempotent_hint is True
         )
     )
     ephemeral = tuple(
@@ -115,7 +128,7 @@ async def authoritative_tool_surface() -> ToolSurface:
             and tool.annotations.destructive_hint is False
         )
     )
-    classified = set(reads) | set(writes) | set(ephemeral)
+    classified = set(reads) | set(session_controls) | set(writes) | set(ephemeral)
     if classified != set(all_names):
         raise AcceptanceConfigurationError(
             "public MCP tools have missing or contradictory mutability annotations: %s"
@@ -124,6 +137,7 @@ async def authoritative_tool_surface() -> ToolSurface:
     return ToolSurface(
         all_names,
         reads,
+        session_controls,
         writes,
         ephemeral,
         {tool.name: tool.input_schema for tool in tools},

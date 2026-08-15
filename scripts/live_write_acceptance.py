@@ -73,6 +73,7 @@ async def async_main(args, *, checkpoint=None):
             "mode": "plan_only",
             "physical_io_performed": False,
             "persistent_write_tools": list(surface.persistent_write_tools),
+            "session_control_tools_excluded": list(surface.session_control_tools),
             "ephemeral_tools_excluded": list(surface.ephemeral_tools),
             "scenario": scenario,
             "fully_resolved_operation_count": len(prepared),

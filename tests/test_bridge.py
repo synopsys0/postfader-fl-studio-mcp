@@ -16,9 +16,9 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
 sys.path.insert(0, os.path.join(ROOT, "fl_studio_mcp", "_bridge"))
 
-# The lean verified write surface is a separate opt-in read once at module
-# load. Load the bridge with it unset so the default really is the default;
-# _load_bridge_with_writes() loads a second copy with it set.
+# Load the bridge without the legacy startup opt-in so the session begins in
+# its real default: read-only. Tests below exercise the user-confirmed runtime
+# transition as well as the startup compatibility path.
 os.environ.pop("FL_BRIDGE_ENABLE_WRITES", None)
 
 import _state  # noqa: E402  (fake FL state)
@@ -544,8 +544,12 @@ def check_lean_writes(c):
     check("the write surface is exactly the published set",
           w.LEAN_WRITE_COMMANDS == published_writes,
           sorted(w.LEAN_WRITE_COMMANDS))
-    check("the dispatcher contains exactly reads and verified writes",
-          set(w.HANDLERS) == set(w.READ_ONLY_COMMANDS | w.LEAN_WRITE_COMMANDS),
+    check("the dispatcher contains exactly reads, session control, and verified writes",
+          set(w.HANDLERS) == set(
+              w.READ_ONLY_COMMANDS
+              | w.SESSION_CONTROL_COMMANDS
+              | w.LEAN_WRITE_COMMANDS
+          ),
           sorted(w.HANDLERS))
     malformed_requests = [
         w._dispatch([]),
@@ -595,6 +599,119 @@ def check_lean_writes(c):
     check("the handlers exist regardless; the allowlist is the gate",
           all(cmd in bridge.HANDLERS for cmd in bridge.LEAN_WRITE_COMMANDS),
           sorted(bridge.HANDLERS))
+
+    print("\n-- write mode can change safely within one bridge session --")
+    initial = c.call("ping")["result"]
+    runtime_session = initial["session_fingerprint"]
+    check("read-only ping advertises runtime mode control",
+          initial["bridge_mode"] == "read_only"
+          and initial["verified_writes_enabled"] is False
+          and initial["runtime_write_mode_control"] is True
+          and initial["write_mode_origin"] == "disabled", initial)
+    before_mode_state = (
+        _state.TRACKS[3].volume,
+        list(_state.UNDO),
+        list(saves),
+    )
+    for label, arguments in (
+        ("missing confirmation", {
+            "enabled": True,
+            "confirm_user_present": False,
+            "session_fingerprint": runtime_session,
+        }),
+        ("stale session", {
+            "enabled": True,
+            "confirm_user_present": True,
+            "session_fingerprint": "f" * 32,
+        }),
+        ("unknown argument", {
+            "enabled": True,
+            "confirm_user_present": True,
+            "session_fingerprint": runtime_session,
+            "enable_everything": True,
+        }),
+    ):
+        rejected = c.call("session.set_write_mode", **arguments)
+        check("%s is refused" % label, not rejected["ok"], rejected)
+    check("refused mode requests touch no project or undo state",
+          before_mode_state == (
+              _state.TRACKS[3].volume,
+              list(_state.UNDO),
+              list(saves),
+          ))
+
+    enabled = c.call(
+        "session.set_write_mode",
+        enabled=True,
+        confirm_user_present=True,
+        session_fingerprint=runtime_session,
+    )
+    enabled_ping = c.call("ping")["result"]
+    check("user-confirmed request enables the same live session",
+          enabled["ok"]
+          and enabled["result"]["after_enabled"] is True
+          and enabled["result"]["session_only"] is True
+          and enabled_ping["session_fingerprint"] == runtime_session
+          and enabled_ping["bridge_mode"] == "write_test"
+          and enabled_ping["verified_writes_enabled"] is True
+          and enabled_ping["write_mode_origin"] == "runtime_request",
+          (enabled, enabled_ping))
+    live_before = _state.TRACKS[3].volume
+    live_write = c.call("mixer.set_volume", track=3, value=0.57)
+    check("a verified write is available without restarting FL",
+          live_write["ok"]
+          and live_write["result"]["verified"] is True
+          and abs(_state.TRACKS[3].volume - 0.57) < 1e-9,
+          live_write)
+    c.call("mixer.set_volume", track=3, value=live_before)
+
+    disabled = c.call(
+        "session.set_write_mode",
+        enabled=False,
+        confirm_user_present=False,
+        session_fingerprint=runtime_session,
+    )
+    disabled_ping = c.call("ping")["result"]
+    check("the same control locks writes again immediately",
+          disabled["ok"]
+          and disabled["result"]["after_enabled"] is False
+          and disabled_ping["bridge_mode"] == "read_only"
+          and disabled_ping["verified_writes_enabled"] is False
+          and disabled_ping["write_mode_origin"] == "disabled",
+          (disabled, disabled_ping))
+    locked_again = c.call("mixer.set_volume", track=3, value=0.58)
+    check("writes are prohibited again after disabling",
+          not locked_again["ok"]
+          and "mixer.set_volume" not in locked_again.get("available", []),
+          locked_again)
+    reloaded = _load_bridge_read_only()
+    check("a fresh ordinary bridge session starts read-only again",
+          reloaded.LEAN_WRITES_ENABLED is False
+          and dispatch(reloaded, "ping")["result"]["write_mode_origin"]
+          == "disabled")
+
+    pending = w._dispatch({
+        "id": 91,
+        "cmd": "mixer.set_volume",
+        "args": {"track": 3, "value": 0.59},
+    })
+    check("fixture created one pending mutation job",
+          isinstance(pending, w._Job), pending)
+    if isinstance(pending, w._Job):
+        w._jobs.append(pending)
+        refused_disable = dispatch(
+            w,
+            "session.set_write_mode",
+            enabled=False,
+            confirm_user_present=False,
+            session_fingerprint=w.SESSION_FINGERPRINT,
+        )
+        check("disable refuses while a mutation outcome is still in flight",
+              not refused_disable["ok"]
+              and "in flight" in refused_disable.get("error", ""),
+              refused_disable)
+        pending.gen.close()
+        w._jobs.remove(pending)
 
     r = dispatch(w, "ping")
     check("a bridge that can write does not call itself read-only",
@@ -2486,8 +2603,10 @@ def main():
     r = c.call("call", module="mixer", function="getTrackName", args=[3])
     check("generic calls are rejected", not r["ok"], r)
     r = c.call("bogus.command")
-    check("unknown command lists only read options",
-          not r["ok"] and set(r["available"]) == set(bridge.READ_ONLY_COMMANDS),
+    check("unknown command lists only reads and session control",
+          not r["ok"] and set(r["available"]) == set(
+              bridge.READ_ONLY_COMMANDS | bridge.SESSION_CONTROL_COMMANDS
+          ),
           r)
 
     print("\n-- large payload across ticks --")

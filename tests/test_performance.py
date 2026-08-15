@@ -90,6 +90,9 @@ def compatible_ping(
         "midi_scripting_api_version": 44,
         "bridge_mode": "write_test" if writable else "read_only",
         "verified_writes_enabled": writable,
+        "runtime_write_mode_control": True,
+        "write_mode_origin": "startup_environment" if writable else "disabled",
+        "startup_write_mode_enabled": writable,
         "bridge_source_sha256": expected_bridge_deployment()[1],
         "session_fingerprint": session,
     }
@@ -377,7 +380,7 @@ class MutationGateTests(unittest.TestCase):
         controller, client = controller_for(
             transport_handler, ping=compatible_ping(writable=False)
         )
-        with self.assertRaisesRegex(TrackBMutationsUnavailable, "FL_BRIDGE_ENABLE_WRITES"):
+        with self.assertRaisesRegex(TrackBMutationsUnavailable, "fl_set_write_mode"):
             controller.set_playing(playing=True)
         self.assertEqual(client.calls, [])
 

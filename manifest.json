@@ -90,6 +90,10 @@
       "description": "Capture a compact project/mixer/effect report for Phase 1 validation."
     },
     {
+      "name": "fl_set_write_mode",
+      "description": "Enable or disable writes for this bridge session without restarting FL."
+    },
+    {
       "name": "fl_set_mixer_volume",
       "description": "Set one mixer fader and report the readback FL gave on a later tick."
     },

@@ -35,8 +35,9 @@ Use a new disposable, unsaved project made only for this recording:
 - no imported audio, personal project title, filesystem path, recent-file
   list, account name, notification, serial number, or unrelated desktop window;
 - a non-sensitive IAC port name, or crop the port name out of the recording;
-- FL Studio launched specifically with `FL_BRIDGE_ENABLE_WRITES=1`, while the
-  MCP server receives `FL_BRIDGE_ENABLE_MIDI=1` only.
+- FL Studio launched normally, then write mode enabled from the connected AI
+  client with an explicit user-present confirmation. The MCP server receives
+  `FL_BRIDGE_ENABLE_MIDI=1` only; no write flag is stored in its configuration.
 
 Close other MCP clients before the run because the production IAC transport is
 shared. Capture only the FL Studio window and a sanitized tool-result pane.

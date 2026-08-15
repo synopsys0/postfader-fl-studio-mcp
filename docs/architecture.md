@@ -1,9 +1,9 @@
 # Architecture
 
 Postfader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The public MCP surface contains 36 tools: 12 inspection
-tools, 19 opt-in readback-verified state tools, one bounded live-note audition
-tool, and four audio-file tools.
+controller script. The public MCP surface contains 37 tools: 12 inspection
+tools, one session write-mode control, 19 opt-in readback-verified state tools,
+one bounded live-note audition tool, and four audio-file tools.
 
 ```text
 MCP-compatible client
@@ -32,7 +32,7 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 36 tools and their annotations. It
+`fl_studio_mcp/mcp_server.py` defines all 37 tools and their annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
 and audio work runs off the MCP event loop.
@@ -62,8 +62,19 @@ the bridge's proof fields without inventing defaults. A missing or
 contradictory verification field is a protocol error.
 
 Write availability comes only from the live bridge handshake. If FL Studio was
-not launched with `FL_BRIDGE_ENABLE_WRITES=1`, the writer raises an error that
-names the missing opt-in rather than attempting a command.
+not yet enabled for the current bridge session, the writer names the
+user-confirmed `fl_set_write_mode` control rather than attempting a project
+command.
+
+`WriteModeManager` owns that capability transition through a separate gateway
+whose only command is `session.set_write_mode`. Enabling requires literal
+user-present confirmation plus matching provenance and session identity. The
+bridge changes only its in-memory gate, and the manager performs a new
+handshake before returning a typed success. Disabling uses the same absolute
+command and needs no positive confirmation. The mode tool is marked
+destructive so MCP clients can put approval UI in front of the access change,
+but idempotent because repeating an absolute session state has no additional
+effect.
 
 Before dispatch, every mutation also requires the running bridge's stamped
 source SHA-256 to match the bridge packaged with the server. Reads remain
@@ -124,13 +135,14 @@ so a stale installation can be detected.
 
 ## Bridge command surfaces
 
-Normal operation has two disjoint command sets:
+Normal operation has four bounded command surfaces:
 
 | Surface | Gate | Commands |
 | --- | --- | --- |
 | Read-only | Always | `ping`, `project.info`, `arrangement.selection`, `mixer.list`, `mixer.track`, `plugin.params`, `plugin.scan_params`, `channels.list`, `sequencer.get` |
-| Verified state changes | `FL_BRIDGE_ENABLE_WRITES=1` in the FL Studio process | Ten mixer/plug-in commands; `transport.set_playing`, `transport.stop`, `transport.set_song_position`, `transport.set_loop_mode`, `transport.set_tempo`; `channel.set_mix`, `channel.set_identity`, `channel.route_to_mixer`; and `sequencer.set` |
-| Dispatch-only audition | Same write opt-in | `channel.trigger_note` |
+| Session capability control | Always; enabling requires confirmation and the current session fingerprint | `session.set_write_mode` |
+| Verified state changes | Current bridge session reports write mode | Ten mixer/plug-in commands; `transport.set_playing`, `transport.stop`, `transport.set_song_position`, `transport.set_loop_mode`, `transport.set_tempo`; `channel.set_mix`, `channel.set_identity`, `channel.route_to_mixer`; and `sequencer.set` |
+| Dispatch-only audition | Same session write gate | `channel.trigger_note` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
 the bridge's `available` list.
@@ -188,6 +200,8 @@ and holds the worst simulated tick under a fixed ceiling.
 ## Security properties and boundaries
 
 - Read-only bridge mode is the default.
+- Enabling writes is session-only, requires an explicit user-present
+  confirmation, and is verified by a second handshake.
 - MCP input and bridge output use strict schemas and bounded values.
 - Mutating commands are narrow, separately gated, and never replayed after an
   ambiguous response.

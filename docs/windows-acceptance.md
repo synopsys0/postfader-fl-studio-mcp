@@ -89,7 +89,7 @@ input/output selection, no ambiguity, and no unsupported provider claim.
 3. Run `codex mcp list` and retain the `fl-studio` registration/status without
    recording unrelated servers or secrets.
 4. Start a fresh Codex task after registration so the host reloads its tool
-   surface. Confirm all 36 expected Postfader tools are present and no generic
+   surface. Confirm all 37 expected Postfader tools are present and no generic
    bridge-command tool exists.
 5. Ask the fresh task to call `fl_get_project_summary`,
    `fl_get_transport_state`, and a bounded `fl_list_mixer_tracks` read.
@@ -113,12 +113,20 @@ input/output selection, no ambiguity, and no unsupported provider claim.
 
 ## 4. Supervised persistent-write restoration
 
-1. Close every MCP process and FL Studio.
-2. Start FL with `launch_fl_studio.ps1 -EnableWrites`.
-3. Open a blank disposable unsaved project and stop playback/recording.
-4. Run doctor JSON. Require matching provenance, session fingerprint,
+1. Keep the normally launched, read-only FL Studio process open. Close every
+   MCP process, then open a blank disposable unsaved project and stop
+   playback/recording.
+2. From a real connected MCP client, explicitly ask to enable write mode for
+   this session. Require one `fl_set_write_mode` result with
+   `confirm_user_present=true`, `verified=true`, `session_only=true`,
+   `bridge_mode=write_test`, `verified_writes_enabled` represented by
+   `after_enabled=true`, and
+   `verification_basis=post_transition_bridge_handshake`. Retain the result,
+   then close that MCP process so the acceptance harness can own the endpoint.
+3. Run doctor JSON. Require matching provenance, the same session fingerprint,
+   `runtime_write_mode_control=true`, `write_mode_origin=runtime_request`,
    `bridge_mode=write_test`, and `verified_writes_enabled=true`.
-5. Build the disposable fixture below and review
+4. Build the disposable fixture below and review
    `docs/windows-write-scenario-v1.json`. Replace its clearly marked plug-in
    option and any parameter indices/values that differ from the read-only scan.
    For every plug-in replacement, update the mutation parameter/index, the
@@ -131,7 +139,7 @@ input/output selection, no ambiguity, and no unsupported provider claim.
    `REVIEWED_FOR_THIS_DISPOSABLE_PROJECT`. The public template itself is
    deliberately refused in live mode. It covers all 19 authoritative
    persistent-write tools exactly once.
-6. Prove full no-I/O resolution first, then run with all confirmations, the
+5. Prove full no-I/O resolution first, then run with all confirmations, the
    exact endpoint, and a new evidence file. A Master target also requires that
    operation's explicit acknowledgement; this fixture intentionally has none.
 
@@ -141,7 +149,7 @@ input/output selection, no ambiguity, and no unsupported provider claim.
    & $RepoPython .\scripts\live_write_acceptance.py --plan --midi-port $Port --scenario .private\windows-write-scenario-reviewed.json
    & $RepoPython .\scripts\live_write_acceptance.py --scenario .private\windows-write-scenario-reviewed.json --midi-port $Port --confirm-user-present --confirm-disposable-project --confirm-safe-to-edit --output .private\windows-write.json
    ```
-7. Require every mutation to be attempted at most once, every requested state
+6. Require every mutation to be attempted at most once, every requested state
    to be verified, every captured state to be restored, and every restoration
    to pass an independent reread. The evidence file must contain durable
    checkpoints for preflight, before-state reads, mutation attempt/result,
@@ -211,13 +219,20 @@ playing-only restoration cannot pass.
 
 ## 6. Return to read-only and final gate
 
-1. Quit FL and restart normally without the write flag.
-2. Require the doctor and a real MCP read to report read-only mode again.
-3. Run the full hermetic safe suite with hostile ambient transport variables;
+1. From a real connected MCP client, call `fl_set_write_mode(enabled=false)`.
+   Require a post-transition handshake with `after_enabled=false`,
+   `bridge_mode=read_only`, and `write_mode_origin=disabled` in the same bridge
+   session. Close that client to release the endpoint.
+2. Require the doctor and a real MCP read to report read-only mode again without
+   restarting FL Studio.
+3. Quit FL without saving, restart normally, and require a new session
+   fingerprint that is also read-only. This proves the runtime choice did not
+   persist.
+4. Run the full hermetic safe suite with hostile ambient transport variables;
    child isolation must still disable MIDI.
-4. Build wheel/sdist, verify archives, install the wheel in a clean venv, and
+5. Build wheel/sdist, verify archives, install the wheel in a clean venv, and
    run all console `--help` smoke checks.
-5. Retain command exits, total check count, package hashes, `git diff --check`,
+6. Retain command exits, total check count, package hashes, `git diff --check`,
    public-tree result, status, patch SHA-256, and the known limitations.
 
 Windows may be promoted from release candidate to validated only when every
