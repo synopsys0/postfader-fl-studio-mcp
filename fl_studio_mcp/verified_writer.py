@@ -839,9 +839,9 @@ class VerifiedWriter:
         FL cannot report a control's options, so the bridge finds them the only
         way available: by moving the control across its range and reading what
         it shows.  That means this call **moves the parameter while looking**.
-        If the requested option turns out not to exist, the original value is
-        put back before the error is raised, and the error names everything
-        that was found.
+        The requested text must exactly match one displayed option, ignoring
+        case. If it does not, the original value is put back before the error
+        is raised, and the error names everything that was found.
 
         The result carries ``options``, the whole enumeration in order, so one
         call is enough to learn what a control accepts.
@@ -857,6 +857,9 @@ class VerifiedWriter:
             raise ValueError("parameter name must not be empty")
         if not isinstance(option, str) or not option.strip():
             raise ValueError("option must be a non-empty string")
+        requested_option = option.strip()
+        if len(requested_option) > 256:
+            raise ValueError("option must be at most 256 characters")
         steps = _index(sweep_steps, "sweep_steps", low=2, high=256)
         if expected_before is not None:
             expected_before = ExpectedPluginParameterState.model_validate(
@@ -868,7 +871,7 @@ class VerifiedWriter:
                 "track": index,
                 "slot": slot,
                 "param": parameter,
-                "option": option.strip(),
+                "option": requested_option,
                 "steps": steps,
                 "allow_master": allow_master,
             },
@@ -876,17 +879,45 @@ class VerifiedWriter:
             expected_before=expected_before,
         )
         verified = _strict_bool(raw, "verified")
-        selected = raw.get("selected")
-        selected = None if selected is None else str(selected)
+        selected_raw = raw.get("selected")
+        if (
+            not isinstance(selected_raw, str)
+            or not selected_raw
+            or len(selected_raw) > 256
+        ):
+            raise ValueError("FL bridge returned a malformed selected option")
+        selected = selected_raw
+        if selected.casefold() != requested_option.casefold():
+            raise ValueError(
+                "FL bridge selected an option that does not exactly match the request"
+            )
+        options_raw = raw.get("options")
+        if (
+            not isinstance(options_raw, list)
+            or any(not isinstance(item, str) for item in options_raw)
+        ):
+            raise ValueError("FL bridge returned malformed enumerated options")
+        options = cast(list[str], options_raw)
+        if selected not in options:
+            raise ValueError(
+                "FL bridge selected an option absent from its enumerated options"
+            )
         after = _parameter_observation(raw.get("after"))
+        later_display_matches = (
+            after.display_text is not None
+            and after.display_text.casefold() == selected.casefold()
+        )
+        if verified != later_display_matches:
+            raise ValueError(
+                "FL bridge returned contradictory plug-in option verification"
+            )
         summary, warnings = _verification(
             verified,
             f"FL now shows {selected!r} for this control, matching the "
-            f"requested {option!r}.",
+            f"requested {requested_option!r}.",
             f"FL was set to the value that showed {selected!r} during the "
             f"sweep, but it now reads {after.display_text!r}.",
         )
-        options = [str(item) for item in (raw.get("options") or [])]
         return VerifiedPluginOptionWrite(
             applied_at=_now(),
             undo_point_created=_optional_bool(raw.get("undo_point_created")),
@@ -902,7 +933,7 @@ class VerifiedWriter:
             ),
             verified=verified,
             verification_summary=summary,
-            requested_option=option.strip(),
+            requested_option=requested_option,
             selected_option=selected,
             normalized_value=_optional_float(raw.get("normalised")),
             sweep_steps=_index(raw.get("steps", steps), "steps", low=2),

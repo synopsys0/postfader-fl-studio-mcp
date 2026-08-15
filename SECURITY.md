@@ -2,10 +2,10 @@
 
 Postfader is intended for a trusted, single-user macOS or Windows workstation.
 The Windows 11 x64 path remains a release candidate until its supervised live
-acceptance gate passes; v0.13 also requires a fresh macOS live smoke because it
-changes MIDI framing/correlation beyond the retained v0.12 evidence. Postfader
-is not designed as a remote service, a multi-user control plane, or a security
-boundary between mutually untrusted local processes.
+acceptance gate passes. The changed v0.13 MIDI framing/correlation path has
+fresh supervised evidence on macOS 27.0 arm64. Postfader is not designed as a
+remote service, a multi-user control plane, or a security boundary between
+mutually untrusted local processes.
 
 ## Supported versions
 

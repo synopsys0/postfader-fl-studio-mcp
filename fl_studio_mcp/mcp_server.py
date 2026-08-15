@@ -1132,7 +1132,12 @@ async def fl_set_plugin_param_option(
     ],
     option: Annotated[
         str,
-        Field(description="The option text to land on, e.g. 'A', 'Major', 'Low Male'."),
+        Field(
+            description=(
+                "The exact option text to land on, e.g. 'A', 'Major', "
+                "'Low Male'."
+            )
+        ),
     ],
     track_index: Annotated[
         int | None,
@@ -1195,9 +1200,9 @@ async def fl_set_plugin_param_option(
 
     **This moves the control while it looks.** FL cannot report a control's
     options, so the only way to find them is to walk the parameter across its
-    range and read what it displays. If the requested option does not exist,
-    the original value is restored before the error, and the error lists every
-    option that was found.
+    range and read what it displays. The requested label must exactly match an
+    option, ignoring case. If it does not exist, the original value is restored
+    before the error, and the error lists every option that was found.
 
     The result carries `options` -- the whole enumeration, in order -- so one
     call is also how you discover what a control accepts.

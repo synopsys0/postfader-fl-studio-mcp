@@ -1727,14 +1727,9 @@ class TrackBController(_ConnectionController):
         ):
             raise ValueError("FL bridge returned malformed enumerated options")
         options = cast(list[str], options_raw)
-        wanted_folded = selected_option.lower()
-        selected_matches_request = (
-            landed_option.lower() == wanted_folded
-            or wanted_folded in landed_option.lower()
-        )
-        if not selected_matches_request:
+        if landed_option.casefold() != selected_option.casefold():
             raise ValueError(
-                "FL bridge selected an option that does not match the request"
+                "FL bridge selected an option that does not exactly match the request"
             )
         if landed_option not in options:
             raise ValueError(

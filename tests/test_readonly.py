@@ -1498,6 +1498,31 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(result.options, ["Chromatic", "Major", "Minor"])
         self.assertIs(result.verified, True)
 
+    def test_option_write_rejects_a_substring_and_restores(self):
+        before = _state.TRACKS[9].slots[0].values[0]
+        with self.assertRaisesRegex(Exception, "no option matching"):
+            self.writer.set_plugin_parameter_option(
+                track_index=9, slot_index=0, parameter="Key", option="#"
+            )
+        self.assertEqual(_state.TRACKS[9].slots[0].values[0], before)
+
+    def test_option_write_rejects_a_non_exact_bridge_receipt(self):
+        real_call = self.client.call
+
+        def substring_receipt(cmd, **args):
+            result = real_call(cmd, **args)
+            if cmd == "plugin.set_param_option":
+                result["selected"] = "Wide A"
+                result["after"]["display"] = "Wide A"
+                result["options"].append("Wide A")
+            return result
+
+        with mock.patch.object(self.client, "call", side_effect=substring_receipt):
+            with self.assertRaisesRegex(ValueError, "exactly match"):
+                self.writer.set_plugin_parameter_option(
+                    track_index=9, slot_index=0, parameter="Key", option="A"
+                )
+
     def test_a_missing_option_restores_the_control_it_moved(self):
         before = _state.TRACKS[9].slots[0].values[0]
         with self.assertRaises(Exception) as caught:

@@ -987,6 +987,14 @@ def check_lean_writes(c):
 
     moved = _state.TRACKS[9].slots[0].values[0]
     r = dispatch(w, "plugin.set_param_option",
+                 track=9, slot=0, param="Key", option="#")
+    check("a substring is not accepted as an option label",
+          not r["ok"] and "no option matching" in r.get("error", ""), r)
+    check("and a refused substring restores the control",
+          abs(_state.TRACKS[9].slots[0].values[0] - moved) < 1e-9,
+          _state.TRACKS[9].slots[0].values[0])
+
+    r = dispatch(w, "plugin.set_param_option",
                  track=9, slot=0, param="Key", option="H")
     check("a missing option is refused and names what was found",
           not r["ok"] and "'A#'" in r.get("error", ""), r)

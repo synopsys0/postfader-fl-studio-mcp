@@ -1884,7 +1884,7 @@ class TargetAwarePluginTests(unittest.TestCase):
                         tolerance=0.1,
                     )
 
-    def test_option_write_recomputes_selection_and_later_tick_proof(self) -> None:
+    def test_option_write_requires_exact_selection_and_later_tick_proof(self) -> None:
         def reply(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
             response = mutation_envelope(command, arguments)
             response.update(
@@ -1908,11 +1908,19 @@ class TargetAwarePluginTests(unittest.TestCase):
         valid = controller.set_plugin_parameter_option(
             target=ChannelGeneratorTarget(channel_index=7),
             parameter=1,
-            option="On",
+            option="wide on",
             sweep_steps=8,
         )
         self.assertTrue(valid.verified)
         self.assertEqual(valid.selected_option, "Wide On")
+
+        with self.assertRaisesRegex(ValueError, "exactly match"):
+            controller.set_plugin_parameter_option(
+                target=ChannelGeneratorTarget(channel_index=7),
+                parameter=1,
+                option="On",
+                sweep_steps=8,
+            )
 
         corruptions = (
             lambda raw: raw.update(
@@ -1938,7 +1946,7 @@ class TargetAwarePluginTests(unittest.TestCase):
                     controller.set_plugin_parameter_option(
                         target=ChannelGeneratorTarget(channel_index=7),
                         parameter=1,
-                        option="On",
+                        option="wide on",
                         sweep_steps=8,
                     )
 

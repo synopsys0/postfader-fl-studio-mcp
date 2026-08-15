@@ -200,9 +200,10 @@ key, scale, mode, or input type. FL Studio cannot list an enumeration, so the
 tool sweeps normalized values while recording the displayed options. **This
 moves the control through intermediate values.** If the requested option is
 not found, the bridge attempts to restore the original value before returning
-an error. The requested text must use FL's actual parameter readback label;
-that label can differ from the conceptual term used by a plug-in's UI or
-manual (for example, 3x Osc exposes `pulse` for its square-shaped LFO mode).
+an error. The requested text must exactly match FL's actual parameter readback
+label, ignoring case; substring matches are refused. That label can differ
+from the conceptual term used by a plug-in's UI or manual (for example, 3x Osc
+exposes `pulse` for its square-shaped LFO mode).
 Do not run this tool during recording.
 
 Native Image-Line effects and third-party VST3 effects can both expose
