@@ -24,21 +24,41 @@ ROOT = Path(__file__).resolve().parents[1]
 MCPB_NPM_PACKAGE = "@anthropic-ai/mcpb@2.1.2"
 
 
-def _run_cli(*arguments: str) -> None:
-    command = [
-        "npx",
-        "--yes",
-        f"--package={MCPB_NPM_PACKAGE}",
-        "mcpb",
-        *arguments,
-    ]
-    print("+ " + " ".join(command), flush=True)
+def _resolve_cli() -> tuple[str, ...]:
+    """Return a shell-free command prefix for the pinned MCPB package.
+
+    Node's Windows installers normally provide ``npx.cmd`` while bundled
+    developer runtimes commonly provide only ``pnpm.cmd``.  Both runners can
+    execute the same exact package pin without a global installation.  Keep
+    the resolved executable as argv[0] so paths containing spaces remain safe.
+    """
+
+    for name in ("npx", "npx.cmd"):
+        executable = shutil.which(name)
+        if executable is not None:
+            return (
+                executable,
+                "--yes",
+                f"--package={MCPB_NPM_PACKAGE}",
+                "mcpb",
+            )
+    for name in ("pnpm", "pnpm.cmd"):
+        executable = shutil.which(name)
+        if executable is not None:
+            return (executable, "dlx", MCPB_NPM_PACKAGE)
+    raise RuntimeError(
+        "npx or pnpm is required to validate and build the MCPB archive"
+    )
+
+
+def _run_cli(command_prefix: tuple[str, ...], *arguments: str) -> None:
+    command = [*command_prefix, *arguments]
+    print("+ " + subprocess.list2cmdline(command), flush=True)
     subprocess.run(command, cwd=ROOT, check=True)
 
 
-def _preflight() -> str:
-    if shutil.which("npx") is None:
-        raise RuntimeError("npx is required to validate and build the MCPB archive")
+def _preflight() -> tuple[str, tuple[str, ...]]:
+    command_prefix = _resolve_cli()
     manifest = json.loads((ROOT / "manifest.json").read_text(encoding="utf-8"))
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     project_version = project["project"]["version"]
@@ -52,7 +72,7 @@ def _preflight() -> str:
             "manifest.json tools are stale; run "
             "python3 scripts/sync_mcpb_manifest.py"
         )
-    return project_version
+    return project_version, command_prefix
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -66,14 +86,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        version = _preflight()
-        _run_cli("validate", "manifest.json")
+        version, command_prefix = _preflight()
+        _run_cli(command_prefix, "validate", "manifest.json")
         output_dir = args.output_dir.resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         bundle = output_dir / f"postfader-fl-studio-mcp-{version}.mcpb"
         if bundle.exists():
             bundle.unlink()
-        _run_cli("pack", ".", str(bundle))
+        _run_cli(command_prefix, "pack", ".", str(bundle))
         failures = inspect_bundle(bundle)
         if failures:
             raise RuntimeError("; ".join(failures))

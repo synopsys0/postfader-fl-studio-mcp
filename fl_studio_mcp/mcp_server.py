@@ -1,6 +1,6 @@
 """The MCP server for FL Studio 2026.  This is the default agent entry point.
 
-Four surfaces, and nothing else is reachable from here:
+Five surfaces, and nothing else is reachable from here:
 
 * **Reads** over the live project, through the fail-closed inspector allowlist.
 * **Measurements** of rendered audio files, because the FL API exposes no
@@ -11,6 +11,9 @@ Four surfaces, and nothing else is reachable from here:
   targets, the current pattern's step cells, and mixer-effect or generator
   parameters. Each reads FL back on a *later* idle tick and reports
   ``verified`` from that readback alone.
+* **Session write-mode control**, which can expose or lock those exact
+  mutations without restarting FL Studio. Enabling requires an explicit
+  user-present confirmation and is independently verified by a new handshake.
 * **Bounded live-note audition**, which reports note dispatch and release but
   never fabricates state verification.
 
@@ -18,13 +21,13 @@ There is still no undo command, render, project save, caller-directed
 filesystem search, playback-speed setter without a getter, or reflective FL
 API escape hatch.
 
-The write tools apply and report; there is no confirmation round-trip and no
-rollback ceremony.  Where an FL undo request applies, whether a point actually
+The project write tools apply and report; there is no confirmation round-trip
+and no rollback ceremony. Where an FL undo request applies, whether a point actually
 appeared is reported as ``undo_point_created`` rather than assumed; transient
-transport and note actions truthfully report null.  They are dispatchable only when FL Studio itself was launched with
-``FL_BRIDGE_ENABLE_WRITES=1``; when it was not, they refuse locally with
+transport and note actions truthfully report null. They are dispatchable only
+while the bridge reports verified write mode; when it does not, they refuse locally with
 :class:`~fl_studio_mcp.verified_writer.VerifiedWritesUnavailable`, which names
-the flag, rather than surfacing a raw bridge dispatch rejection.
+the user-confirmed mode tool, rather than surfacing a raw bridge rejection.
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ from .contracts import (
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
+    WriteModeChange,
 )
 from .readonly_inspector import ReadOnlyInspector
 from .performance import TrackBController, TrackBInspector
@@ -107,7 +111,7 @@ from .track_b_contracts import (
     VerifiedTargetedPluginParameterWrite,
     VerifiedTempoWrite,
 )
-from .verified_writer import VerifiedWriter
+from .verified_writer import VerifiedWriter, WriteModeManager
 
 
 # The upstream MCP SDK's generated function-argument models ignore unknown
@@ -179,11 +183,14 @@ null as "this may not be undoable with Ctrl+Z". The project is never saved.
 has no authoritative state readback, returns no `verified` field, and must not
 be presented as a verified mutation or proof that sound was produced.
 
-Writes are dispatchable only when FL Studio itself was launched with
-FL_BRIDGE_ENABLE_WRITES=1. Without it the write tools fail with an error naming
-that flag, and reading still works normally. A write also refuses when the
-running bridge source hash does not match this package. Optional session and
-expected-before guards let callers reject a decision made against stale state.
+Writes are dispatchable only while the bridge reports verified write mode. It
+starts read-only by default. When the user explicitly asks to enable writes,
+call fl_set_write_mode with enabled=true and confirm_user_present=true. That
+changes only the current loaded bridge session, never saves the project, and is
+proved with a second handshake; call it with enabled=false to lock writes again.
+A write also refuses when the running bridge source hash does not match this
+package. Optional session and expected-before guards let callers reject a
+decision made against stale state.
 
 Call fl_get_capabilities before relying on a feature. Treat every unprofiled
 plug-in parameter as unsafe to modify, even though its normalized value can be
@@ -262,6 +269,18 @@ MUTATING = ToolAnnotations(
     openWorldHint=True,
 )
 
+# This changes no project value, but it grants or revokes access to destructive
+# tools. Mark it destructive so MCP clients can put their approval UI in front
+# of the capability transition. It is an absolute, session-only state, so
+# repeating the same request is idempotent.
+WRITE_MODE_CONTROL = ToolAnnotations(
+    title="Enable or disable FL Studio writes",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=True,
+    openWorldHint=True,
+)
+
 # Live-note audition sends one bounded note-on/off pair. It changes no saved
 # project state and has no authoritative state getter, so its result is an
 # explicit dispatch receipt rather than a fabricated verified write.
@@ -301,8 +320,8 @@ async def _write(method_name: str, **arguments):
     """Apply one verified write off the event loop.
 
     Every refusal reaches the agent as a raised error rather than as a
-    successful-looking result: VerifiedWritesUnavailable when FL was not
-    launched with the write flag, IncompatibleFLStudio when the handshake is
+    successful-looking result: VerifiedWritesUnavailable when the live bridge
+    session has writes disabled, IncompatibleFLStudio when the handshake is
     wrong, ValueError for a value this layer rejected before the bridge saw it.
     A write that FL accepted and ignored is not an error -- it returns normally
     with verified=false.
@@ -311,6 +330,15 @@ async def _write(method_name: str, **arguments):
     def invoke():
         writer = VerifiedWriter()
         return getattr(writer, method_name)(**arguments)
+
+    return await anyio.to_thread.run_sync(invoke)
+
+
+async def _set_write_mode(**arguments):
+    """Change only the live bridge capability state, off the event loop."""
+
+    def invoke():
+        return WriteModeManager().set_write_mode(**arguments)
 
     return await anyio.to_thread.run_sync(invoke)
 
@@ -646,7 +674,7 @@ async def copilot_capture_readonly_inspection(
 
 
 # ---------------------------------------------------------------------------
-# verified writes
+# runtime write-mode control and verified writes
 #
 # Each tool applies the change and reports; there is no confirmation
 # round-trip. The returned model always carries `verified`, which the bridge
@@ -655,6 +683,42 @@ async def copilot_capture_readonly_inspection(
 # these tools raises because a write went unverified: that is a real outcome
 # about the user's project and it is reported, not hidden behind an exception.
 # ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="fl_set_write_mode",
+    annotations=WRITE_MODE_CONTROL,
+)
+async def fl_set_write_mode(
+    enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Absolute session write state. True exposes only the bounded "
+                "verified write tools; false locks them again."
+            )
+        ),
+    ],
+    confirm_user_present: Annotated[
+        bool,
+        Field(
+            description=(
+                "Must be true to enable writes, after the present user explicitly "
+                "requested the capability change. Not required to disable writes."
+            )
+        ),
+    ] = False,
+) -> WriteModeChange:
+    """Enable or disable writes for this bridge session without restarting FL.
+
+    This changes no project value and never persists the setting. Enabling is
+    refused unless `confirm_user_present` is literally true. The result is
+    verified with a fresh bridge handshake before it reports success.
+    """
+    return await _set_write_mode(
+        enabled=enabled,
+        confirm_user_present=confirm_user_present,
+    )
 
 
 @mcp.tool(
@@ -1132,7 +1196,12 @@ async def fl_set_plugin_param_option(
     ],
     option: Annotated[
         str,
-        Field(description="The option text to land on, e.g. 'A', 'Major', 'Low Male'."),
+        Field(
+            description=(
+                "The exact option text to land on, e.g. 'A', 'Major', "
+                "'Low Male'."
+            )
+        ),
     ],
     track_index: Annotated[
         int | None,
@@ -1195,9 +1264,9 @@ async def fl_set_plugin_param_option(
 
     **This moves the control while it looks.** FL cannot report a control's
     options, so the only way to find them is to walk the parameter across its
-    range and read what it displays. If the requested option does not exist,
-    the original value is restored before the error, and the error lists every
-    option that was found.
+    range and read what it displays. The requested label must exactly match an
+    option, ignoring case. If it does not exist, the original value is restored
+    before the error, and the error lists every option that was found.
 
     The result carries `options` -- the whole enumeration, in order -- so one
     call is also how you discover what a control accepts.
@@ -1708,7 +1777,7 @@ async def audio_find_recent_bounces(
 
 
 USAGE = """\
-Postfader - unofficial local MCP server for FL Studio 2026 (macOS)
+Postfader - unofficial local MCP server for FL Studio 2026
 
 Usage:
   fl-studio-mcp              Serve the Model Context Protocol over stdio.
@@ -1716,26 +1785,23 @@ Usage:
   fl-studio-mcp --version    Print the version.
 
 This command speaks MCP on stdin/stdout and is meant to be launched by an MCP
-client, not run interactively -- on its own it will appear to hang, because it
-is waiting for a client to say something. Register it with your client instead,
-using the absolute path to this interpreter. For Claude Code, registering it at
-user scope makes it available in every project rather than only in the
-connector's own checkout:
+client, not run interactively -- on its own it will appear to hang while it
+waits for a client. Register it using absolute interpreter and checkout paths.
+From a source checkout, generate a Codex command, Codex TOML, or Claude JSON:
 
-  claude mcp add fl-studio --scope user --env FL_BRIDGE_ENABLE_MIDI=1 --
-      /absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python
-      -m fl_studio_mcp.mcp_server
+  python scripts/generate_mcp_config.py --help
 
-(one line; wrapped here to fit. --scope user is the part that matters: a
-project-scoped entry only loads inside its own directory.)
+The generator keeps automatic local-file mode read-only by default. Select
+--transport midi and provide --midi-port only after configuring the same exact
+virtual endpoint in FL Studio. Postfader never installs a virtual MIDI driver.
 
-Writes are off unless FL Studio itself was launched with
-FL_BRIDGE_ENABLE_WRITES=1.
+Writes start off. Ask the connected AI client to enable write mode for the
+current session; explicit user-present confirmation is required and FL Studio
+does not need to restart.
 
-Setup checks (scripts/doctor.py, scripts/inspect_readonly.py) live in the
-source repository, not in the installed package, because they configure and
-probe a local FL Studio install rather than serve MCP. Clone the repository to
-use them: https://github.com/synopsys0/postfader-fl-studio-mcp
+Use postfader-doctor (or scripts/doctor.py from a checkout) for setup evidence.
+The supervised acceptance harnesses and native Windows bootstrap live in the
+source repository: https://github.com/synopsys0/postfader-fl-studio-mcp
 """
 
 

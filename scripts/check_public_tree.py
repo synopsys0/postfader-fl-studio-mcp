@@ -35,6 +35,7 @@ FORBIDDEN_DIRECTORY_NAMES = {
     ".claude",
     ".fl-studio-mcp-locks",
     ".idea",
+    ".private",
     ".pytest_cache",
     ".vscode",
     "__pycache__",
@@ -50,11 +51,33 @@ FORBIDDEN_DIRECTORY_NAMES = {
 FORBIDDEN_EXACT_PATHS = {
     ".ds_store",
     ".mcp.json",
+    "docs/capability-matrix.md",
     "docs/current-status.md",
+    "docs/demo-plan.md",
     "docs/plugin-coverage.md",
     "docs/plugin-insertion.md",
+    "docs/windows-acceptance.md",
     "handoff.md",
 }
+PUBLIC_DOCUMENT_PATHS = {
+    "docs/architecture.md",
+    "docs/fl-constraints.md",
+    "docs/plugin-matrix.md",
+    "docs/plugin-support.md",
+    "docs/setup.md",
+    "docs/tool-contracts.md",
+}
+INTERNAL_DOCUMENT_TOKENS = {
+    "acceptance",
+    "checklist",
+    "demo",
+    "draft",
+    "handoff",
+    "plan",
+    "roadmap",
+    "status",
+}
+PROSE_SUFFIXES = {".md", ".rst", ".txt"}
 PRIVATE_SUFFIXES = {
     ".aac",
     ".aif",
@@ -87,7 +110,7 @@ CONTENT_PATTERNS = (
     ("absolute Linux home path", re.compile(_pieces(b"/", b"home", b"/") + rb"[^/\s]+/")),
     (
         "absolute Windows home path",
-        re.compile(rb"[A-Za-z]:\\" + _pieces(b"Users", b"\\") + rb"[^\\\s]+\\", re.I),
+        re.compile(rb"[A-Za-z]:[\\/]Users[\\/][^\\/\s]+[\\/]", re.I),
     ),
     (
         "private key material",
@@ -134,6 +157,21 @@ def check_file(relative: Path) -> list[str]:
         failures.append("forbidden private or release-process file")
 
     name_folded = relative.name.casefold()
+    name_tokens = {
+        token for token in re.split(r"[^a-z0-9]+", relative.stem.casefold()) if token
+    }
+    internal_tokens = sorted(name_tokens & INTERNAL_DOCUMENT_TOKENS)
+    if relative.suffix.casefold() in PROSE_SUFFIXES and internal_tokens:
+        failures.append(
+            "internal working-document name: %s" % internal_tokens[0]
+        )
+    if (
+        len(relative.parts) > 1
+        and relative.parts[0].casefold() == "docs"
+        and relative.suffix.casefold() in {".json", ".md", ".rst", ".txt"}
+        and relative_folded not in PUBLIC_DOCUMENT_PATHS
+    ):
+        failures.append("unreviewed public documentation path")
     if name_folded == ".env" or (
         name_folded.startswith(".env.") and name_folded != ".env.example"
     ):

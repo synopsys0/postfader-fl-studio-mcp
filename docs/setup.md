@@ -1,327 +1,303 @@
 # Setup and usage
 
-Postfader is a macOS-only beta. It requires FL Studio 2026 version
-26.1.3 build 5336 or newer, MIDI scripting API 44 or newer, Python 3.10 or
-newer, and an MCP-compatible client. The current release is validated on Apple
-silicon.
+Postfader does not install or configure virtual MIDI software. Configure one
+bidirectional virtual endpoint yourself, then give Postfader its exact name.
 
-The MCP server communicates with a MIDI controller script loaded by FL Studio.
-The production transport is local MIDI SysEx over a virtual CoreMIDI IAC port;
-FL Studio's embedded Python environment cannot use the connector's socket or
-file-mailbox test transports.
+## 1. Find the FL Studio user-data directory
 
-## 1. Prepare FL Studio and CoreMIDI
+The directory contains `Settings/Hardware` and is not necessarily beside the
+FL Studio executable. On Windows, Postfader asks the Known Documents API first,
+which handles OneDrive or enterprise redirection. On macOS the conventional
+location is under `~/Documents/Image-Line/FL Studio`.
 
-Launch FL Studio once so it creates its user settings folders, then quit it.
+All explicit paths and `FL_STUDIO_USER_DATA_DIR` values must be absolute. This
+prevents the installer and MCP client from resolving one configuration against
+different working directories. A configuration path may be generated before
+it exists; installation still requires the expected parent layout.
 
-Open **Audio MIDI Setup → Window → Show MIDI Studio**, open **IAC Driver**,
-enable **Device is online**, and select **Apply**. An existing virtual MIDI
-input can also be used, but all examples assume the IAC Driver.
+## 2. Preview and install
 
-The IAC bus is shared and unauthenticated. Use it only on a trusted,
-single-user Mac. The connector takes an exclusive process lock while connected
-to prevent accidental duplicate clients, but that lock is not authentication.
+Quit FL Studio before deploying or replacing the bridge.
 
-## 2. Install the server and FL bridge
+Windows PowerShell:
 
-### Claude Desktop extension
-
-Download the `postfader-fl-studio-mcp-0.12.0.mcpb` asset from the GitHub
-Release and open it with Claude Desktop. The extension installs and registers
-the local MCP server, but it cannot configure FL Studio's hardware-script
-folder or CoreMIDI for you. Run the packaged bridge installer (or use the
-source-install path below), then complete the IAC and FL Studio steps in this
-guide. The extension does not enable writes.
-
-### Python package or source checkout
-
-Either install the published package:
-
-```bash
-pip install postfader-fl-studio-mcp
-postfader-install-bridge
+```powershell
+.\scripts\install.ps1 -DryRun
+.\scripts\install.ps1
 ```
 
-or work from a clone, which additionally gives you the test suite and the
-read-only validation scripts:
+Override discovery when needed:
+
+```powershell
+.\scripts\install.ps1 -UserDataDir 'D:\FL Data\Image-Line\FL Studio'
+```
+
+The script uses `.venv\Scripts\python.exe`, creates the venv if needed,
+installs the checkout editable, and invokes the same packaged bridge installer
+as the console command. It does not edit MCP client configuration or persist
+environment variables.
+
+macOS:
 
 ```bash
-git clone https://github.com/synopsys0/postfader-fl-studio-mcp.git
-cd postfader-fl-studio-mcp
 ./scripts/install.sh
 ```
 
-Both deploy identical bytes: `install.sh` shells out to the same
-`fl_studio_mcp.bridge_install` module that backs `postfader-install-bridge`,
-so there is one implementation of what "installed" means.
-
-The default user-data folder is `~/Documents/Image-Line/FL Studio`. If yours
-is elsewhere, use the same absolute override for installation and diagnosis:
+Override discovery with an absolute environment value:
 
 ```bash
-FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./scripts/install.sh
-FL_STUDIO_USER_DATA_DIR="/absolute/path/to/FL Studio" ./.venv/bin/python scripts/doctor.py
+FL_STUDIO_USER_DATA_DIR='/absolute/path/to/FL Studio' ./scripts/install.sh
 ```
 
-`scripts/install.sh`:
-
-- creates `.venv` and installs the `postfader-fl-studio-mcp` distribution into it;
-- deploys the packaged bridge into FL Studio's
-  `Settings/Hardware/Universal Bridge/` folder;
-- backs up a different bridge script already present at that destination;
-- stamps the source hash into the deployed copy; and
-- writes a repository-local `.mcp.json` for the server ID `fl-studio`.
-
-Re-run `./scripts/install.sh` after updating the bridge, then reload the script
-inside FL Studio. The source stamp lets the client detect a stale deployed
-copy through the `bridge_source_sha256` value returned by `ping`.
-
-## 3. Attach the bridge in FL Studio
-
-Start FL Studio and open **Options → MIDI settings → Input**. Select the IAC
-port, enable it, and set **Controller type** to `Universal Bridge`. Note the
-**Port** number FL assigns it.
-
-Then, in the **Output** list of the same dialog, select the same IAC port and
-set its **Port** number to match the input's. This step is required, not
-optional: the bridge sends its replies over MIDI output, and it refuses to
-start without an assigned output. If it is missing, Script output reports:
+From an installed Python distribution, deploy the controller script with:
 
 ```text
-MIDI output is not assigned - in Options > MIDI settings give the output
-device the same Port number as the input
+postfader-install-bridge
 ```
 
-Open **View → Script output** and press **Reload script**. The output should
-end with:
+Use `postfader-install-bridge --help` when an explicit user-data path is
+required. FL Studio cannot list `Universal Bridge` until deployment succeeds.
+
+### Claude Desktop extension and upgrades
+
+The release `.mcpb` registers the local MCP server in Claude Desktop. It does
+not deploy `device_UniversalBridge.py`, create a virtual endpoint, or edit FL
+Studio MIDI settings. Install the matching Python distribution or use the
+matching checkout, run `postfader-install-bridge`, and configure the endpoint
+before connecting the extension. The bundle never enables writes.
+
+Upgrades have one mandatory order on both hosts: close MCP clients and FL
+Studio; upgrade the server/package or extension; deploy the bridge from that
+same version; start FL Studio and reload `Universal Bridge`; only then
+reconnect the MCP client. Mixed versions fail closed. Command protocol 2
+describes the bridge command API, while MIDI wire protocol 2 separately
+describes the bounded SysEx framing and must match before the first request.
+
+## 3. Configure FL Studio and the virtual endpoint
+
+Create or enable one virtual MIDI endpoint using host software you trust. On
+macOS, an IAC Driver bus is the established validation path. Windows has no
+provider-specific default.
+
+In **Options → MIDI settings**:
+
+1. Select the endpoint under Input, enable it, choose `Universal Bridge`, and
+   assign a Port number.
+2. Select the matching Output, enable it, and assign the same Port number.
+3. Open **View → Script output** and reload the script. After an upgrade,
+   complete this reload before reconnecting any MCP client.
+
+The expected final line is `ready: MIDI SysEx`. The bridge refuses to become
+ready if output is missing because responses travel over that endpoint.
+
+Postfader endpoint matching is deterministic. A case-insensitive exact match
+wins. If none exists, one unique case-insensitive substring may be used so the
+macOS `IAC Driver` default remains compatible. Zero or multiple matches fail
+with bounded candidates before any ownership lock or endpoint open.
+
+## 4. Generate client configuration
+
+Configuration generation is pure and create-only. For an ordinary live,
+read-only Windows connection, supply absolute paths and the exact endpoint;
+write tools remain independently disabled:
+
+```powershell
+$Port = 'Exact Virtual MIDI Endpoint Name'
+.\.venv\Scripts\python.exe scripts\generate_mcp_config.py `
+  --format codex-toml `
+  --repository-root $PWD `
+  --python "$PWD\.venv\Scripts\python.exe" `
+  --user-data-dir 'C:\ABSOLUTE\Image-Line\FL Studio' `
+  --transport midi `
+  --midi-port $Port
+```
+
+macOS:
+
+```bash
+PORT='Exact IAC Bus Name'
+./.venv/bin/python scripts/generate_mcp_config.py \
+  --format codex-toml \
+  --repository-root "$PWD" \
+  --python "$PWD/.venv/bin/python" \
+  --user-data-dir "$HOME/Documents/Image-Line/FL Studio" \
+  --transport midi \
+  --midi-port "$PORT"
+```
+
+Available formats:
+
+- `codex-toml` emits `[mcp_servers.fl-studio]` configuration;
+- `codex-command` emits a PowerShell-safe `codex mcp add` command;
+- `claude-json` emits the `mcpServers` JSON shape.
+
+Automatic mode emits only `FL_STUDIO_USER_DATA_DIR`. It is an offline,
+fail-closed configuration with no native MIDI transport, not the ordinary live
+FL setup. Live mode requires:
 
 ```text
-ready: MIDI SysEx
+--transport midi --midi-port "Exact Endpoint Name"
 ```
 
-Reload the script whenever the installed bridge changes. If FL Studio does not
-show `Universal Bridge`, confirm that it was launched once before installation
-and run `./scripts/install.sh` again.
+This adds `FL_BRIDGE_ENABLE_MIDI=1` and `FL_BRIDGE_MIDI_PORT`. It never adds
+`FL_BRIDGE_ENABLE_WRITES`. Use `--output` to create a new file; an existing
+destination is refused. `.mcp.json.example` is a placeholder template and is
+not automatically installed. It is explicitly configured for live MIDI and
+therefore includes both MIDI environment variables; replace its endpoint and
+absolute-path placeholders before use.
 
-## 4. Check the connection
+Codex CLI uses the supported `codex mcp add NAME --env KEY=VALUE -- COMMAND`
+shape; inspect registered servers with `codex mcp list`. Codex CLI and the
+Codex desktop/IDE surfaces share the user MCP configuration. Client-specific
+approval and trust prompts still apply.
+
+Only one MCP process may own a selected endpoint pair. Disable duplicate
+project/user registrations before testing.
+
+## 5. Run the doctor
+
+```powershell
+$Port = 'Exact Virtual MIDI Endpoint Name'
+.\.venv\Scripts\postfader-doctor.exe --midi-port $Port --json
+```
+
+or:
 
 ```bash
-./.venv/bin/python scripts/doctor.py
-./scripts/inspect_readonly.py --capabilities
+./.venv/bin/postfader-doctor --json
 ```
 
-`doctor.py` checks the application, Python environment, installed bridge,
-CoreMIDI ports, compatibility handshake, and a read-only project query. The
-inspection command prints strict JSON through the same read-only allowlist used
-by the MCP server.
+The JSON and human views are derived from the same evidence. They include:
 
-Additional read-only checks are available:
+- platform, architecture, Python, and package version;
+- FL executable candidates and selected path;
+- user-data path plus resolution source;
+- hardware/script locations and repository/deployed bridge hashes;
+- configured endpoint query, enumerated candidates, and selected input/output;
+- live connection attempt/transport, FL/build/API/protocol/hash/session data;
+- bridge mode, read-only state, and verified-write availability.
 
-```bash
-./scripts/inspect_readonly.py --selected-range
-./scripts/inspect_readonly.py --parameter-limit 16 --max-plugins 16
-./scripts/inspect_readonly.py --only-used
+Important failure classes remain distinct: FL missing, hardware directory
+missing, bridge missing/stale, endpoint not configured, zero endpoints,
+configured endpoint missing/ambiguous, output missing, native probe failure,
+live transport unavailable, incompatible handshake, and stale running bridge.
+
+On Windows, a missing MIDI query fails before native enumeration. Set
+`--midi-port "Exact Endpoint Name"` on the doctor, or export
+`FL_BRIDGE_MIDI_PORT`. On macOS, the no-argument doctor enables MIDI and keeps
+the compatible `IAC Driver` default. A live handshake validates command
+protocol 2 separately from MIDI wire protocol 2 before normal requests.
+
+Installed and checkout live utilities use the same endpoint option on Windows:
+
+```powershell
+.\.venv\Scripts\postfader-plugin-report.exe --midi-port $Port --track 1 --slot 0
+& .\.venv\Scripts\python.exe .\scripts\inspect_readonly.py --midi-port $Port
+& .\.venv\Scripts\python.exe .\scripts\validate_selection_readonly.py --midi-port $Port
 ```
 
-The complete mixer scan is the default. `--only-used` applies a heuristic and
-can omit a musically relevant track that remains at default values.
+Set `FL_BRIDGE_SANDBOXED=1` whenever native MIDI access is prohibited; this skips
+enumeration and live handshake and reports the skip rather than claiming
+success.
 
-## 5. Register the MCP server
+## 6. Read-only and write-mode operation
 
-The installer writes this repository-local configuration:
-
-```json
-{
-  "mcpServers": {
-    "fl-studio": {
-      "command": "./.venv/bin/python",
-      "args": ["-m", "fl_studio_mcp.mcp_server"],
-      "cwd": ".",
-      "env": {
-        "FL_BRIDGE_ENABLE_MIDI": "1"
-      }
-    }
-  }
-}
-```
-
-An unchanged copy is available as `.mcp.json.example`. Both use relative paths
-and therefore only work when the client is launched from this checkout. That is
-the try-it-quickly case, not the way to live with the server.
-
-### Registering it for use in your own projects
-
-Register once at user scope with absolute paths so the connector is reachable
-regardless of which project you are working in. For Claude Code:
-
-```bash
-claude mcp add fl-studio --scope user \
-    --env FL_BRIDGE_ENABLE_MIDI=1 \
-    -- /absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python \
-       -m fl_studio_mcp.mcp_server
-```
-
-Verify with `claude mcp list`. A project-scoped entry loads only inside its own
-directory, which is why the installer's `.mcp.json` does not travel with you.
-Note also that a project-scoped server requires a one-time approval prompt the
-first time that project is opened.
-
-Because only one process may own the IAC port, remove or disable a
-project-scoped copy before relying on the user-scope one.
-
-For a client with no CLI, use absolute paths and do not assume that `~` or
-shell variables will be expanded:
-
-```json
-{
-  "mcpServers": {
-    "fl-studio": {
-      "command": "/absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python",
-      "args": ["-m", "fl_studio_mcp.mcp_server"],
-      "cwd": "/absolute/path/to/postfader-fl-studio-mcp",
-      "env": {
-        "FL_BRIDGE_ENABLE_MIDI": "1"
-      }
-    }
-  }
-}
-```
-
-Configuration locations differ between MCP clients, but the command,
-arguments, working directory, and `FL_BRIDGE_ENABLE_MIDI=1` setting are the
-same. Only one MCP server process can own the resolved IAC port at a time.
-
-## Read-only mode and write mode
-
-Read-only mode is the default. In that mode all 20 bridge mutation commands
-(19 readback-verified state commands plus bounded live-note dispatch) are
-absent from the active dispatch allowlist rather than merely rejected after
-dispatch.
-
-To enable writes, quit FL Studio and launch it from Terminal:
-
-```bash
-FL_BRIDGE_ENABLE_WRITES=1 open -a "FL Studio 2026"
-```
-
-The bridge reads the flag once when its script loads. A successful write-mode
-handshake reports:
+The normal FL launch is read-only. Start FL Studio normally, connect the AI
+client, and ask it:
 
 ```text
-bridge_mode: "write_test"
-verified_writes_enabled: true
+Enable write mode for this session.
 ```
 
-Launching FL Studio normally returns to read-only mode. Do not add
-`FL_BRIDGE_ENABLE_WRITES` to the MCP server configuration: the flag must be in
-FL Studio's own launch environment.
+The client calls `fl_set_write_mode(enabled=true,
+confirm_user_present=true)`. Enabling requires that explicit present-user
+request, matching bridge provenance, runtime-control support, and the current
+session fingerprint. A second handshake must then confirm all of:
 
-Mutation tools act immediately and do not add a second confirmation prompt.
-Every result reports `undo_point_created`. Commands that request an undo point
-report whether one was observed; transient transport actions and live-note
-dispatch truthfully report `null`. False or null means undo cannot be relied
-upon. The bridge never saves the project, but a later manual or application
-save can persist its changes.
+- `bridge_mode="write_test"`;
+- `verified_writes_enabled=true`; and
+- `write_mode_origin="runtime_request"`.
 
-Every mutation also compares the bridge source digest reported by the running
-FL script with the bridge packaged beside the server. A missing, malformed, or
-stale digest fails closed before dispatch; inspection continues with a warning
-so the mismatch can be diagnosed. Re-run the installer and reload the FL
-script after every bridge update.
+No project value is changed or saved by the mode transition, and FL Studio
+does not restart. Ask the client to disable write mode when finished. A normal
+new FL process starts read-only, and a bridge reload also resets to the process
+startup default.
 
-Mutation tools accept an optional bridge-lifetime `session_fingerprint` and,
-except for the step sequencer's required digest guard, an optional typed
-`expected_before`. The bridge checks supplied guards immediately before the
-mutation and before any applicable undo request. Use values from a fresh read
-when multiple people or clients might touch the project. The fingerprint is
-not authentication and does not identify a project.
+The Windows launcher remains useful for finding FL Studio and starting it
+normally:
 
-### Optional write validation
+```powershell
+.\scripts\launch_fl_studio.ps1 -DryRun
+.\scripts\launch_fl_studio.ps1
+```
 
-Use the validation script only in a new, blank, disposable FL Studio project:
+The launcher discovers or accepts an absolute FL executable, refuses a real
+launch if any FL process is already running, and restores its own process
+environment after child creation.
+
+The legacy startup opt-in remains available for backward-compatible supervised
+harnesses:
+
+```powershell
+.\scripts\launch_fl_studio.ps1 -EnableWrites
+```
+
+On macOS its equivalent is:
 
 ```bash
-./.venv/bin/python scripts/validate_writes.py
+FL_BRIDGE_ENABLE_WRITES=1 open -a 'FL Studio 2026'
 ```
 
-The default check finds an otherwise untouched non-Master mixer track, changes
-its fader, pan, mute state, and one built-in EQ band, then attempts to restore
-each captured value and verifies the restore by readback. A failed restore can
-leave a value changed, so inspect every result before closing or saving.
+The bridge reads that legacy flag only when FL loads the script. It is no
+longer required for ordinary AI-client use. Never place
+`FL_BRIDGE_ENABLE_WRITES` in MCP configuration.
 
-The script also supports an explicitly selected plug-in parameter. That mode
-mutates a real control and should be used only in a disposable project after
-you have verified the track, slot, and parameter index yourself.
+## 7. Troubleshooting
 
-## Audio analysis
+**Universal Bridge is not listed.** Quit FL, rerun the native installer with
+the correct absolute user-data path, reopen FL, and reload scripts.
 
-FL Studio's MIDI scripting API provides no audio buffers and no render command.
-Export or record the required file in FL Studio, then supply its absolute path
-to an audio tool. `audio_find_recent_bounces` searches a bounded set of normal
-FL Studio output folders to help locate recent files.
+**The script is stale.** Reinstall, then reload the FL script. The doctor
+compares repository, deployed, and running bridge digests.
 
-Audio inputs are limited by format, size, and analysis duration, but a direct
-measurement request can name an absolute audio path elsewhere on disk. Use the
-server only with a trusted MCP client. Tool results contain measurements,
-canonical paths, and hashes, not audio samples.
+**No endpoint is configured on Windows.** Set an exact
+`FL_BRIDGE_MIDI_PORT` in generated client configuration. Postfader will not
+guess a provider.
 
-## Troubleshooting
+**Endpoint selection is ambiguous.** Use the full exact endpoint name printed
+by the doctor. Postfader refuses ambiguity before lock/open.
 
-**FL Studio does not list `Universal Bridge`.** Launch FL Studio once, quit it,
-run `./scripts/install.sh`, then reopen FL Studio. Confirm the script exists in
-FL Studio's user `Settings/Hardware/Universal Bridge/` folder.
+**The endpoint is already owned.** Close the other MCP server and retry. The
+reported PID is local ownership evidence, not authentication.
 
-**Script output never says `ready`.** Press **Reload script**. The bridge file
-must contain ASCII only because FL Studio loads MIDI scripts using an ASCII
-code path. Run `./.venv/bin/python -B tests/test_bridge.py` to check it.
+**Writes are refused.** Check the live handshake. It must report
+`runtime_write_mode_control=true` and matching bridge provenance. Ask the
+connected client to enable write mode and approve its capability-change prompt.
+Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
+`write_mode_origin=runtime_request`.
 
-**The client cannot reach the bridge.** Confirm that FL Studio is running, the
-IAC port is online and enabled as an input, its controller type is
-`Universal Bridge`, and Script output says `ready: MIDI SysEx`.
-
-**`IAC already owned; owner pid N`.** Another connector process owns the port.
-Close that process and retry. Do not run multiple MCP clients against the same
-IAC port.
-
-**Writes are refused.** Inspect `ping`. If `bridge_mode` is `read_only`, quit FL
-Studio and relaunch it with `FL_BRIDGE_ENABLE_WRITES=1`. Starting it normally
-from Finder or the Dock does not carry that variable.
-
-**A write reports `verified: false`.** FL Studio accepted the call but the
-later readback did not prove the requested result. Inspect `before`, `after`,
-`verification_basis_detail`, and `warnings`; do not assume the control moved,
-retry automatically, or assume rollback occurred.
-
-**The installed bridge is stale.** Re-run `./scripts/install.sh`, then press
-**Reload script** in FL Studio. The doctor compares the source stamp reported
-by the bridge with the repository copy.
+**A write is unverified.** Do not retry automatically. Inspect before/after,
+verification detail, warnings, and the project itself.
 
 ## Environment variables
 
-Everything the connector reads. Only the first two are needed for an ordinary
-install; the rest exist for automation and for hosts that cannot use CoreMIDI.
+| Variable | Meaning |
+|---|---|
+| `FL_STUDIO_USER_DATA_DIR` | Absolute FL user-data directory. Relative values are rejected. |
+| `FL_BRIDGE_ENABLE_MIDI` | `1` allows construction of native MIDI transport. |
+| `FL_BRIDGE_MIDI_PORT` | Exact endpoint query; required on Windows for native MIDI. |
+| `FL_BRIDGE_ENABLE_WRITES` | Legacy FL-process startup opt-in. Ordinary clients use the session-only `fl_set_write_mode` tool instead. |
+| `FL_BRIDGE_SANDBOXED` | `1` forbids native MIDI enumeration/open and live handshake. |
+| `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
+| `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
+| `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
 
-| Variable | Read by | Effect |
-|---|---|---|
-| `FL_BRIDGE_ENABLE_MIDI` | MCP server, scripts | `1` builds the MIDI SysEx transport. Without it that transport is never constructed, so the connector cannot reach FL Studio. Set in `.mcp.json`; the bundled scripts set it themselves |
-| `FL_BRIDGE_ENABLE_WRITES` | **the FL Studio process** | `1` adds the narrowly allowlisted mutation commands to the bridge. Read once when the script loads, so it must be set on FL Studio itself, not on the MCP server |
-| `FL_STUDIO_USER_DATA_DIR` | `install.sh`, `doctor.py` | FL Studio's user-data folder when it is not `~/Documents/Image-Line/FL Studio` |
-| `FL_BRIDGE_SANDBOXED` | MCP server, `doctor.py` | `1` declares that this process cannot open CoreMIDI. The MIDI transport reports itself unavailable and no probe subprocess is created. Use it in CI and automation harnesses, where a native CoreMIDI abort would otherwise raise a crash report |
-| `FL_BRIDGE_MIDI_PORT` | MCP server, scripts | CoreMIDI port name to use. Default `IAC Driver` |
-| `FL_BRIDGE_TIMEOUT` | MCP server, scripts | Seconds to wait for a bridge reply. Default `30` |
-| `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | MCP server, scripts | Loopback TCP transport. Unavailable inside FL Studio's script sandbox; used by tests |
-| `FL_BRIDGE_MAILBOX` | MCP server, scripts | Directory for the file-mailbox transport. Also unavailable inside FL Studio's sandbox; used by tests |
+## 8. Hermetic tests
 
-## Testing
-
-```bash
-./.venv/bin/python scripts/run_safe_tests.py
+```powershell
+.\.venv\Scripts\python.exe scripts\run_safe_tests.py
 ```
 
-The safe suite is an explicit allowlist that uses a fake FL API and
-deterministic synthetic audio. It does not require FL Studio, a MIDI device, a
-user project, or user audio and never touches the physical IAC bus.
-
-`tests/test_midi_transport.py` is intentionally excluded because it uses the
-real shared MIDI transport. Run it manually only when you intend to exercise
-that host resource.
+Every child is forced to `FL_BRIDGE_ENABLE_MIDI=0` and
+`FL_BRIDGE_SANDBOXED=1`, with a bounded timeout. The explicit allowlist omits
+`tests/test_midi_transport.py`, which is the only real shared-MIDI test.

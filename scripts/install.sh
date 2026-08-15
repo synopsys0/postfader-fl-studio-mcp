@@ -6,10 +6,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VENV="$ROOT/.venv"
-FL_USER_DATA="${FL_STUDIO_USER_DATA_DIR:-$HOME/Documents/Image-Line/FL Studio}"
 
 echo "FL Studio MCP — install"
-echo "FL Studio user data: $FL_USER_DATA"
 echo
 
 # --- python environment ----------------------------------------------------
@@ -23,6 +21,14 @@ echo "Installing Python packages"
 "$VENV/bin/pip" install --quiet --editable "$ROOT"
 echo "  done"
 
+# Resolve this once through the package contract used by every consumer. On
+# macOS this retains ~/Documents by default; an explicit environment override
+# still wins. The Windows bootstrap added in a later phase will use Known
+# Documents through the same function.
+FL_USER_DATA="$("$VENV/bin/python" -c \
+  'from fl_studio_mcp.host_config import fl_studio_user_data_dir; print(fl_studio_user_data_dir())')"
+echo "FL Studio user data: $FL_USER_DATA"
+
 # --- bridge script ---------------------------------------------------------
 # Deployment lives in fl_studio_mcp.bridge_install so that this script and the
 # postfader-install-bridge command a pip user gets cannot drift apart. That
@@ -35,23 +41,11 @@ if ! "$VENV/bin/python" -m fl_studio_mcp.bridge_install \
   exit 1
 fi
 
-# --- client config ---------------------------------------------------------
-cat > "$ROOT/.mcp.json" <<JSON
-{
-  "mcpServers": {
-    "fl-studio": {
-      "command": "./.venv/bin/python",
-      "args": ["-m", "fl_studio_mcp.mcp_server"],
-      "cwd": ".",
-      "env": {
-        "FL_BRIDGE_ENABLE_MIDI": "1"
-      }
-    }
-  }
-}
-JSON
 echo
-echo "Wrote .mcp.json for the local MCP server"
+echo "No MCP client configuration was changed."
+echo "Generate an explicit Codex or Claude example with:"
+printf '  %q %q --help\n' \
+  "$VENV/bin/python" "$ROOT/scripts/generate_mcp_config.py"
 
 echo
 echo "Next steps:"
