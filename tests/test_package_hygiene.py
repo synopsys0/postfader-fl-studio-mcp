@@ -92,6 +92,51 @@ class PackageHygieneTests(unittest.TestCase):
                         failures = scanner.check_file(Path("candidate.txt"))
                 self.assertIn("absolute Windows home path", failures)
 
+    def test_internal_working_documents_are_rejected_by_public_tree_scanner(
+        self,
+    ) -> None:
+        scanner = self.load_public_tree_scanner()
+        candidates = {
+            "docs/demo-script.md": "demo",
+            "docs/release-plan.md": "plan",
+            "notes/project-handoff.txt": "handoff",
+            "release-checklist.rst": "checklist",
+        }
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            for relative_text, token in candidates.items():
+                with self.subTest(relative=relative_text):
+                    relative = Path(relative_text)
+                    path = root / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("internal working material", encoding="utf-8")
+                    with mock.patch.object(scanner, "ROOT", root):
+                        failures = scanner.check_file(relative)
+                    self.assertIn(
+                        "internal working-document name: %s" % token,
+                        failures,
+                    )
+
+    def test_public_documentation_paths_require_an_explicit_allowlist(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            candidate = root / "docs" / "new-guide.md"
+            candidate.parent.mkdir(parents=True)
+            candidate.write_text("unreviewed guide", encoding="utf-8")
+            with mock.patch.object(scanner, "ROOT", root):
+                failures = scanner.check_file(Path("docs/new-guide.md"))
+        self.assertIn("unreviewed public documentation path", failures)
+
+    def test_current_public_documentation_is_exactly_allowlisted(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        current = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "docs").iterdir()
+            if path.is_file()
+        }
+        self.assertEqual(current, scanner.PUBLIC_DOCUMENT_PATHS)
+
     def test_checkout_scripts_resolve_from_a_space_path_and_external_cwd(self) -> None:
         runner = load_safe_runner()
         scripts = (

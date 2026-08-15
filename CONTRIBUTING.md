@@ -31,11 +31,7 @@ Use `scripts\install.ps1` separately only when intentionally preparing a live
 Windows FL Studio integration; that path requires FL to have created its
 `Settings\Hardware` directory.
 
-Use Python 3.10 or newer. The macOS path uses CoreMIDI/IAC; the Windows path
-uses an explicitly selected virtual endpoint through WinMM and remains a
-release candidate until the supervised checklist passes. The retained macOS
-v0.12 evidence must also be rerun for the v0.13 MIDI wire changes before that
-release is tagged.
+Use Python 3.10 or newer.
 
 ## Public-content rule
 
@@ -50,7 +46,8 @@ harmless or is intended only as test evidence. Prohibited content includes:
 - absolute home-directory paths, usernames, machine identifiers, process
   dumps, or unredacted logs;
 - credentials, tokens, cookies, private keys, and client-local configuration;
-  and
+- internal demo scripts, release plans, acceptance checklists, handoffs, status
+  notes, and unreviewed validation records; and
 - generated caches, build products, or test output containing any of the
   above.
 
@@ -125,10 +122,9 @@ synthetic audio. A test that exits successfully without reporting any checks
 is treated as a failure.
 
 `tests/test_midi_transport.py` is excluded because it touches a real shared
-MIDI endpoint. Live FL Studio validation is optional on macOS. Windows support
-claims require the supervised `docs/windows-acceptance.md` gate; use a new
-blank disposable project and never commit the project, audio, screenshots,
-paths, or raw output it produces.
+MIDI endpoint. Any live FL Studio validation must use a new blank, unsaved
+project. Keep run instructions, raw results, screenshots, paths, and other
+operator notes under the ignored `.private/` directory and never commit them.
 
 If a live result changes a documented constraint, reduce it to the smallest
 generic fake-API regression test and describe only the technical behavior in
@@ -192,6 +188,8 @@ search.
       later readback.
 - [ ] Documentation describes current behavior without host-specific paths or
       private-session examples.
+- [ ] The public tree contains no internal plan, demo script, release checklist,
+      handoff, status note, or raw validation record.
 - [ ] Security-sensitive changes include refusal and adversarial tests.
 
 ## Security reports

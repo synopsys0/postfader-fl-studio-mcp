@@ -965,7 +965,7 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_versioned_fixture_fully_resolves_all_19_writes_without_io(self):
         scenario = json.loads(
-            (ROOT / "docs" / "windows-write-scenario-v1.json").read_text(
+            (ROOT / "tests" / "fixtures" / "write-scenario-v1.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -990,7 +990,7 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_mixer_route_restoration_uses_destination_identity_not_position(self):
         scenario = json.loads(
-            (ROOT / "docs" / "windows-write-scenario-v1.json").read_text(
+            (ROOT / "tests" / "fixtures" / "write-scenario-v1.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -1177,7 +1177,7 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_public_fixture_template_is_not_live_eligible(self):
         scenario = json.loads(
-            (ROOT / "docs" / "windows-write-scenario-v1.json").read_text(
+            (ROOT / "tests" / "fixtures" / "write-scenario-v1.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -1248,7 +1248,7 @@ class LiveScriptSafetyTests(unittest.TestCase):
     def test_missing_fixture_status_refuses_before_live_setup_or_async_calls(self):
         module = self.scripts["live_write_acceptance"]
         scenario = json.loads(
-            (ROOT / "docs" / "windows-write-scenario-v1.json").read_text(
+            (ROOT / "tests" / "fixtures" / "write-scenario-v1.json").read_text(
                 encoding="utf-8"
             )
         )

@@ -17,10 +17,8 @@ Consequences:
   copy;
 - the TCP and file-mailbox transports remain useful to deterministic tests but
   are not the production connection; and
-- the v0.13 transport is live-validated as local MIDI SysEx over CoreMIDI/IAC
-  on macOS 27.0 arm64; the Windows release candidate uses the same protocol
-  over an explicitly configured virtual endpoint and awaits supervised live
-  evidence.
+- production communication uses local MIDI SysEx over CoreMIDI/IAC on macOS
+  or an explicitly configured virtual endpoint through WinMM on Windows.
 
 ## Process flags are fixed, but the session write gate can change
 

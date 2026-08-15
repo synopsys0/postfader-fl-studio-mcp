@@ -1,6 +1,7 @@
 ## Public-boundary checklist
 
 - [ ] No real project, audio, preset, screenshot, path, account identifier, or session-derived setting is included.
+- [ ] No internal plan, demo script, release checklist, handoff, status note, or raw validation record is included.
 - [ ] Plug-in matrix changes identify evidence level and source separately and do not describe the matrix as an allowlist.
 - [ ] A write-validated row includes a verified representative move and an independently confirmed exact restore from a blank disposable project.
 - [ ] `python scripts/check_public_tree.py` passes.

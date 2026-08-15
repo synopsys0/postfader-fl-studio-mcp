@@ -321,7 +321,6 @@ projects.
 | [Plug-in support](docs/plugin-support.md) | Effects, generators, parameter scans, option controls, and compatibility evidence |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where Postfader deliberately stops |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, and trust boundaries |
-| [Windows acceptance](docs/windows-acceptance.md) | Supervised Windows 11 x64 live-validation procedure |
 | [Security](SECURITY.md) | Threat model, privacy boundaries, and vulnerability reporting |
 | [Contributing](CONTRIBUTING.md) | Development workflow and contribution guidelines |
 
@@ -338,8 +337,8 @@ Run the safe, hardware-free test suite from the source checkout:
 ~~~
 
 The safe suite prevents real MIDI access even when ambient environment
-variables request it. Live FL Studio acceptance is a separate, supervised
-workflow documented in the setup and Windows acceptance guides.
+variables request it. Any live hardware test must use a blank, unsaved project,
+and its logs, screenshots, and run notes must stay outside the public repository.
 
 ## License
 
