@@ -66,6 +66,11 @@ MAX_CLIENTS = 4
 # chunks of this many tracks and resumed on later ticks.
 TRACKS_PER_TICK = 12
 MIXER_SLOTS = 10
+# FL scripting API 45 reports mixer.trackCount() == 127, but index 126 is the
+# non-addressable Current pseudo-track. API 44 and the documented mixer surface
+# report the 126 real targets directly (Master plus inserts 1..125). Never let
+# the host's sentinel inflate a public count or reach a track-addressed API.
+MAX_ADDRESSABLE_MIXER_TRACKS = 126
 PARAMS_PER_TICK = 64
 CHANNELS_PER_TICK = 8
 # Every plug-in parameter write passes this. FL's default pickup behaviour can
@@ -102,8 +107,35 @@ MAX_PARAM_INDEX_SCAN = 8192
 SYSEX_ID = 0x7D
 TAG_REQUEST = 0x01
 TAG_RESPONSE = 0x02
-SYSEX_CHUNK = 1024
-MAX_SYSEX_PER_TICK = 8
+# Command/result semantics remain bridge protocol 2. MIDI has a separate wire
+# version because v0.13 added correlated responses and changed the frame size;
+# v0.12 is the implicit wire protocol 1.
+LEGACY_MIDI_WIRE_PROTOCOL_VERSION = 1
+MIDI_WIRE_PROTOCOL_VERSION = 2
+MIDI_WIRE_PROTOCOL_FIELD = "midi_wire_protocol_version"
+# RtMidi's Windows MM input backend uses 1,024-byte SysEx buffers by
+# default.  Account for the nine-byte wire header and F7 terminator so a full
+# frame reaches the client intact; 1,000 also leaves modest driver headroom.
+WINMM_SYSEX_BUFFER_BYTES = 1024
+SYSEX_FRAME_OVERHEAD_BYTES = 10
+MIDI_WIRE_SYSEX_CHUNKS = {
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION: 1024,
+    MIDI_WIRE_PROTOCOL_VERSION: 1000,
+}
+MIDI_WIRE_FRAME_BYTES = {
+    version: SYSEX_FRAME_OVERHEAD_BYTES + chunk
+    for version, chunk in MIDI_WIRE_SYSEX_CHUNKS.items()
+}
+SYSEX_CHUNK = MIDI_WIRE_SYSEX_CHUNKS[MIDI_WIRE_PROTOCOL_VERSION]
+# A v0.12 client ignores the new heartbeat field. Accept its larger incoming
+# request frames so old client -> new bridge remains an upgrade-safe direction;
+# all new bridge responses still use the WinMM-safe current chunk size.
+MAX_SYSEX_INPUT_CHUNK = MIDI_WIRE_SYSEX_CHUNKS[
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+# WinMM/virtualMIDI can discard a burst of long SysEx messages even though
+# each individual message is valid. Pace Windows responses one frame per FL
+# idle callback; CoreMIDI retains the already-verified eight-frame window.
+MAX_SYSEX_PER_TICK = 1 if os.name == "nt" else 8
 
 # A request contains only one command and its bounded arguments. Responses can
 # be much larger (a full mixer or de-padded parameter scan), but both directions
@@ -121,13 +153,34 @@ MAX_SYSEX_REQUEST_BYTES = 256 * 1024
 MAX_SYSEX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_SYSEX_REQUEST_PARTS = (
     MAX_SYSEX_REQUEST_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
-MAX_SYSEX_RESPONSE_PARTS = (
+_CURRENT_MIDI_RESPONSE_PARTS = (
     MAX_SYSEX_RESPONSE_BYTES + SYSEX_CHUNK - 1) // SYSEX_CHUNK
-MAX_SYSEX_FRAME_BYTES = 10 + SYSEX_CHUNK
+# A v0.12 receiver permits at most 4,096 response parts. Reducing the current
+# payload from 1,024 to 1,000 bytes must not let a new bridge advertise a total
+# that an old client rejects before reassembly. Keep the rolling-upgrade
+# direction within that published receiver ceiling.
+LEGACY_MIDI_RESPONSE_PART_CEILING = (
+    MAX_SYSEX_RESPONSE_BYTES
+    + MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+    - 1
+) // MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+MAX_SYSEX_RESPONSE_PARTS = min(
+    _CURRENT_MIDI_RESPONSE_PARTS,
+    LEGACY_MIDI_RESPONSE_PART_CEILING,
+)
+MAX_SYSEX_RESPONSE_WIRE_BYTES = min(
+    MAX_SYSEX_RESPONSE_BYTES,
+    MAX_SYSEX_RESPONSE_PARTS * SYSEX_CHUNK,
+)
+MAX_SYSEX_FRAME_BYTES = MIDI_WIRE_FRAME_BYTES[MIDI_WIRE_PROTOCOL_VERSION]
+MAX_SYSEX_INPUT_FRAME_BYTES = MIDI_WIRE_FRAME_BYTES[
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
 MAX_SYSEX_PARTIAL_MESSAGES = 8
 MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_REQUEST_BYTES
 MAX_SYSEX_READY_MESSAGES = 16
 MAX_SYSEX_OUTBOX_FRAMES = MAX_SYSEX_RESPONSE_PARTS + MAX_SYSEX_PER_TICK
+if MAX_SYSEX_FRAME_BYTES > WINMM_SYSEX_BUFFER_BYTES:
+    raise RuntimeError("SysEx framing exceeds the Windows MM input buffer")
 # OnIdle is normally about 50 Hz, making this roughly a ten-second deadline.
 # Tick time is used instead of wall time so the FL callback never depends on a
 # clock call and deterministic tests can advance it directly.
@@ -325,10 +378,21 @@ def _fl_colors_equivalent(left, right):
     )
 
 
+def _mixer_track_count():
+    """Return the count of indices that track-addressed mixer APIs accept."""
+    try:
+        count = int(mixer.trackCount())
+    except Exception as exc:
+        raise ValueError("FL did not report a valid mixer track count") from exc
+    if count < 0:
+        raise ValueError("FL reported a negative mixer track count")
+    return min(count, MAX_ADDRESSABLE_MIXER_TRACKS)
+
+
 def _mixer_track_index(value):
     """Return a valid live mixer index, never a fabricated empty track."""
     index = _strict_integer(value, "mixer track index")
-    count = int(mixer.trackCount())
+    count = _mixer_track_count()
     if index < 0 or index >= count:
         raise ValueError(
             "mixer track index %d is outside the live range 0..%d"
@@ -528,6 +592,7 @@ def cmd_ping(a):
     return {
         "pong": True,
         "protocol": PROTOCOL_VERSION,
+        MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
         "verified_writes_enabled": bool(LEAN_WRITES_ENABLED),
         "fl_version": _safe(lambda: ui.getVersion(), ""),
         # Keep the old key for protocol-1 clients, but name the value accurately
@@ -557,7 +622,7 @@ def cmd_project_info(a):
         "song_length_ms": _safe(lambda: transport.getSongLength(midi.SONGLENGTH_MS), None),
         "loop_mode": _safe(lambda: transport.getLoopMode(), None),
         "ppq": _safe(lambda: general.getRecPPQ(), None),
-        "mixer_track_count": _safe(lambda: mixer.trackCount(), None),
+        "mixer_track_count": _safe(lambda: _mixer_track_count(), None),
         "channel_count": _safe(lambda: channels.channelCount(), None),
         "pattern_count": _safe(lambda: patterns.patternCount(), None),
         "playlist_track_count": _safe(lambda: playlist.trackCount(), None),
@@ -616,7 +681,7 @@ def cmd_mixer_list(a):
     on later idle ticks, which keeps each callback well inside its budget even
     on a full 126-track project.
     """
-    n = mixer.trackCount()
+    n = _mixer_track_count()
     only_used = a.get("only_used", True)
     peaks = a.get("peaks", False)
     limit = a.get("max_tracks")
@@ -658,7 +723,7 @@ def cmd_mixer_track(a):
     t = _track_summary(i, with_slots=True, with_peaks=True)
     t["eq"] = cmd_mixer_eq_get({"track": i})
     routes = []
-    for d in range(mixer.trackCount()):
+    for d in range(_mixer_track_count()):
         if d == i:
             continue
         if _safe(lambda: mixer.getRouteSendActive(i, d), False):
@@ -2665,7 +2730,10 @@ def cmd_channel_route_to_mixer(a):
     destination = a.get("destination")
     if isinstance(destination, bool) or not isinstance(destination, int):
         raise ValueError("destination must be an integer")
-    last_insert = int(mixer.getTrackInfo(midi.TN_LastIns))
+    last_insert = min(
+        int(mixer.getTrackInfo(midi.TN_LastIns)),
+        _mixer_track_count() - 1,
+    )
     if last_insert < 0:
         raise ValueError("FL did not report a valid last mixer insert")
     if destination < -1 or destination > last_insert:
@@ -3071,12 +3139,24 @@ HANDLERS = {
 class _Job:
     """A command that spreads its work over several idle ticks."""
 
-    def __init__(self, handle, rid, gen, cmd):
+    def __init__(self, handle, rid, gen, cmd, client_session=None,
+                 request_token=None):
         self.handle = handle
         self.rid = rid
         self.gen = gen
         self.cmd = cmd
+        self.client_session = client_session
+        self.request_token = request_token
         self.chunks = 0
+
+
+def _correlated(response, client_session=None, request_token=None):
+    """Echo transport correlation without changing legacy command results."""
+    if client_session is not None:
+        response["client_session"] = client_session
+    if request_token is not None:
+        response["request_token"] = request_token
+    return response
 
 
 def _dispatch(req):
@@ -3092,14 +3172,43 @@ def _dispatch(req):
             "error": "bridge request must be a JSON object",
         }
     rid = req.get("id")
-    cmd = req.get("cmd", "")
-    args = req.get("args", {})
-    if not isinstance(args, dict):
+    client_session = req.get("client_session")
+    request_token = req.get("request_token")
+
+    if (client_session is None) != (request_token is None):
         return {
             "id": rid,
             "ok": False,
-            "error": "bridge request args must be a JSON object",
+            "error": "client_session and request_token must be supplied together",
         }
+    if client_session is not None and (
+            not isinstance(client_session, str)
+            or len(client_session) != 32
+            or any(c not in "0123456789abcdef" for c in client_session)):
+        return {"id": rid, "ok": False,
+                "error": "client_session must be 32 lowercase hex characters"}
+    if request_token is not None and (
+            not isinstance(request_token, str)
+            or len(request_token) < 34
+            or len(request_token) > 64
+            or not request_token.startswith(client_session + "-")):
+        return _correlated(
+            {"id": rid, "ok": False,
+             "error": "request_token is invalid for client_session"},
+            client_session,
+        )
+
+    def response(value):
+        return _correlated(value, client_session, request_token)
+
+    cmd = req.get("cmd", "")
+    args = req.get("args", {})
+    if not isinstance(args, dict):
+        return response({
+            "id": rid,
+            "ok": False,
+            "error": "bridge request args must be a JSON object",
+        })
     allowed = READ_ONLY_COMMANDS
     lock_reason = "bridge is locked read-only"
     if LEAN_WRITES_ENABLED:
@@ -3107,24 +3216,31 @@ def _dispatch(req):
         lock_reason = "bridge exposes only read commands plus verified writes"
     available = sorted(allowed)
     if cmd not in allowed:
-        return {
+        return response({
             "id": rid,
             "ok": False,
             "error": "%s; command %r is prohibited" % (lock_reason, cmd),
             "available": available,
-        }
+        })
     handler = HANDLERS.get(cmd)
     if handler is None:
-        return {"id": rid, "ok": False, "error": "unknown command %r" % cmd,
-                "available": available}
+        return response(
+            {"id": rid, "ok": False, "error": "unknown command %r" % cmd,
+             "available": available}
+        )
     try:
         result = handler(args)
         if isinstance(result, types.GeneratorType):
-            return _Job(None, rid, result, cmd)
-        return {"id": rid, "ok": True, "result": result}
+            return _Job(
+                None, rid, result, cmd, client_session, request_token
+            )
+        return response({"id": rid, "ok": True, "result": result})
     except Exception as e:
-        return {"id": rid, "ok": False, "error": "%s: %s" % (type(e).__name__, e),
-                "trace": traceback.format_exc(limit=6)}
+        return response(
+            {"id": rid, "ok": False,
+             "error": "%s: %s" % (type(e).__name__, e),
+             "trace": traceback.format_exc(limit=6)}
+        )
 
 
 def _advance_jobs():
@@ -3144,20 +3260,32 @@ def _advance_jobs():
         _jobs.append(job)
     except StopIteration as e:
         value = e.value if e.value is not None else {}
-        _queue(job.handle, {"id": job.rid, "ok": True, "result": value})
+        _queue(job.handle, _correlated(
+            {"id": job.rid, "ok": True, "result": value},
+            job.client_session,
+            job.request_token,
+        ))
     except Exception as e:
-        _queue(job.handle, {
+        _queue(job.handle, _correlated({
             "id": job.rid, "ok": False,
             "error": "%s: %s" % (type(e).__name__, e),
-            "trace": traceback.format_exc(limit=6)})
+            "trace": traceback.format_exc(limit=6)},
+            job.client_session,
+            job.request_token,
+        ))
 
 
 def _queue(handle, resp):
     try:
         json.dumps(resp, default=str)
     except Exception as e:
-        resp = {"id": resp.get("id"), "ok": False,
-                "error": "unserialisable result: %s" % e}
+        source = resp if isinstance(resp, dict) else {}
+        resp = _correlated(
+            {"id": source.get("id"), "ok": False,
+             "error": "unserialisable result: %s" % e},
+            source.get("client_session"),
+            source.get("request_token"),
+        )
     _transport.respond(handle, resp)
 
 
@@ -3468,8 +3596,12 @@ class _MidiTransport:
         return "MIDI SysEx"
 
     def _hello(self):
-        return json.dumps({"hello": True, "protocol": PROTOCOL_VERSION,
-                           "transport": self.name})
+        return json.dumps({
+            "hello": True,
+            "protocol": PROTOCOL_VERSION,
+            MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
+            "transport": self.name,
+        })
 
     def close(self):
         self.partial = {}
@@ -3498,7 +3630,7 @@ class _MidiTransport:
     def feed(self, data):
         """Called from OnSysEx with the raw bytes of one message."""
         self._expire_partial()
-        if (len(data) < 10 or len(data) > MAX_SYSEX_FRAME_BYTES
+        if (len(data) < 10 or len(data) > MAX_SYSEX_INPUT_FRAME_BYTES
                 or data[0] != 0xF0 or data[1] != SYSEX_ID):
             return
         if data[2] != TAG_REQUEST:
@@ -3568,8 +3700,12 @@ class _MidiTransport:
                                "error": "SysEx request must be a JSON object"})
             return
         if len(self.ready) >= MAX_SYSEX_READY_MESSAGES:
-            self.respond(mid, {"id": request.get("id"), "ok": False,
-                               "error": "bridge MIDI request queue is full"})
+            self.respond(mid, _correlated(
+                {"id": request.get("id"), "ok": False,
+                 "error": "bridge MIDI request queue is full"},
+                request.get("client_session"),
+                request.get("request_token"),
+            ))
             return
         self.ready.append((mid, request))
 
@@ -3585,16 +3721,27 @@ class _MidiTransport:
 
     def respond(self, handle, resp):
         text = json.dumps(resp, default=str)
-        if len(text) > MAX_SYSEX_RESPONSE_BYTES:
-            rid = resp.get("id") if isinstance(resp, dict) else None
-            text = json.dumps({
-                "id": rid,
-                "ok": False,
-                "error": "bridge response exceeds the MIDI size limit",
-            })
+        if len(text) > MAX_SYSEX_RESPONSE_WIRE_BYTES:
+            source = resp if isinstance(resp, dict) else {}
+            text = json.dumps(_correlated(
+                {
+                    "id": source.get("id"),
+                    "ok": False,
+                    "error": (
+                        "bridge response exceeds the MIDI size limit "
+                        "compatible with v0.12 receivers"
+                    ),
+                },
+                source.get("client_session"),
+                source.get("request_token"),
+            ))
         chunks = [text[i:i + SYSEX_CHUNK]
                   for i in range(0, len(text), SYSEX_CHUNK)] or [""]
         self._send(TAG_RESPONSE, handle, chunks)
+
+    def abandon_pending_responses(self):
+        """Drop frames for a requester that no longer owns the MIDI bus."""
+        self.outbox = []
 
     def _send(self, tag, mid, chunks):
         total = len(chunks)
@@ -3672,6 +3819,23 @@ _transport = _NullTransport()
 
 def _pump():
     for handle, req in _transport.poll():
+        if (
+            getattr(_transport, "name", None) == "midi"
+            and isinstance(req, dict)
+            and req.get("client_session") is not None
+            and req.get("request_token") is not None
+        ):
+            # The native endpoint ownership lock serializes MIDI clients. A
+            # new correlated request means any older job/reply was abandoned
+            # by a timed-out or exited process. Do not let that old response
+            # collide with the successor's 14-bit wire ID.
+            for abandoned in list(_jobs):
+                try:
+                    abandoned.gen.close()
+                except Exception:
+                    pass
+            del _jobs[:]
+            _transport.abandon_pending_responses()
         resp = _dispatch(req)
         if isinstance(resp, _Job):
             if len(_jobs) >= MAX_PENDING_JOBS:
@@ -3679,11 +3843,15 @@ def _pump():
                     resp.gen.close()
                 except Exception:
                     pass
-                _queue(handle, {
-                    "id": resp.rid,
-                    "ok": False,
-                    "error": "bridge command queue is full",
-                })
+                _queue(handle, _correlated(
+                    {
+                        "id": resp.rid,
+                        "ok": False,
+                        "error": "bridge command queue is full",
+                    },
+                    resp.client_session,
+                    resp.request_token,
+                ))
             else:
                 resp.handle = handle
                 _jobs.append(resp)  # first chunk runs on the next tick

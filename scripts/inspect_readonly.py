@@ -10,27 +10,41 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VENV = os.path.join(ROOT, ".venv")
-VENV_PYTHON = os.path.join(VENV, "bin", "python")
-if (
-    os.path.isfile(VENV_PYTHON)
-    and os.path.realpath(sys.prefix) != os.path.realpath(VENV)
-):
-    os.execv(VENV_PYTHON, [VENV_PYTHON, *sys.argv])
-os.environ.setdefault("FL_BRIDGE_ENABLE_MIDI", "1")
-sys.path.insert(0, ROOT)
-
-from fl_studio_mcp.bridge_client import BridgeError  # noqa: E402
-from fl_studio_mcp.readonly_inspector import (  # noqa: E402
-    IncompatibleFLStudio,
-    ReadOnlyInspector,
+ROOT = Path(__file__).resolve().parents[1]
+VENV = ROOT / ".venv"
+VENV_PYTHON = next(
+    (
+        candidate
+        for candidate in (VENV / "Scripts" / "python.exe", VENV / "bin" / "python")
+        if candidate.is_file()
+    ),
+    None,
 )
+if (
+    VENV_PYTHON is not None
+    and Path(sys.prefix).resolve() != VENV.resolve()
+):
+    command = [os.fspath(VENV_PYTHON), *sys.argv]
+    if os.name == "nt":
+        # CPython's Windows exec emulation can misquote a spaced executable
+        # path (notably with the Microsoft Store launcher).  A direct,
+        # shell-free child preserves the arguments and inherited stdio.
+        raise SystemExit(subprocess.call(command))
+    os.execv(command[0], command)
+sys.path.insert(0, os.fspath(ROOT))
+
+def _midi_port_name(value: str) -> str:
+    query = value.strip()
+    if not query:
+        raise argparse.ArgumentTypeError("must not be empty")
+    return query
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Inspect a running FL Studio 2026 session without changing it."
     )
@@ -75,11 +89,28 @@ def parse_args() -> argparse.Namespace:
         metavar="1..64",
         help="Maximum loaded plug-ins to preview (default: 16).",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--midi-port",
+        type=_midi_port_name,
+        help=(
+            "exact virtual MIDI endpoint name; required on Windows unless "
+            "FL_BRIDGE_MIDI_PORT is already set"
+        ),
+    )
+    return parser.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    os.environ["FL_BRIDGE_ENABLE_MIDI"] = "1"
+    if args.midi_port is not None:
+        os.environ["FL_BRIDGE_MIDI_PORT"] = args.midi_port
+    from fl_studio_mcp.bridge_client import BridgeError
+    from fl_studio_mcp.readonly_inspector import (
+        IncompatibleFLStudio,
+        ReadOnlyInspector,
+    )
+
     inspector = ReadOnlyInspector()
     try:
         if args.capabilities:

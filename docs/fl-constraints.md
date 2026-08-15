@@ -17,7 +17,9 @@ Consequences:
   copy;
 - the TCP and file-mailbox transports remain useful to deterministic tests but
   are not the production connection; and
-- the operational macOS transport is local MIDI SysEx over CoreMIDI/IAC.
+- the validated macOS transport is local MIDI SysEx over CoreMIDI/IAC; the
+  Windows release candidate uses the same protocol over an explicitly
+  configured virtual endpoint and awaits supervised live evidence.
 
 ## Mode flags are fixed when FL Studio loads the script
 

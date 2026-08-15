@@ -1708,7 +1708,7 @@ async def audio_find_recent_bounces(
 
 
 USAGE = """\
-Postfader - unofficial local MCP server for FL Studio 2026 (macOS)
+Postfader - unofficial local MCP server for FL Studio 2026
 
 Usage:
   fl-studio-mcp              Serve the Model Context Protocol over stdio.
@@ -1716,26 +1716,22 @@ Usage:
   fl-studio-mcp --version    Print the version.
 
 This command speaks MCP on stdin/stdout and is meant to be launched by an MCP
-client, not run interactively -- on its own it will appear to hang, because it
-is waiting for a client to say something. Register it with your client instead,
-using the absolute path to this interpreter. For Claude Code, registering it at
-user scope makes it available in every project rather than only in the
-connector's own checkout:
+client, not run interactively -- on its own it will appear to hang while it
+waits for a client. Register it using absolute interpreter and checkout paths.
+From a source checkout, generate a Codex command, Codex TOML, or Claude JSON:
 
-  claude mcp add fl-studio --scope user --env FL_BRIDGE_ENABLE_MIDI=1 --
-      /absolute/path/to/postfader-fl-studio-mcp/.venv/bin/python
-      -m fl_studio_mcp.mcp_server
+  python scripts/generate_mcp_config.py --help
 
-(one line; wrapped here to fit. --scope user is the part that matters: a
-project-scoped entry only loads inside its own directory.)
+The generator keeps automatic local-file mode read-only by default. Select
+--transport midi and provide --midi-port only after configuring the same exact
+virtual endpoint in FL Studio. Postfader never installs a virtual MIDI driver.
 
 Writes are off unless FL Studio itself was launched with
 FL_BRIDGE_ENABLE_WRITES=1.
 
-Setup checks (scripts/doctor.py, scripts/inspect_readonly.py) live in the
-source repository, not in the installed package, because they configure and
-probe a local FL Studio install rather than serve MCP. Clone the repository to
-use them: https://github.com/synopsys0/postfader-fl-studio-mcp
+Use postfader-doctor (or scripts/doctor.py from a checkout) for setup evidence.
+The supervised acceptance harnesses and native Windows bootstrap live in the
+source repository: https://github.com/synopsys0/postfader-fl-studio-mcp
 """
 
 

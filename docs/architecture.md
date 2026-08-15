@@ -14,7 +14,7 @@ fl_studio_mcp/mcp_server.py
         ├── verified_writer.py ────┤
         ├── performance.py ──────┼── bridge_client.py
         │                          │        │
-        │                          │        │ local MIDI SysEx over CoreMIDI/IAC
+        │                          │        │ local SysEx over a configured virtual MIDI endpoint
         │                          │        ▼
         │                          └── device_UniversalBridge.py
         │                                   │ FL Studio MIDI scripting API
@@ -86,12 +86,15 @@ plausible-looking result.
 `fl_studio_mcp/bridge_client.py` supports TCP and file-mailbox transports for
 testing, then local MIDI SysEx for the production FL Studio connection. On the
 validated macOS host, FL Studio's embedded interpreter can use neither sockets
-nor files, so CoreMIDI/IAC is the operational transport.
+nor files, so CoreMIDI/IAC is the retained operational path. Windows uses the
+same SysEx protocol over a user-configured virtual endpoint; live Windows
+validation remains a supervised release-candidate gate.
 
-The client takes an exclusive local process lock for the resolved IAC port and
-reports the owning PID when a second client tries to connect. This prevents
-accidental duplicate ownership; it does not authenticate messages on the
-shared MIDI bus.
+The client takes an exclusive per-user process lock for the resolved endpoint
+pair and reports the owning PID when a second client tries to connect. POSIX
+uses advisory locking in `/tmp`; Windows uses a byte-range lock under
+`LOCALAPPDATA`. This prevents accidental duplicate ownership; it does not
+authenticate messages on the shared MIDI bus.
 
 After an ambiguous transport failure, a command is replayed at most once and
 only if it is independently classified as read-only. A write with a lost

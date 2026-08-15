@@ -147,10 +147,10 @@ def _load_bridge_read_only():
 def _load_bridge_client():
     """Load fl_studio_mcp/bridge_client.py straight off disk.
 
-    By path, not as a package import: this suite puts tests/fakefl on sys.path
-    so the bridge finds stub FL modules, and nothing here should risk pulling
-    the connector package in under that shadowing. The client module itself
-    imports only the standard library.
+    By path, not as a normal connector import: this suite puts tests/fakefl on
+    sys.path so the bridge finds stub FL modules. The client now shares the
+    standard-library-only host_config module, so expose the repository root
+    only while that dependency is resolved.
     """
     import importlib.util
 
@@ -158,7 +158,11 @@ def _load_bridge_client():
     spec = importlib.util.spec_from_file_location(
         "fl_bridge_client_under_test", path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, ROOT)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(ROOT)
     return module
 
 
@@ -1457,6 +1461,68 @@ def check_track_b():
         check("absolute song position verifies after a yield",
               r["ok"] and yields == 1 and r["result"]["verified"]
               and r["result"]["after"] == 0.375, (r, yields))
+        # FL stores the playhead on its absolute-tick grid even when
+        # setSongPos receives a normalized float.  A 959-tick fixture makes
+        # normalized 0.5 land exactly half-way between ticks; FL chooses tick
+        # 480, whose normalized readback is 480/959.  Keep the API's caller-
+        # supplied tolerance honest and prove that this short reviewed fixture
+        # needs an explicit grid-sized tolerance rather than a looser global
+        # default.
+        real_set_song_position = fake_transport.setSongPos
+        real_song_length_ticks = _state.SONG_LENGTH_TICKS
+
+        def quantized_song_position(position, mode=-1):
+            length = _state.SONG_LENGTH_TICKS
+            if mode == 2:
+                tick = int(float(position))
+            else:
+                tick = int(float(position) * length + 0.5)
+            _state.SONG_POS = tick / float(length)
+
+        fake_transport.setSongPos = quantized_song_position
+        _state.SONG_LENGTH_TICKS = 959
+        representable_before = 288.0 / 959.0
+        quantized_half = 480.0 / 959.0
+        try:
+            _state.SONG_POS = representable_before
+            grid_aware, yields = drive(
+                w, "transport.set_song_position", position=0.5,
+                tolerance=0.001,
+                expected_before={
+                    "song_position_normalized": representable_before
+                },
+            )
+            check("explicit short-song tolerance accepts nearest FL tick",
+                  grid_aware["ok"] and yields == 1
+                  and grid_aware["result"]["verified"]
+                  and grid_aware["result"]["after"] == quantized_half
+                  and grid_aware["result"]["after"] - 0.5 > 0.0001,
+                  (grid_aware, yields))
+
+            _state.SONG_POS = representable_before
+            too_strict, yields = drive(
+                w, "transport.set_song_position", position=0.5,
+                tolerance=0.0001,
+            )
+            check("default tolerance still reports half-tick miss honestly",
+                  too_strict["ok"] and yields == 1
+                  and not too_strict["result"]["verified"]
+                  and too_strict["result"]["after"] == quantized_half,
+                  (too_strict, yields))
+
+            restored, yields = drive(
+                w, "transport.set_song_position",
+                position=representable_before, tolerance=0.0001,
+            )
+            check("captured representable position still restores exactly",
+                  restored["ok"] and yields == 1
+                  and restored["result"]["verified"]
+                  and restored["result"]["after"] == representable_before,
+                  (restored, yields))
+        finally:
+            fake_transport.setSongPos = real_set_song_position
+            _state.SONG_LENGTH_TICKS = real_song_length_ticks
+            _state.SONG_POS = 0.375
         r, yields = drive(
             w, "transport.set_loop_mode", loop_mode="song",
             expected_before={"loop_mode": "pattern"}
@@ -2144,6 +2210,138 @@ def check_track_b():
             setattr(fake_plugins, name, function)
 
 
+def check_mixer_count_sentinel(c):
+    """API 45's 127th pseudo-track must never reach track-addressed calls."""
+    import channels as fake_channels
+    import mixer as fake_mixer
+    import plugins as fake_plugins
+
+    saved = {
+        "track_count": fake_mixer.trackCount,
+        "track_summary": bridge._track_summary,
+        "route_active": fake_mixer.getRouteSendActive,
+        "track_info": fake_mixer.getTrackInfo,
+        "set_volume": fake_mixer.setTrackVolume,
+        "set_route": fake_mixer.setRouteTo,
+        "plugin_valid": fake_plugins.isValid,
+        "set_target": fake_channels.setTargetFxTrack,
+    }
+    summary_indices = []
+    route_indices = []
+    write_indices = []
+    plugin_indices = []
+    channel_destinations = []
+
+    def track_summary(index, *args, **kwargs):
+        summary_indices.append(index)
+        if index == 126:
+            raise AssertionError("non-addressable mixer pseudo-track was scanned")
+        return saved["track_summary"](index, *args, **kwargs)
+
+    def route_active(source, destination):
+        route_indices.append((source, destination))
+        if source == 126 or destination == 126:
+            raise AssertionError("non-addressable mixer pseudo-track was routed")
+        return saved["route_active"](source, destination)
+
+    def set_volume(index, *args, **kwargs):
+        write_indices.append(("volume", index))
+        return saved["set_volume"](index, *args, **kwargs)
+
+    def set_route(source, destination, *args, **kwargs):
+        write_indices.append(("route_source", source))
+        write_indices.append(("route_destination", destination))
+        return saved["set_route"](source, destination, *args, **kwargs)
+
+    def plugin_valid(index, *args, **kwargs):
+        plugin_indices.append(index)
+        return saved["plugin_valid"](index, *args, **kwargs)
+
+    def set_target(channel, destination, *args, **kwargs):
+        channel_destinations.append(destination)
+        return saved["set_target"](channel, destination, *args, **kwargs)
+
+    fake_mixer.trackCount = lambda: 127
+    fake_mixer.getTrackInfo = lambda _mode: 126
+    bridge._track_summary = track_summary
+    fake_mixer.getRouteSendActive = route_active
+    fake_mixer.setTrackVolume = set_volume
+    fake_mixer.setRouteTo = set_route
+    fake_plugins.isValid = plugin_valid
+    fake_channels.setTargetFxTrack = set_target
+    try:
+        print("\n-- API 45 mixer count sentinel is never addressable --")
+        info = c.call("project.info")
+        listing = c.call("mixer.list", only_used=False)
+        detail = c.call("mixer.track", track=3)
+        rejected_read = c.call("mixer.track", track=126)
+
+        check("API 45 public mixer count is normalized to 126",
+              info["ok"] and info["result"]["mixer_track_count"] == 126,
+              info)
+        check("API 45 full mixer listing stops at index 125",
+              listing["ok"]
+              and listing["result"]["track_count"] == 126
+              and listing["result"]["scanned"] == 126
+              and len(listing["result"]["tracks"]) == 126
+              and listing["result"]["tracks"][-1]["index"] == 125,
+              listing.get("result"))
+        check("API 45 detail route scan stops at index 125",
+              detail["ok"]
+              and route_indices
+              and max(destination for _source, destination in route_indices) == 125,
+              route_indices[-4:])
+        check("pseudo-track 126 is rejected before track summary APIs",
+              not rejected_read["ok"] and 126 not in summary_indices,
+              (rejected_read, summary_indices[-4:]))
+
+        w = _load_bridge_with_writes()
+        undo_before = list(_state.UNDO)
+        invalid_writes = (
+            dispatch(w, "mixer.set_volume", track=126, value=0.5),
+            dispatch(
+                w, "plugin.set_param", track=126, slot=0,
+                index=0, value=0.5
+            ),
+            dispatch(
+                w, "mixer.set_send", track=3, to=126, enabled=True
+            ),
+            dispatch(
+                w, "channel.route_to_mixer", channel=1,
+                index_scope="global", destination=126
+            ),
+        )
+        check("every write path rejects pseudo-track 126 before FL APIs",
+              all(not response["ok"] for response in invalid_writes)
+              and all(index != 126 for _kind, index in write_indices)
+              and 126 not in plugin_indices
+              and 126 not in channel_destinations
+              and _state.UNDO == undo_before,
+              (invalid_writes, write_indices, plugin_indices,
+               channel_destinations, _state.UNDO))
+
+        # The normalizer is a ceiling, not a hard-coded public count. Smaller
+        # projects/older hosts retain the exact lower count they report.
+        fake_mixer.trackCount = lambda: 12
+        lower_info = c.call("project.info")
+        lower_list = c.call("mixer.list", only_used=False)
+        check("lower mixer counts remain unchanged",
+              lower_info["result"]["mixer_track_count"] == 12
+              and lower_list["result"]["track_count"] == 12
+              and lower_list["result"]["scanned"] == 12
+              and len(lower_list["result"]["tracks"]) == 12,
+              (lower_info, lower_list))
+    finally:
+        fake_mixer.trackCount = saved["track_count"]
+        bridge._track_summary = saved["track_summary"]
+        fake_mixer.getRouteSendActive = saved["route_active"]
+        fake_mixer.getTrackInfo = saved["track_info"]
+        fake_mixer.setTrackVolume = saved["set_volume"]
+        fake_mixer.setRouteTo = saved["set_route"]
+        fake_plugins.isValid = saved["plugin_valid"]
+        fake_channels.setTargetFxTrack = saved["set_target"]
+
+
 def main():
     _state.reset()
     check_source_is_ascii()
@@ -2206,6 +2404,8 @@ def main():
     r = c.call("mixer.list", only_used=False)
     check("only_used=False returns all", len(r["result"]["tracks"]) == 126,
           len(r["result"]["tracks"]))
+
+    check_mixer_count_sentinel(c)
 
     print("\n-- only_used ignores FL's default track names --")
     # FL names every empty mixer track "Insert N", so treating any name as a

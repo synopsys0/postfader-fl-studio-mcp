@@ -35,6 +35,7 @@ FORBIDDEN_DIRECTORY_NAMES = {
     ".claude",
     ".fl-studio-mcp-locks",
     ".idea",
+    ".private",
     ".pytest_cache",
     ".vscode",
     "__pycache__",
@@ -87,7 +88,7 @@ CONTENT_PATTERNS = (
     ("absolute Linux home path", re.compile(_pieces(b"/", b"home", b"/") + rb"[^/\s]+/")),
     (
         "absolute Windows home path",
-        re.compile(rb"[A-Za-z]:\\" + _pieces(b"Users", b"\\") + rb"[^\\\s]+\\", re.I),
+        re.compile(rb"[A-Za-z]:[\\/]Users[\\/][^\\/\s]+[\\/]", re.I),
     ),
     (
         "private key material",

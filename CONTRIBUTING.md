@@ -17,8 +17,25 @@ python3 -m venv .venv
 ./.venv/bin/python scripts/run_safe_tests.py
 ```
 
-Use Python 3.10 or newer on macOS. The production bridge is currently
-macOS-only because it uses CoreMIDI/IAC.
+On Windows PowerShell, create the development environment without contacting
+FL Studio or deploying a controller script:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install --editable '.[dev]'
+.\.venv\Scripts\python.exe scripts\run_safe_tests.py
+```
+
+Use `scripts\install.ps1` separately only when intentionally preparing a live
+Windows FL Studio integration; that path requires FL to have created its
+`Settings\Hardware` directory.
+
+Use Python 3.10 or newer. The macOS path uses CoreMIDI/IAC; the Windows path
+uses an explicitly selected virtual endpoint through WinMM and remains a
+release candidate until the supervised checklist passes. The retained macOS
+v0.12 evidence must also be rerun for the v0.13 MIDI wire changes before that
+release is tagged.
 
 ## Public-content rule
 
@@ -64,6 +81,7 @@ Generate a read-only report with the installed command:
 
 ```bash
 postfader-plugin-report \
+  --midi-port "Exact Endpoint Name" \
   --track 3 --slot 1 \
   --plugin-version 2.1 \
   --plugin-origin third-party \
@@ -106,10 +124,11 @@ It runs an explicit allowlist against fake transports, a fake FL API, and
 synthetic audio. A test that exits successfully without reporting any checks
 is treated as a failure.
 
-`tests/test_midi_transport.py` is excluded because it touches the real shared
-IAC bus. Live FL Studio validation is optional, must use a new blank disposable
-project, and must never commit the project, audio, screenshots, paths, or raw
-output it produces.
+`tests/test_midi_transport.py` is excluded because it touches a real shared
+MIDI endpoint. Live FL Studio validation is optional on macOS. Windows support
+claims require the supervised `docs/windows-acceptance.md` gate; use a new
+blank disposable project and never commit the project, audio, screenshots,
+paths, or raw output it produces.
 
 If a live result changes a documented constraint, reduce it to the smallest
 generic fake-API regression test and describe only the technical behavior in
@@ -165,6 +184,8 @@ search.
 - [ ] The change contains no user project, user audio, private path, secret, or
       session-derived material.
 - [ ] The safe suite passes from a clean clone.
+- [ ] Platform/setup changes cover both PowerShell/Windows and shell/macOS
+      behavior, or clearly document why one host is unaffected.
 - [ ] The public-tree check passes.
 - [ ] Bridge changes remain ASCII-only and within the tick budget.
 - [ ] New mutations are off by default, narrowly allowlisted, and verified by

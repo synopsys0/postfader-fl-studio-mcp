@@ -5,11 +5,14 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -23,6 +26,7 @@ from fl_studio_mcp.plugin_report import (  # noqa: E402
     render_public_markdown,
     validate_representative_write,
 )
+from fl_studio_mcp import plugin_report  # noqa: E402
 
 
 COMPLETE_SCAN = {
@@ -436,6 +440,70 @@ class WriteValidationTests(unittest.TestCase):
 
 
 class OfflineCliTests(unittest.TestCase):
+    def test_live_entry_sets_transport_intent_before_bridge_import(self):
+        source = r"""
+import os
+import sys
+import types
+
+os.environ.pop('FL_BRIDGE_ENABLE_MIDI', None)
+import fl_studio_mcp.plugin_report as report
+assert 'fl_studio_mcp.bridge_client' not in sys.modules
+assert 'fl_studio_mcp.readonly_inspector' not in sys.modules
+
+fake_bridge = types.ModuleType('fl_studio_mcp.bridge_client')
+def stop_after_import_order_proof():
+    assert os.environ['FL_BRIDGE_ENABLE_MIDI'] == '1'
+    assert os.environ['FL_BRIDGE_MIDI_PORT'] == 'Exact Fixture Port'
+    raise RuntimeError('transport intent established before bridge import')
+fake_bridge.get_client = stop_after_import_order_proof
+
+fake_readonly = types.ModuleType('fl_studio_mcp.readonly_inspector')
+fake_readonly.IncompatibleFLStudio = RuntimeError
+fake_readonly.ReadOnlyGateway = object
+fake_readonly.ReadOnlyInspector = object
+sys.modules['fl_studio_mcp.bridge_client'] = fake_bridge
+sys.modules['fl_studio_mcp.readonly_inspector'] = fake_readonly
+
+code = report.main([
+    '--track', '1', '--slot', '0', '--midi-port', 'Exact Fixture Port'
+])
+assert code == 1
+assert os.environ['FL_BRIDGE_ENABLE_MIDI'] == '1'
+assert os.environ['FL_BRIDGE_MIDI_PORT'] == 'Exact Fixture Port'
+"""
+        environment = os.environ.copy()
+        environment.pop("FL_BRIDGE_ENABLE_MIDI", None)
+        environment["FL_BRIDGE_SANDBOXED"] = "1"
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", source],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode, 0, completed.stdout + completed.stderr
+        )
+
+    def test_windows_platform_is_preserved_in_public_evidence(self):
+        with (
+            mock.patch.object(plugin_report.platform, "system", return_value="Windows"),
+            mock.patch.object(plugin_report.platform, "machine", return_value="AMD64"),
+        ):
+            self.assertEqual(plugin_report._safe_platform(), "Windows x86_64")
+
+    def test_midi_port_is_rejected_for_offline_json_reduction(self):
+        with self.assertRaises(SystemExit):
+            main([
+                "--from-json",
+                "unused.json",
+                "--midi-port",
+                "Must Not Open",
+            ])
+
     def test_help_defines_community_candidate_status(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
