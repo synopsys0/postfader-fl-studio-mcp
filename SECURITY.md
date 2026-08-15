@@ -119,20 +119,33 @@ the loopback interface.
 
 ## Write boundary
 
-Read-only mode is the default. The narrowly allowlisted mutation commands are added to
-the bridge's active allowlist only when the FL Studio process starts with:
+Read-only mode is the default. The narrowly allowlisted mutation commands can
+be added to the current bridge session by the single
+`session.set_write_mode` control. Its public MCP tool is
+`fl_set_write_mode`; enabling requires literal `confirm_user_present=true`
+after an explicit request from the present user.
+
+The mode transition requires matching bridge-source provenance and the current
+bridge-lifetime session fingerprint. The host performs a second handshake and
+does not report success unless the bridge independently confirms the requested
+state. The setting is in memory only, never stored in the project or client
+configuration. Disabling needs no positive confirmation and refuses while an
+earlier mutation outcome is still in flight.
+
+The legacy startup compatibility path remains available:
 
 ```bash
 FL_BRIDGE_ENABLE_WRITES=1 open -a "FL Studio 2026"
 ```
 
-On Windows, use `scripts\launch_fl_studio.ps1 -EnableWrites`; it gives the flag
-only to the new FL Studio child process. Never put this flag in MCP client
-configuration on either host.
+On Windows, `scripts\launch_fl_studio.ps1 -EnableWrites` gives the flag only to
+the new FL Studio child process. Ordinary use does not need either startup
+path. Never put this flag in MCP client configuration on either host.
 
-Write tools apply immediately and do not perform a second confirmation
-round-trip. Readback reports whether FL Studio appeared to move the target; it
-does not provide rollback, audible validation, or a guaranteed undo point.
+Individual write tools apply immediately and do not perform another
+confirmation round-trip after the capability is enabled. Readback reports
+whether FL Studio appeared to move the target; it does not provide rollback,
+audible validation, or a guaranteed undo point.
 Mixer track 0 is refused unless explicitly authorized with `allow_master`.
 The bridge never calls `saveProject`, but FL Studio or the user can later save
 the changed project.
@@ -152,7 +165,8 @@ observation-scoped because FL exposes no durable channel UUID.
 
 Use write mode only on a copy or disposable project until the workflow is
 trusted. Do not invoke it while recording. Launch FL Studio normally to return
-to read-only mode.
+to read-only mode, reload a normally started bridge, or ask the client to
+disable write mode in the current session.
 
 ## Local file access
 
@@ -183,6 +197,7 @@ The safe test suite checks important boundaries, including:
 
 - strict MCP argument and result schemas;
 - read-only and write-command allowlists;
+- explicit, session-only, post-handshake-verified write-mode control;
 - explicit Master targeting;
 - fail-closed bridge-source provenance for mutations while reads warn;
 - bridge-side session, before-state, channel-identity, and step-digest guards;

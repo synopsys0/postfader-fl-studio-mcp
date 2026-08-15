@@ -543,6 +543,11 @@ class WriteAcceptanceTests(unittest.TestCase):
         self.assertFalse(report["project_saved"])
         self.assertNotIn("fl_trigger_note", self.surface.persistent_write_tools)
         self.assertIn("fl_trigger_note", self.surface.ephemeral_tools)
+        self.assertNotIn("fl_set_write_mode", self.surface.persistent_write_tools)
+        self.assertEqual(
+            self.surface.session_control_tools,
+            ("fl_set_write_mode",),
+        )
 
     def test_required_confirmations_refuse_before_preflight_or_writes(self):
         calls = []

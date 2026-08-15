@@ -210,7 +210,29 @@ success.
 
 ## 6. Read-only and write-mode operation
 
-The normal FL launch is read-only. On Windows:
+The normal FL launch is read-only. Start FL Studio normally, connect the AI
+client, and ask it:
+
+```text
+Enable write mode for this session.
+```
+
+The client calls `fl_set_write_mode(enabled=true,
+confirm_user_present=true)`. Enabling requires that explicit present-user
+request, matching bridge provenance, runtime-control support, and the current
+session fingerprint. A second handshake must then confirm all of:
+
+- `bridge_mode="write_test"`;
+- `verified_writes_enabled=true`; and
+- `write_mode_origin="runtime_request"`.
+
+No project value is changed or saved by the mode transition, and FL Studio
+does not restart. Ask the client to disable write mode when finished. A normal
+new FL process starts read-only, and a bridge reload also resets to the process
+startup default.
+
+The Windows launcher remains useful for finding FL Studio and starting it
+normally:
 
 ```powershell
 .\scripts\launch_fl_studio.ps1 -DryRun
@@ -219,19 +241,23 @@ The normal FL launch is read-only. On Windows:
 
 The launcher discovers or accepts an absolute FL executable, refuses a real
 launch if any FL process is already running, and restores its own process
-environment after child creation. For supervised disposable-project tests:
+environment after child creation.
+
+The legacy startup opt-in remains available for backward-compatible supervised
+harnesses:
 
 ```powershell
 .\scripts\launch_fl_studio.ps1 -EnableWrites
 ```
 
-On macOS, quit FL Studio and use:
+On macOS its equivalent is:
 
 ```bash
 FL_BRIDGE_ENABLE_WRITES=1 open -a 'FL Studio 2026'
 ```
 
-The bridge reads the flag only when FL loads the script. Never place
+The bridge reads that legacy flag only when FL loads the script. It is no
+longer required for ordinary AI-client use. Never place
 `FL_BRIDGE_ENABLE_WRITES` in MCP configuration.
 
 ## 7. Supervised live acceptance
@@ -259,9 +285,9 @@ macOS:
 
 The v0.13 MIDI wire protocol completed this fresh regression on macOS 27.0
 arm64 with FL Studio 2026 Producer Edition 26.1.3 build 5336 and MIDI scripting
-API 44. The procedure below is the reproducible release check. It uses the
-exact IAC bus and private outputs, runs reads with FL in normal read-only mode,
-then relaunches only a reviewed disposable project with writes enabled:
+API 44. The procedure below is the reproducible full mutation check. It uses
+the exact IAC bus and private outputs, runs reads with FL in normal read-only
+mode, then enables writes only for a reviewed disposable-project session:
 
 ```bash
 PORT='IAC Driver Bus 1'
@@ -277,8 +303,9 @@ cp docs/windows-write-scenario-v1.json .private/macos-write-scenario-reviewed.js
 ```
 
 The release gate requires command protocol 2 and MIDI wire protocol 2 in the
-doctor, every read passing, every persistent write independently restored, a
-live-note dispatch receipt, and a final restart proving read-only mode. Each
+doctor, the runtime mode transition proven by a post-transition handshake,
+every read passing, every persistent write independently restored, a live-note
+dispatch receipt, and a final ordinary session proving read-only mode. Each
 output path is create-only, so use a new name for every rerun.
 
 The read harness derives the read surface from actual MCP annotations and
@@ -353,8 +380,10 @@ by the doctor. Postfader refuses ambiguity before lock/open.
 reported PID is local ownership evidence, not authentication.
 
 **Writes are refused.** Check the live handshake. It must report
-`bridge_mode=write_test` and `verified_writes_enabled=true`; otherwise quit and
-relaunch FL in write mode.
+`runtime_write_mode_control=true` and matching bridge provenance. Ask the
+connected client to enable write mode and approve its capability-change prompt.
+Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
+`write_mode_origin=runtime_request`.
 
 **A write is unverified.** Do not retry automatically. Inspect before/after,
 verification detail, warnings, and the project itself.
@@ -366,7 +395,7 @@ verification detail, warnings, and the project itself.
 | `FL_STUDIO_USER_DATA_DIR` | Absolute FL user-data directory. Relative values are rejected. |
 | `FL_BRIDGE_ENABLE_MIDI` | `1` allows construction of native MIDI transport. |
 | `FL_BRIDGE_MIDI_PORT` | Exact endpoint query; required on Windows for native MIDI. |
-| `FL_BRIDGE_ENABLE_WRITES` | FL process only: exposes persistent/live mutations at script load. |
+| `FL_BRIDGE_ENABLE_WRITES` | Legacy FL-process startup opt-in. Ordinary clients use the session-only `fl_set_write_mode` tool instead. |
 | `FL_BRIDGE_SANDBOXED` | `1` forbids native MIDI enumeration/open and live handshake. |
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |

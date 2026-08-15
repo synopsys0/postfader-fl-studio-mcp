@@ -20,6 +20,11 @@ sys.path.insert(0, ROOT)
 
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
+from fl_studio_mcp.bridge_install import expected_bridge_deployment  # noqa: E402
+
+# The installed bridge carries this stamp. The source-tree fixture has the
+# installer placeholder, so inject the digest a real installation reports.
+bridge.BRIDGE_SOURCE_SHA256 = expected_bridge_deployment()[1]
 
 # No deterministic process may contact the production bridge port.  The
 # kernel-selected listener is passed explicitly to the child MCP process.
@@ -57,6 +62,7 @@ WRITE_TOOLS = {
     "fl_set_step_sequence",
 }
 EPHEMERAL_TOOLS = {"fl_trigger_note"}
+MODE_TOOLS = {"fl_set_write_mode"}
 EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_get_capabilities",
     "fl_get_project_summary",
@@ -71,6 +77,7 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_list_channels",
     "fl_get_step_sequence",
     *EPHEMERAL_TOOLS,
+    *MODE_TOOLS,
     # File measurement, not FL control.
     "audio_analyze_file",
     "audio_compare_files",
@@ -253,7 +260,7 @@ async def run():
                     and tool.annotations.read_only_hint
                     and tool.annotations.destructive_hint is False
                     for tool in tools
-                    if tool.name not in WRITE_TOOLS | EPHEMERAL_TOOLS
+                    if tool.name not in WRITE_TOOLS | EPHEMERAL_TOOLS | MODE_TOOLS
                 ),
             )
             check(
@@ -277,6 +284,17 @@ async def run():
                     and tool.annotations.idempotent_hint is False
                     for tool in tools
                     if tool.name in EPHEMERAL_TOOLS
+                ),
+            )
+            check(
+                "write-mode control is destructive capability change and idempotent",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is True
+                    for tool in tools
+                    if tool.name in MODE_TOOLS
                 ),
             )
             by_name = {tool.name: tool for tool in tools}
@@ -403,10 +421,9 @@ async def run():
             )
             check("capture declares read-only mode", report["mode"] == "read_only", report)
 
-            # This bridge is pumped in-process without FL_BRIDGE_ENABLE_WRITES,
-            # so it reports bridge_mode="read_only". Every write tool must
-            # refuse over the wire by naming the flag, rather than surfacing a
-            # raw dispatch rejection or, worse, changing anything.
+            # This bridge starts read-only. Every project write must refuse
+            # over the wire by naming the user-confirmed mode tool, rather than
+            # surfacing a raw dispatch rejection or changing anything.
             for name, arguments in WRITE_CALLS.items():
                 refusal = await session.call_tool(name, arguments)
                 text = " ".join(
@@ -415,9 +432,10 @@ async def run():
                     if getattr(block, "type", None) == "text"
                 )
                 check(
-                    "%s refused without the write flag" % name,
+                    "%s refused before write mode was enabled" % name,
                     bool(getattr(refusal, "is_error", False))
-                    and "FL_BRIDGE_ENABLE_WRITES=1" in text,
+                    and "fl_set_write_mode" in text
+                    and "confirm_user_present=true" in text,
                     text,
                 )
                 rejected = await session.call_tool(name, dict(arguments, nudge_by=0.1))
@@ -426,6 +444,65 @@ async def run():
                     bool(getattr(rejected, "is_error", False)),
                     rejected,
                 )
+
+            state_before_mode = fingerprint()
+            unconfirmed = await session.call_tool(
+                "fl_set_write_mode",
+                {"enabled": True},
+            )
+            check(
+                "runtime enable refuses without explicit user confirmation",
+                bool(getattr(unconfirmed, "is_error", False))
+                and "confirm_user_present=true" in " ".join(
+                    block.text
+                    for block in unconfirmed.content
+                    if getattr(block, "type", None) == "text"
+                ),
+                unconfirmed,
+            )
+            enabled = payload(
+                await session.call_tool(
+                    "fl_set_write_mode",
+                    {"enabled": True, "confirm_user_present": True},
+                )
+            )
+            check(
+                "MCP enables writes in the current bridge session",
+                enabled["verified"] is True
+                and enabled["before_enabled"] is False
+                and enabled["after_enabled"] is True
+                and enabled["bridge_mode"] == "write_test"
+                and enabled["session_only"] is True,
+                enabled,
+            )
+            disabled = payload(
+                await session.call_tool(
+                    "fl_set_write_mode",
+                    {"enabled": False},
+                )
+            )
+            check(
+                "MCP locks the same session again without positive confirmation",
+                disabled["verified"] is True
+                and disabled["before_enabled"] is True
+                and disabled["after_enabled"] is False
+                and disabled["bridge_mode"] == "read_only",
+                disabled,
+            )
+            rejected_mode_argument = await session.call_tool(
+                "fl_set_write_mode",
+                {"enabled": True, "confirm_user_present": True, "forever": True},
+            )
+            check(
+                "mode tool rejects unknown input",
+                bool(getattr(rejected_mode_argument, "is_error", False)),
+                rejected_mode_argument,
+            )
+            check(
+                "mode transitions did not touch project, undo, or save state",
+                state_before_mode == fingerprint(),
+                (state_before_mode, fingerprint()),
+            )
 
     check("end-to-end session did not mutate FL state", before == fingerprint())
 

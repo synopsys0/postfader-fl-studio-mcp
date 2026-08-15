@@ -1277,7 +1277,7 @@ class BridgeClient:
         `truncated` before treating the map as the whole plug-in: a bounded
         scan says so rather than looking complete.
 
-        A read. It needs no write flag, and is replay-safe on a dropped
+        A read. It needs no write mode, and is replay-safe on a dropped
         reply, which matters most here because it is the long call.
         """
         args: dict = {"track": track, "slot": slot}
@@ -1290,8 +1290,8 @@ class BridgeClient:
 
     # -- lean verified writes -------------------------------------------
     #
-    # These reach the bridge only when FL was launched with
-    # FL_BRIDGE_ENABLE_WRITES=1; otherwise the bridge rejects them and `call`
+    # These reach the bridge only while its current session reports verified
+    # write mode; otherwise the bridge rejects them and `call`
     # raises BridgeError. Each returns the bridge's verification dict
     # unchanged - {requested, before, after, verified} plus context - and a
     # verified=False result is a real answer, not a failure: FL accepted the

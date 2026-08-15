@@ -155,8 +155,9 @@ CURRENT_PATTERN_ONLY_WARNING = (
 
 WRITES_DISABLED_HELP = (
     "This FL Studio bridge cannot apply Track B mutations: it reports "
-    "bridge_mode={mode!r} and verified_writes_enabled={enabled!r}. Relaunch FL "
-    "Studio with FL_BRIDGE_ENABLE_WRITES=1 and reload the Universal Bridge."
+    "bridge_mode={mode!r} and verified_writes_enabled={enabled!r}. Ask the "
+    "connected AI client to call fl_set_write_mode with enabled=true and "
+    "confirm_user_present=true after the user explicitly requests write access."
 )
 
 

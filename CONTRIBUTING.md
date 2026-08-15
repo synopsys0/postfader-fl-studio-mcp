@@ -150,7 +150,7 @@ Changes to it must preserve these properties:
 - no background-thread access to the FL Studio API;
 - bounded work per idle tick;
 - read-only mode by default;
-- separate allowlists for read and verified-write commands;
+- separate allowlists for reads, session capability control, and verified-write commands;
 - no `saveProject` call;
 - no automatic replay of a write after an ambiguous transport failure; and
 - later-tick readback for every public write.
@@ -161,7 +161,7 @@ run the complete safe suite.
 ## MCP surface changes
 
 The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the current public surface contains 36 tools. Preserve
+`fl-studio`, and the current public surface contains 37 tools. Preserve
 existing names and response contracts unless a deliberate compatibility change
 has been discussed.
 

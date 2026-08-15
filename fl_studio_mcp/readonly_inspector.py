@@ -226,7 +226,28 @@ def connection_from_ping(
     # Only a literal true from the bridge enables the write tools. A missing
     # or non-boolean field means an older bridge that cannot dispatch them.
     writes_enabled = ping.get("verified_writes_enabled") is True and bridge_mode == "write_test"
+    runtime_write_mode_control = ping.get("runtime_write_mode_control") is True
+    startup_value = ping.get("startup_write_mode_enabled")
+    startup_write_mode_enabled = (
+        startup_value if type(startup_value) is bool else None
+    )
+    reported_origin = ping.get("write_mode_origin")
+    write_mode_origin = (
+        reported_origin
+        if reported_origin in {"disabled", "startup_environment", "runtime_request"}
+        else "legacy_unknown"
+    )
     warnings: list[str] = []
+    if runtime_write_mode_control and write_mode_origin == "legacy_unknown":
+        warnings.append(
+            "The running bridge advertises runtime write-mode control but did not "
+            "report a valid mode origin; runtime mode changes will refuse."
+        )
+    if runtime_write_mode_control and startup_write_mode_enabled is None:
+        warnings.append(
+            "The running bridge advertises runtime write-mode control but did not "
+            "report its startup default; runtime mode changes will refuse."
+        )
 
     reported_digest_value = ping.get("bridge_source_sha256")
     reported_digest = (
@@ -351,6 +372,9 @@ def connection_from_ping(
         bridge_mode=bridge_mode,
         bridge_read_only_enforced=protocol is not None and protocol >= 2 and bridge_mode == "read_only",
         verified_writes_enabled=writes_enabled,
+        runtime_write_mode_control=runtime_write_mode_control,
+        write_mode_origin=write_mode_origin,
+        startup_write_mode_enabled=startup_write_mode_enabled,
         bridge_source_sha256=reported_digest,
         expected_bridge_source_sha256=expected_digest,
         bridge_provenance=bridge_provenance,

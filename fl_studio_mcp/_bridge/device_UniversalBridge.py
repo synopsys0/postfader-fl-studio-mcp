@@ -6,7 +6,8 @@ Universal Bridge - FL Studio MIDI Controller Script.
 
 Exposes a narrow FL Studio scripting surface to an external MCP server. The
 bridge is locked read-only by default. A small, readback-verified write surface
-can be turned on with FL_BRIDGE_ENABLE_WRITES=1.
+can be enabled for the current bridge session by an explicit, user-confirmed
+control request. FL_BRIDGE_ENABLE_WRITES=1 remains a startup compatibility path.
 
 Design constraints this file works within:
 
@@ -212,10 +213,15 @@ SESSION_FINGERPRINT = "%016x%016x" % (
 
 # The bounded mutation surface: persistent commands read FL back after a later
 # idle tick, while live-note dispatch reports only note-on/note-off delivery.
-# It is off unless FL is launched with this flag. Setting it never enables
-# anything outside the twenty explicit command names below.
-LEAN_WRITES_ENABLED = (
+# It is off unless FL is launched with this flag or a user-confirmed runtime
+# control request enables it. Neither path enables anything outside the twenty
+# explicit command names below.
+STARTUP_WRITES_ENABLED = (
     os.environ.get("FL_BRIDGE_ENABLE_WRITES", "").strip() == "1"
+)
+LEAN_WRITES_ENABLED = STARTUP_WRITES_ENABLED
+WRITE_MODE_ORIGIN = (
+    "startup_environment" if STARTUP_WRITES_ENABLED else "disabled"
 )
 READ_ONLY_COMMANDS = frozenset({
     "ping",
@@ -229,6 +235,9 @@ READ_ONLY_COMMANDS = frozenset({
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
+})
+SESSION_CONTROL_COMMANDS = frozenset({
+    "session.set_write_mode",
 })
 LEAN_WRITE_COMMANDS = frozenset({
     "mixer.set_volume",
@@ -594,6 +603,9 @@ def cmd_ping(a):
         "protocol": PROTOCOL_VERSION,
         MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
         "verified_writes_enabled": bool(LEAN_WRITES_ENABLED),
+        "runtime_write_mode_control": True,
+        "write_mode_origin": WRITE_MODE_ORIGIN,
+        "startup_write_mode_enabled": bool(STARTUP_WRITES_ENABLED),
         "fl_version": _safe(lambda: ui.getVersion(), ""),
         # Keep the old key for protocol-1 clients, but name the value accurately
         # for new clients: this is the MIDI scripting API version, not the FL
@@ -605,6 +617,71 @@ def cmd_ping(a):
         "bridge_source_sha256": BRIDGE_SOURCE_SHA256,
         "session_fingerprint": SESSION_FINGERPRINT,
         "program_title": _safe(lambda: ui.getProgTitle(), ""),
+    }
+
+
+def cmd_session_set_write_mode(a):
+    """Set the bounded write surface for this loaded bridge session only."""
+    global LEAN_WRITES_ENABLED, WRITE_MODE_ORIGIN
+
+    allowed = {
+        "enabled",
+        "confirm_user_present",
+        "session_fingerprint",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "session.set_write_mode received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+
+    enabled = _lean_bool(a, "enabled")
+    confirmed = _lean_bool(a, "confirm_user_present")
+    session = a.get("session_fingerprint")
+    if not isinstance(session, str) or session != SESSION_FINGERPRINT:
+        raise ValueError(
+            "session precondition failed: the bridge was reloaded or the "
+            "fingerprint is invalid; read the connection state again"
+        )
+    if enabled and not confirmed:
+        raise ValueError(
+            "enabling write mode requires confirm_user_present=true from an "
+            "explicit user request"
+        )
+
+    # A long-running write may already have touched FL and still be waiting for
+    # its later-idle-tick readback. Do not claim the gate is closed until that
+    # command has completed and reported its outcome.
+    pending_mutations = sorted({
+        job.cmd for job in _jobs if job.cmd in LEAN_WRITE_COMMANDS
+    })
+    if not enabled and pending_mutations:
+        raise ValueError(
+            "cannot disable write mode while mutation commands are still in "
+            "flight: %s; wait for them to finish and try again"
+            % ", ".join(pending_mutations)
+        )
+
+    before = bool(LEAN_WRITES_ENABLED)
+    LEAN_WRITES_ENABLED = enabled
+    WRITE_MODE_ORIGIN = "runtime_request" if enabled else "disabled"
+    return {
+        "command": "session.set_write_mode",
+        "requested_enabled": enabled,
+        "before_enabled": before,
+        "after_enabled": bool(LEAN_WRITES_ENABLED),
+        "changed": before != bool(LEAN_WRITES_ENABLED),
+        "bridge_mode": "write_test" if LEAN_WRITES_ENABLED else "read_only",
+        "write_mode_origin": WRITE_MODE_ORIGIN,
+        "runtime_write_mode_control": True,
+        "confirmation_required": enabled,
+        "confirmation_applied": enabled and confirmed,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": True,
+        "session_only": True,
+        "startup_default_enabled": bool(STARTUP_WRITES_ENABLED),
+        "project_saved": False,
     }
 
 
@@ -1139,7 +1216,7 @@ def cmd_channels_list(a):
 
 
 # ---------------------------------------------------------------------------
-# lean verified write surface (FL_BRIDGE_ENABLE_WRITES=1)
+# lean verified write surface (current bridge session write gate)
 #
 # Bounded commands, each changing one narrowly scoped state or dispatching one
 # live note. Persistent changes read FL back to say what actually happened.
@@ -3098,6 +3175,7 @@ def cmd_channel_trigger_note(a):
 
 HANDLERS = {
     "ping": cmd_ping,
+    "session.set_write_mode": cmd_session_set_write_mode,
     "project.info": cmd_project_info,
     "arrangement.selection": cmd_arrangement_selection,
     "mixer.list": cmd_mixer_list,
@@ -3107,8 +3185,8 @@ HANDLERS = {
     "transport.set_song_position": cmd_transport_set_song_position,
     "transport.set_loop_mode": cmd_transport_set_loop_mode,
     "transport.set_tempo": cmd_transport_set_tempo,
-    # The lean verified write surface; reachable only with
-    # FL_BRIDGE_ENABLE_WRITES=1, see LEAN_WRITE_COMMANDS in _dispatch.
+    # The lean verified write surface; reachable only while the bridge session
+    # reports write_test mode, see LEAN_WRITE_COMMANDS in _dispatch.
     "mixer.set_volume": cmd_mixer_set_volume,
     "mixer.set_pan": cmd_mixer_set_pan,
     "mixer.set_mute": cmd_mixer_set_mute,
@@ -3204,11 +3282,14 @@ def _dispatch(req):
             "ok": False,
             "error": "bridge request args must be a JSON object",
         })
-    allowed = READ_ONLY_COMMANDS
+    allowed = READ_ONLY_COMMANDS | SESSION_CONTROL_COMMANDS
     lock_reason = "bridge is locked read-only"
     if LEAN_WRITES_ENABLED:
         allowed = allowed | LEAN_WRITE_COMMANDS
-        lock_reason = "bridge exposes only read commands plus verified writes"
+        lock_reason = (
+            "bridge exposes only read commands, session control, and verified "
+            "writes"
+        )
     available = sorted(allowed)
     if cmd not in allowed:
         return response({

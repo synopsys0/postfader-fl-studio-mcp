@@ -1,6 +1,6 @@
 # Tool and command reference
 
-Postfader exposes 36 MCP tools. The MCP layer is the supported
+Postfader exposes 37 MCP tools. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
@@ -10,7 +10,8 @@ annotated read-only. Nineteen absolute state tools are annotated mutating,
 destructive, and non-idempotent because repeating a call can add undo history
 and parameter searches can perform transient writes. `fl_trigger_note` is also
 mutating and non-idempotent, but non-destructive; it returns a bounded dispatch
-receipt rather than claiming state verification.
+receipt rather than claiming state verification. `fl_set_write_mode` is a
+destructive capability change but an idempotent, session-only absolute state.
 
 ## Inspection tools
 
@@ -54,13 +55,39 @@ accepts optional `start`, exclusive `end`, `max_indices` up to 8,192, and
 `max_results`. Check its `truncated` field before treating the response as a
 complete control map.
 
+## Session write-mode control
+
+`fl_set_write_mode` exposes or locks the bounded project-write tools without
+restarting FL Studio. Its arguments are:
+
+| Argument | Meaning |
+| --- | --- |
+| `enabled` | Absolute session state: `true` enables the bounded write surface; `false` locks it. |
+| `confirm_user_present` | Must be literal `true` when enabling, after the present user explicitly requested the capability change. It defaults to `false` and is not required when disabling. |
+
+Before enabling, the host requires a compatible running bridge, a matching
+stamped source hash, runtime-control support, and a valid live session
+fingerprint. The bridge checks that fingerprint and confirmation again. The
+host then performs a second handshake and reports success only if that new
+handshake confirms `bridge_mode="write_test"`,
+`verified_writes_enabled=true`, and `write_mode_origin="runtime_request"`.
+
+The result records before/after state, whether it changed, the session
+fingerprint, confirmation proof, startup default, `session_only: true`,
+`project_saved: false`, and
+`verification_basis="post_transition_bridge_handshake"`. Disabling reports
+the corresponding read-only handshake. A normal FL Studio process or bridge
+reload starts read-only again unless the legacy startup environment opt-in was
+used for that FL process.
+
 ## Write tools
 
 State writes are available only when the live bridge reports
 `verified_writes_enabled: true` and its stamped source SHA-256 matches the
 bridge packaged with the server. Each tool changes one target, yields to a
 later FL Studio idle tick, reads the target back, and returns a verdict. There
-is no MCP-level confirmation round-trip and no automatic rollback.
+is no per-write MCP confirmation round-trip and no automatic rollback. Ask the
+client to enable the session first with `fl_set_write_mode`.
 
 Every state tool accepts an optional bridge-lifetime `session_fingerprint` and
 a typed `expected_before`, except `fl_set_step_sequence`, whose required
@@ -215,7 +242,9 @@ reported count as proof that an index is a meaningful control.
 
 | Refusal | Meaning |
 | --- | --- |
-| `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface. Relaunch FL Studio with `FL_BRIDGE_ENABLE_WRITES=1`. |
+| `WriteModeConfirmationRequired` | Enabling was requested without literal `confirm_user_present=true` from an explicit present-user request. |
+| `WriteModeUnavailable` | Provenance, runtime-control support, session identity, command metadata, or the post-transition handshake did not safely prove the requested capability state. |
+| `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface. Ask the client to call `fl_set_write_mode(enabled=true, confirm_user_present=true)`. |
 | `TrackBMutationsUnavailable` | A Track B mutation is disabled, the bridge provenance does not match, or a supplied session changed before dispatch. |
 | `IncompatibleFLStudio` | The live handshake failed the FL Studio version, program-title, MIDI API, or bridge-protocol gate. |
 | `ValueError` | A value is out of range, a multi-field call names no field to change, a route/current-pattern/digest/precondition is invalid, a plug-in selector is ambiguous, or mixer track 0 lacks explicit authorization. |
@@ -252,11 +281,12 @@ hidden entries and directory symlinks, and bounds both depth and work.
 
 The MCP server maps its tools to these local protocol commands.
 
-### Always available
+### Available in every mode
 
 | Command | Arguments | Returns |
 | --- | --- | --- |
-| `ping` | none | Protocol, FL Studio and MIDI API versions, bridge mode, write availability, source hash, and program title. |
+| `ping` | none | Protocol, FL Studio and MIDI API versions, bridge mode, runtime-control support, write availability and origin, source hash, session fingerprint, and program title. |
+| `session.set_write_mode` | absolute `enabled`, literal user-present confirmation, and current session fingerprint | Session-only before/after capability state; no project value is changed. |
 | `project.info` | none | Project metadata, counts, transport, dirty state, and undo tokens. |
 | `arrangement.selection` | none | Raw endpoints read twice with PPQ and time hints. |
 | `mixer.list` | `only_used`, `include_peaks`, optional `max_tracks` | Mixer tracks with levels, routes, and effect slots. |
