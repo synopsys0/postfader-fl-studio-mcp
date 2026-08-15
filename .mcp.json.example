@@ -1,11 +1,13 @@
 {
   "mcpServers": {
     "fl-studio": {
-      "command": "./.venv/bin/python",
+      "command": "ABSOLUTE_PATH_TO_PYTHON",
       "args": ["-m", "fl_studio_mcp.mcp_server"],
-      "cwd": ".",
+      "cwd": "ABSOLUTE_PATH_TO_POSTFADER_CHECKOUT",
       "env": {
-        "FL_BRIDGE_ENABLE_MIDI": "1"
+        "FL_BRIDGE_ENABLE_MIDI": "1",
+        "FL_BRIDGE_MIDI_PORT": "EXACT_VIRTUAL_MIDI_ENDPOINT_NAME",
+        "FL_STUDIO_USER_DATA_DIR": "ABSOLUTE_PATH_TO_FL_STUDIO_USER_DATA"
       }
     }
   }

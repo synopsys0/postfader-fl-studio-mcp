@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from .bridge_client import BridgeError, get_client
 from .bridge_install import BridgeInstallError, expected_bridge_deployment
+from .host_config import platform_family
 from .contracts import (
     CapabilitiesReport,
     CapabilityEvidence,
@@ -551,7 +552,19 @@ class ReadOnlyInspector:
                         else CapabilityStatus.UNVALIDATED
                     )
                 ),
-                access_path="MIDI script OnSysEx/device.midiOutSysex over CoreMIDI IAC",
+                access_path=(
+                    "MIDI script OnSysEx/device.midiOutSysex over CoreMIDI IAC"
+                    if platform_family() == "macos"
+                    else (
+                        "MIDI script OnSysEx/device.midiOutSysex over a "
+                        "configured virtual MIDI endpoint through WinMM"
+                        if platform_family() == "windows"
+                        else (
+                            "MIDI script OnSysEx/device.midiOutSysex over a "
+                            "configured virtual MIDI endpoint"
+                        )
+                    )
+                ),
                 limitations=["Local MIDI traffic is not authenticated in Phase 1."],
                 evidence=[
                     CapabilityEvidence(

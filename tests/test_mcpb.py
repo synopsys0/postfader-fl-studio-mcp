@@ -7,8 +7,11 @@ import ast
 import importlib.util
 import json
 import sys
+import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from unittest import mock
 
 try:
     import tomllib
@@ -20,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+import build_mcpb  # noqa: E402
 from build_mcpb import MCPB_NPM_PACKAGE  # noqa: E402
 from check_mcpb_bundle import inspect_bundle  # noqa: E402
 from sync_mcpb_manifest import discover_tools  # noqa: E402
@@ -42,7 +46,38 @@ class MCPBPackagingTests(unittest.TestCase):
             config["args"],
             ["run", "--directory", "${__dirname}", "mcpb_entry.py"],
         )
-        self.assertEqual(config["env"], {"FL_BRIDGE_ENABLE_MIDI": "1"})
+        self.assertEqual(
+            config["env"],
+            {
+                "FL_BRIDGE_ENABLE_MIDI": "1",
+                "FL_BRIDGE_MIDI_PORT": "${user_config.midi_port}",
+                "FL_STUDIO_USER_DATA_DIR": (
+                    "${user_config.fl_studio_user_data_dir}"
+                ),
+            },
+        )
+
+    def test_manifest_prompts_for_host_specific_paths_and_endpoint(self) -> None:
+        config = self.manifest["user_config"]
+        self.assertEqual(config["midi_port"]["type"], "string")
+        self.assertTrue(config["midi_port"]["required"])
+        self.assertIn("exact", config["midi_port"]["description"].lower())
+        self.assertEqual(config["fl_studio_user_data_dir"]["type"], "directory")
+        self.assertTrue(config["fl_studio_user_data_dir"]["required"])
+        self.assertIn("${DOCUMENTS}", config["fl_studio_user_data_dir"]["default"])
+
+    def test_manifest_explains_the_required_host_installation(self) -> None:
+        guidance = self.manifest["long_description"].lower()
+        self.assertIn("matching python package", guidance)
+        self.assertIn("postfader-install-bridge", guidance)
+        self.assertIn(".mcpb does not deploy", guidance)
+        self.assertIn("virtual midi endpoint", guidance)
+
+    def test_manifest_declares_macos_and_windows(self) -> None:
+        self.assertEqual(
+            self.manifest["compatibility"]["platforms"],
+            ["darwin", "win32"],
+        )
 
     def test_manifest_version_matches_python_package(self) -> None:
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -107,6 +142,61 @@ class MCPBPackagingTests(unittest.TestCase):
         self.assertRegex(MCPB_NPM_PACKAGE, r"^@anthropic-ai/mcpb@\d+\.\d+\.\d+$")
         self.assertEqual(MCPB_NPM_PACKAGE, "@anthropic-ai/mcpb@2.1.2")
 
+    def test_windows_cmd_path_found_by_preflight_is_executed_exactly(self) -> None:
+        resolved = r"C:\bundled node\npx.cmd"
+        with mock.patch.object(build_mcpb.shutil, "which", return_value=resolved):
+            version, command_prefix = build_mcpb._preflight()
+        self.assertEqual(version, self.manifest["version"])
+        self.assertEqual(
+            command_prefix,
+            (
+                resolved,
+                "--yes",
+                f"--package={MCPB_NPM_PACKAGE}",
+                "mcpb",
+            ),
+        )
+
+        with mock.patch.object(build_mcpb.subprocess, "run") as run:
+            build_mcpb._run_cli(command_prefix, "validate", "manifest.json")
+        command = run.call_args.args[0]
+        self.assertEqual(command[0], resolved)
+        self.assertEqual(command[-2:], ["validate", "manifest.json"])
+        self.assertFalse(run.call_args.kwargs.get("shell", False))
+
+    def test_pnpm_is_a_shell_free_fallback_with_the_same_exact_pin(self) -> None:
+        resolved = r"C:\bundled node\pnpm.cmd"
+
+        def find(name: str):
+            return resolved if name == "pnpm.cmd" else None
+
+        with mock.patch.object(build_mcpb.shutil, "which", side_effect=find):
+            command_prefix = build_mcpb._resolve_cli()
+        self.assertEqual(
+            command_prefix,
+            (resolved, "dlx", MCPB_NPM_PACKAGE),
+        )
+
+        with mock.patch.object(build_mcpb.subprocess, "run") as run:
+            build_mcpb._run_cli(command_prefix, "pack", ".", r"C:\out dir\x.mcpb")
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                resolved,
+                "dlx",
+                MCPB_NPM_PACKAGE,
+                "pack",
+                ".",
+                r"C:\out dir\x.mcpb",
+            ],
+        )
+        self.assertFalse(run.call_args.kwargs.get("shell", False))
+
+    def test_preflight_fails_when_no_supported_package_runner_exists(self) -> None:
+        with mock.patch.object(build_mcpb.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "npx or pnpm"):
+                build_mcpb._resolve_cli()
+
     def test_ignore_file_blocks_secrets_and_user_media(self) -> None:
         patterns = {
             line.strip()
@@ -116,6 +206,7 @@ class MCPBPackagingTests(unittest.TestCase):
         for required in (
             ".git/",
             ".github/",
+            ".private/",
             ".mcp.json",
             ".env",
             "tests/",
@@ -125,6 +216,27 @@ class MCPBPackagingTests(unittest.TestCase):
             "*.mcpb",
         ):
             self.assertIn(required, patterns)
+
+    def test_forged_bundle_with_private_member_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="postfader-forged-mcpb-") as raw:
+            bundle = Path(raw) / "forged.mcpb"
+            with zipfile.ZipFile(bundle, "w") as archive:
+                for required in sorted(
+                    {
+                        "mcpb_entry.py",
+                        "pyproject.toml",
+                        "fl_studio_mcp/mcp_server.py",
+                        "fl_studio_mcp/_bridge/device_UniversalBridge.py",
+                    }
+                ):
+                    archive.writestr(required, "fixture")
+                archive.writestr(
+                    "manifest.json",
+                    (ROOT / "manifest.json").read_text(encoding="utf-8"),
+                )
+                archive.writestr(".private/host-report.md", "must not ship")
+            failures = inspect_bundle(bundle)
+        self.assertTrue(any(".private/host-report.md" in item for item in failures))
 
     def test_missing_bundle_fails_inspection(self) -> None:
         failures = inspect_bundle(ROOT / "does-not-exist.mcpb")

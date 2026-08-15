@@ -1,8 +1,11 @@
 # Security policy
 
-Postfader is a macOS-only beta intended for a trusted, single-user
-workstation. It is not designed as a remote service, a multi-user control
-plane, or a security boundary between mutually untrusted local processes.
+Postfader is intended for a trusted, single-user macOS or Windows workstation.
+The Windows 11 x64 path remains a release candidate until its supervised live
+acceptance gate passes; v0.13 also requires a fresh macOS live smoke because it
+changes MIDI framing/correlation beyond the retained v0.12 evidence. Postfader
+is not designed as a remote service, a multi-user control plane, or a security
+boundary between mutually untrusted local processes.
 
 ## Supported versions
 
@@ -11,9 +14,9 @@ release. Until a stable release line exists, only the latest public version is
 supported.
 
 The runtime compatibility gate requires FL Studio 2026 version 26.1.3 build
-5336 or newer, MIDI scripting API 44 or newer, and a supported bridge protocol.
-This is an interoperability gate, not a guarantee about FL Studio's own
-security.
+5336 or newer, MIDI scripting API 44 or newer, and supported bridge command
+and MIDI wire protocols. This is an interoperability gate, not a guarantee
+about FL Studio's own security.
 
 ## Reporting a vulnerability
 
@@ -24,7 +27,7 @@ a public issue.
 Include:
 
 - the affected revision or release;
-- macOS, Python, and FL Studio versions;
+- host operating system/architecture, Python, and FL Studio versions;
 - whether the bridge was read-only or write-enabled;
 - the smallest synthetic reproduction you can provide; and
 - the expected and observed security boundary.
@@ -39,12 +42,15 @@ The intended deployment contains four components:
 
 1. a trusted local MCP client;
 2. the local stdio MCP server;
-3. a shared local CoreMIDI/IAC bus; and
+3. a shared local virtual MIDI endpoint, carried by CoreMIDI/IAC on macOS or
+   WinMM on Windows; and
 4. the FL Studio MIDI controller script.
 
 The server and bridge implement no hosted service and no telemetry. Test
 transports can use loopback or a local file mailbox; production FL Studio
-communication on macOS uses MIDI SysEx over IAC.
+communication uses MIDI SysEx over the explicitly selected virtual endpoint.
+Postfader does not install, configure, authenticate, or endorse a virtual MIDI
+provider.
 
 The MCP client is outside this repository's trust boundary. It may send tool
 arguments and results to a remote model provider. Those results can include
@@ -73,10 +79,12 @@ synthetic signals, not recordings, and they are not installed by the package.
 
 ## MIDI transport
 
-CoreMIDI/IAC is local but shared and unauthenticated. The connector's exclusive
-lock prevents accidental duplicate ownership by cooperating client processes;
-it does not authenticate the sender or protect against another local process
-with MIDI access.
+The configured virtual endpoint is local but shared and unauthenticated.
+CoreMIDI/IAC carries it on macOS and WinMM carries it on Windows. The
+connector's exclusive lock prevents accidental duplicate ownership by
+cooperating client processes; it does not authenticate the sender, secure the
+third-party endpoint provider, or protect against another local process with
+MIDI access.
 
 Every SysEx frame, assembled request or response, incomplete-message pool, and
 bridge queue has a hard size or count ceiling. Fragments must use a consistent
@@ -85,19 +93,29 @@ messages expire after roughly ten seconds. The client accepts response fragments
 only for its current serialized request ID, plus the small heartbeat on ID zero.
 Malformed or excess traffic is discarded rather than retained indefinitely.
 
-The MIDI transport is opt-in. It is constructed only when `FL_BRIDGE_ENABLE_MIDI=1`
-is set for the process, so a process that has not asked for MIDI never opens
-the shared bus. Every supported entry point sets it; omitting it is how a
-caller says "this process must not touch the IAC bus."
+Bridge command protocol 2 and MIDI wire protocol 2 are separate compatibility
+facts. The current client refuses the implicit v0.12 wire protocol 1 before its
+first ordinary MIDI request because those 1,024-byte payload chunks can exceed
+WinMM's default SysEx input buffer after framing overhead. Upgrade the package
+and deploy/reload its matching FL script before reconnecting; do not operate a
+mixed-version bridge/client pair.
 
-A process that cannot open CoreMIDI at all — a CI runner, an automation
-harness, anything without the entitlement — should set `FL_BRIDGE_SANDBOXED=1`.
-The transport then reports itself unavailable rather than attempting a native
-CoreMIDI client, which can abort the interpreter from C++ instead of raising.
+The MIDI transport is opt-in. It is constructed only when
+`FL_BRIDGE_ENABLE_MIDI=1` is set for the process, so a process that has not
+asked for MIDI never opens the shared endpoint. Supported live entry points
+set it before importing the transport. Windows additionally requires an exact
+`FL_BRIDGE_MIDI_PORT` selection; macOS retains the `IAC Driver` query default.
+Omitting the opt-in is how a caller says this process must not touch native
+MIDI.
 
-Do not run the bridge on an untrusted shared Mac. Close other software that may
-write to the selected IAC bus, and do not expose test transports beyond the
-loopback interface.
+A process that must not open native MIDI — including a CI runner or automation
+harness — should set `FL_BRIDGE_SANDBOXED=1`. The transport then reports itself
+unavailable rather than entering CoreMIDI or WinMM through native code, which
+can abort the interpreter instead of raising a Python exception.
+
+Do not run the bridge on an untrusted shared host. Close other software that
+may write to the selected endpoint, and do not expose test transports beyond
+the loopback interface.
 
 ## Write boundary
 
@@ -107,6 +125,10 @@ the bridge's active allowlist only when the FL Studio process starts with:
 ```bash
 FL_BRIDGE_ENABLE_WRITES=1 open -a "FL Studio 2026"
 ```
+
+On Windows, use `scripts\launch_fl_studio.ps1 -EnableWrites`; it gives the flag
+only to the new FL Studio child process. Never put this flag in MCP client
+configuration on either host.
 
 Write tools apply immediately and do not perform a second confirmation
 round-trip. Readback reports whether FL Studio appeared to move the target; it
@@ -180,8 +202,14 @@ Run it with:
 ./.venv/bin/python scripts/run_safe_tests.py
 ```
 
-Tests reduce risk but do not make a write reversible or make the shared IAC bus
-authenticated.
+or on Windows:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_safe_tests.py
+```
+
+Tests reduce risk but do not make a write reversible or make the shared virtual
+MIDI endpoint authenticated.
 
 ## In scope
 

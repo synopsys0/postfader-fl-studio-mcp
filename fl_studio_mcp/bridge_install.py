@@ -11,25 +11,32 @@ module. It is written against FL Studio's embedded API (``plugins``, ``mixer``,
 ``general``) and would fail on import anywhere else, so it must never be
 reachable by ``import``.
 
-``scripts/install.sh`` performs the same deployment for someone working from a
-clone. Both paths call :func:`deploy` so there is one implementation of what
+The native scripts in ``scripts/install.ps1`` and ``scripts/install.sh``
+perform the same deployment for someone working from a clone. All paths call
+:func:`deploy` so there is one implementation of what
 "installed" means, and one definition of when a backup is warranted.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 from datetime import datetime
 from pathlib import Path
 
 from .bridge_stamp import BridgeStampError, stamp_bridge_source
+from .host_config import (
+    HostConfigurationError,
+    default_fl_studio_user_data_dir,
+    fl_studio_user_data_dir,
+    midi_port_query,
+    platform_family,
+)
 
 BRIDGE_FILENAME = "device_UniversalBridge.py"
 CONTROLLER_DIR_NAME = "Universal Bridge"
-DEFAULT_USER_DATA_DIR = Path("~/Documents/Image-Line/FL Studio")
+DEFAULT_USER_DATA_DIR = default_fl_studio_user_data_dir()
 
 
 class BridgeInstallError(RuntimeError):
@@ -42,20 +49,18 @@ def bridge_source_path() -> Path:
     if not path.is_file():
         raise BridgeInstallError(
             "the packaged bridge script is missing at %s; reinstall the "
-            "package, or run scripts/install.sh from a clone" % path
+            "package, or run the native bootstrap script from a clone" % path
         )
     return path
 
 
 def user_data_dir(override: str | None = None) -> Path:
-    """FL Studio's user-data folder, honouring FL_STUDIO_USER_DATA_DIR.
+    """FL Studio's shared, platform-aware user-data selection.
 
-    Resolution order matches install.sh and the diagnostics command so that a
-    host with a relocated data folder behaves identically whichever entry
-    point is used.
+    Resolution order is explicit argument, ``FL_STUDIO_USER_DATA_DIR``, then
+    Windows Known Documents or the macOS home Documents default.
     """
-    chosen = (override or os.environ.get("FL_STUDIO_USER_DATA_DIR", "")).strip()
-    return Path(chosen).expanduser() if chosen else DEFAULT_USER_DATA_DIR.expanduser()
+    return fl_studio_user_data_dir(override)
 
 
 def hardware_dir(override: str | None = None) -> Path:
@@ -64,6 +69,35 @@ def hardware_dir(override: str | None = None) -> Path:
 
 def target_path(override: str | None = None) -> Path:
     return hardware_dir(override) / CONTROLLER_DIR_NAME / BRIDGE_FILENAME
+
+
+def midi_setup_epilog(platform_name: str | None = None) -> str:
+    """Return setup guidance without inventing a Windows endpoint default."""
+
+    if platform_family(platform_name) == "windows":
+        selected = midi_port_query(platform_name=platform_name)
+        port_line = (
+            "Use the configured FL_BRIDGE_MIDI_PORT value %r." % selected
+            if selected
+            else "Set FL_BRIDGE_MIDI_PORT to its exact endpoint name first."
+        )
+        return (
+            "After this, configure a virtual MIDI endpoint yourself; Postfader "
+            "does not install or configure a MIDI driver. %s In FL Studio: "
+            "Options > MIDI settings > Input, select that endpoint, enable it, "
+            "set Controller type to 'Universal Bridge', and note its Port "
+            "number. Under Output, give the paired endpoint the SAME Port "
+            "number. Then reload the script and verify with: postfader-doctor"
+            % port_line
+        )
+    return (
+        "After this, in FL Studio: Options > MIDI settings > Input, select "
+        "your IAC port, enable it, set Controller type to 'Universal Bridge', "
+        "and note its Port number. Under Output, give the same port the SAME "
+        "Port number -- the bridge replies over MIDI output and refuses to "
+        "start without it. Then View > Script output > Reload script. Verify "
+        "with: postfader-doctor"
+    )
 
 
 def expected_bridge_deployment() -> tuple[bytes, str]:
@@ -123,14 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             "Install the Postfader MIDI bridge into FL Studio so the MCP "
             "server can reach a running project."
         ),
-        epilog=(
-            "After this, in FL Studio: Options > MIDI settings > Input, select "
-            "your IAC port, enable it, set Controller type to 'Universal "
-            "Bridge', and note its Port number. Under Output, give the same "
-            "port the SAME Port number -- the bridge replies over MIDI output "
-            "and refuses to start without it. Then View > Script output > "
-            "Reload script. Verify with: postfader-doctor"
-        ),
+        epilog=midi_setup_epilog(),
     )
     parser.add_argument(
         "--user-data-dir",
@@ -150,7 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             print(bridge_source_path())
             return 0
         outcome = deploy(args.user_data_dir)
-    except BridgeInstallError as exc:
+    except (BridgeInstallError, HostConfigurationError, OSError) as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 1
 

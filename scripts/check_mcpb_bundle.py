@@ -21,6 +21,7 @@ REQUIRED = {
 FORBIDDEN_PARTS = {
     ".git",
     ".github",
+    ".private",
     ".venv",
     "__pycache__",
     "tests",

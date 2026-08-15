@@ -544,6 +544,21 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             any("inactive selection" in limitation for limitation in capability.limitations)
         )
 
+    def test_midi_capability_names_the_native_host_transport(self):
+        with mock.patch(
+            "fl_studio_mcp.readonly_inspector.platform_family",
+            return_value="windows",
+        ):
+            windows = self.inspector.capabilities()
+        capability = next(
+            item
+            for item in windows.capabilities
+            if item.capability == "midi_sysex_bridge"
+        )
+        self.assertIn("configured virtual MIDI endpoint", capability.access_path)
+        self.assertIn("WinMM", capability.access_path)
+        self.assertNotIn("CoreMIDI", capability.access_path)
+
     def test_unstable_or_noninteger_selection_payload_fails_closed(self):
         class PayloadClient(DirectFakeClient):
             def __init__(self, payload):

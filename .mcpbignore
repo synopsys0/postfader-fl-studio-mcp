@@ -2,6 +2,7 @@
 .git/
 .github/
 .venv/
+.private/
 venv/
 .pytest_cache/
 .ruff_cache/

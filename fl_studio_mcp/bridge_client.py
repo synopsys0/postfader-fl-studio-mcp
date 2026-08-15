@@ -7,8 +7,9 @@ Three transports, tried in order:
 * MIDI SysEx - what actually works with FL Studio, which sandboxes its script
   interpreter so that both sockets and filesystem writes fail.
 
-All three speak the same JSON request/response protocol, so nothing above this
-module needs to know which one is carrying the traffic.
+All three speak the same JSON command/result protocol, so nothing above this
+module needs to know which one is carrying the traffic. MIDI separately
+negotiates its framing version because native backends impose wire-size limits.
 """
 
 from __future__ import annotations
@@ -20,14 +21,28 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
+
+from fl_studio_mcp.host_config import (
+    MidiPortMatchError,
+    fl_studio_user_data_dir,
+    match_midi_port,
+    midi_port_query,
+    platform_family,
+)
 
 try:
     import fcntl
 except ImportError:  # pragma: no cover - FL Studio 2026 on macOS has fcntl.
     fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # pragma: no cover - available in supported Windows Python.
+    msvcrt = None
 
 HOST = os.environ.get("FL_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("FL_BRIDGE_PORT", "20202"))
@@ -37,20 +52,33 @@ REQ_PREFIX = PREFIX + "req-"
 RESP_PREFIX = PREFIX + "resp-"
 ALIVE_NAME = PREFIX + "alive.json"
 
+def _mailbox_candidates() -> list[str]:
+    """Return client mailbox roots aligned with the installed bridge path."""
+
+    user_data = fl_studio_user_data_dir()
+    settings = user_data / "Settings"
+    script_dir = settings / "Hardware" / "Universal Bridge"
+    fallback_temp = (
+        tempfile.gettempdir() if platform_family() == "windows" else "/tmp"
+    )
+    candidates = (
+        os.environ.get("FL_BRIDGE_MAILBOX"),
+        os.fspath(script_dir),
+        os.fspath(settings),
+        os.path.expanduser("~"),
+        fallback_temp,
+    )
+    seen: set[str] = set()
+    return [
+        value for value in candidates
+        if value and not (value in seen or seen.add(value))
+    ]
+
+
 # The bridge cannot create directories - FL's sandbox blocks mkdir - so it
 # settles into whichever existing directory accepts writes. Search the same
-# list, in the same order, and use the one holding a fresh liveness marker.
-_SCRIPT_DIR = os.path.expanduser(
-    "~/Documents/Image-Line/FL Studio/Settings/Hardware/Universal Bridge")
-MAILBOX_CANDIDATES = [
-    d for d in (
-        os.environ.get("FL_BRIDGE_MAILBOX"),
-        _SCRIPT_DIR,
-        os.path.expanduser("~/Documents/Image-Line/FL Studio/Settings"),
-        os.path.expanduser("~"),
-        "/tmp",
-    ) if d
-]
+# resolved install locations and use the one holding a fresh liveness marker.
+MAILBOX_CANDIDATES = _mailbox_candidates()
 
 # How stale the bridge's liveness marker may be before we call FL dead. The
 # script refreshes it about once a second.
@@ -61,8 +89,30 @@ ALIVE_MAX_AGE = 15.0
 SYSEX_ID = 0x7D
 TAG_REQUEST = 0x01
 TAG_RESPONSE = 0x02
-SYSEX_CHUNK = 1024
-MIDI_PORT = os.environ.get("FL_BRIDGE_MIDI_PORT", "IAC Driver")
+# The command/result protocol remains version 2.  MIDI framing has an
+# independent version because v0.13 added response correlation and reduced the
+# payload size for WinMM; calling that unchanged protocol 2 made a stale v0.12
+# bridge look compatible until its first request timed out.
+LEGACY_MIDI_WIRE_PROTOCOL_VERSION = 1
+MIDI_WIRE_PROTOCOL_VERSION = 2
+MIDI_WIRE_PROTOCOL_FIELD = "midi_wire_protocol_version"
+# RtMidi's Windows MM backend allocates 1,024-byte SysEx input buffers by
+# default.  The wire header and F7 terminator consume ten bytes, so a 1,024
+# byte payload is truncated before python-rtmidi can queue it.  Leave a little
+# headroom below that backend boundary while keeping the protocol identical on
+# every platform.
+WINMM_SYSEX_BUFFER_BYTES = 1024
+SYSEX_FRAME_OVERHEAD_BYTES = 10
+MIDI_WIRE_SYSEX_CHUNKS = {
+    LEGACY_MIDI_WIRE_PROTOCOL_VERSION: 1024,
+    MIDI_WIRE_PROTOCOL_VERSION: 1000,
+}
+MIDI_WIRE_FRAME_BYTES = {
+    version: SYSEX_FRAME_OVERHEAD_BYTES + chunk
+    for version, chunk in MIDI_WIRE_SYSEX_CHUNKS.items()
+}
+SYSEX_CHUNK = MIDI_WIRE_SYSEX_CHUNKS[MIDI_WIRE_PROTOCOL_VERSION]
+MIDI_PORT = midi_port_query()
 MIDI_ENABLED = os.environ.get("FL_BRIDGE_ENABLE_MIDI", "").strip() == "1"
 MAX_WIRE_ID = (1 << 14) - 1
 MAX_SYSEX_REQUEST_BYTES = 256 * 1024
@@ -71,17 +121,40 @@ MAX_SYSEX_HELLO_BYTES = 4 * 1024
 MAX_SYSEX_REQUEST_PARTS = (
     MAX_SYSEX_REQUEST_BYTES + SYSEX_CHUNK - 1
 ) // SYSEX_CHUNK
-MAX_SYSEX_RESPONSE_PARTS = (
+_CURRENT_MIDI_RESPONSE_PARTS = (
     MAX_SYSEX_RESPONSE_BYTES + SYSEX_CHUNK - 1
 ) // SYSEX_CHUNK
+# A v0.12 receiver permits at most 4,096 response parts.  Reducing the current
+# payload from 1,024 to 1,000 bytes must not let a new bridge advertise a total
+# that an old client rejects before reassembly.  Keep the rolling-upgrade
+# direction within that published receiver ceiling.
+LEGACY_MIDI_RESPONSE_PART_CEILING = (
+    MAX_SYSEX_RESPONSE_BYTES
+    + MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+    - 1
+) // MIDI_WIRE_SYSEX_CHUNKS[LEGACY_MIDI_WIRE_PROTOCOL_VERSION]
+MAX_SYSEX_RESPONSE_PARTS = min(
+    _CURRENT_MIDI_RESPONSE_PARTS,
+    LEGACY_MIDI_RESPONSE_PART_CEILING,
+)
+MAX_SYSEX_RESPONSE_WIRE_BYTES = min(
+    MAX_SYSEX_RESPONSE_BYTES,
+    MAX_SYSEX_RESPONSE_PARTS * SYSEX_CHUNK,
+)
 MAX_SYSEX_HELLO_PARTS = (
     MAX_SYSEX_HELLO_BYTES + SYSEX_CHUNK - 1
 ) // SYSEX_CHUNK
-MAX_SYSEX_FRAME_BYTES = 10 + SYSEX_CHUNK
+MIDI_INPUT_QUEUE_SIZE = MAX_SYSEX_RESPONSE_PARTS + MAX_SYSEX_HELLO_PARTS + 32
+MAX_SYSEX_FRAME_BYTES = MIDI_WIRE_FRAME_BYTES[MIDI_WIRE_PROTOCOL_VERSION]
 MAX_SYSEX_PARTIAL_MESSAGES = 2  # one heartbeat plus one serialized request
-MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_RESPONSE_BYTES
+MAX_SYSEX_PARTIAL_BYTES = MAX_SYSEX_RESPONSE_WIRE_BYTES
 SYSEX_PARTIAL_TTL_SECONDS = 10.0
+MIDI_RESPONSE_HARD_TIMEOUT_MULTIPLIER = 5.0
+MIDI_RESPONSE_HARD_TIMEOUT_MAX_SECONDS = 180.0
 _MIDI_PREFLIGHT: dict[str, tuple[float, bool]] = {}
+
+if MAX_SYSEX_FRAME_BYTES > WINMM_SYSEX_BUFFER_BYTES:
+    raise RuntimeError("SysEx framing exceeds the Windows MM input buffer")
 
 # Only commands independently locked read-only by bridge protocol 2 may be
 # replayed after an ambiguous transport failure. A lost response to any other
@@ -121,6 +194,25 @@ class BridgeUnavailableError(BridgeError):
     """No bridge transport is currently reachable."""
 
 
+class MidiWireProtocolMismatchError(BridgeError):
+    """A live MIDI bridge is reachable but unsafe for this client's framing."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        bridge_protocol_version: int | None,
+        detected_wire_protocol_version: int | None,
+        expected_wire_protocol_version: int,
+        bridge_target_path: str,
+    ) -> None:
+        super().__init__(message)
+        self.bridge_protocol_version = bridge_protocol_version
+        self.detected_wire_protocol_version = detected_wire_protocol_version
+        self.expected_wire_protocol_version = expected_wire_protocol_version
+        self.bridge_target_path = bridge_target_path
+
+
 class MidiTransportOwnedError(BridgeError):
     """Another live connector instance owns the physical MIDI transport."""
 
@@ -139,11 +231,11 @@ class MidiTransportOwnedError(BridgeError):
 
 
 class _MidiPortOwnership:
-    """Process-scoped advisory ownership for one resolved CoreMIDI port pair.
+    """Process-scoped ownership for one resolved physical MIDI port pair.
 
-    CoreMIDI permits multiple subscribers to an IAC bus. That is unsafe for
-    this request/response protocol because two MCP processes can consume or
-    duplicate each other's replies. A per-user advisory file lock makes all
+    MIDI backends may permit multiple subscribers to one virtual bus. That is
+    unsafe for this request/response protocol because two MCP processes can
+    consume or duplicate each other's replies. A per-user file lock makes all
     cooperating connector processes fail closed before opening the ports.
 
     The lock file is intentionally retained after release. Unlinking an
@@ -153,26 +245,72 @@ class _MidiPortOwnership:
 
     def __init__(self, port_identity: str, lock_dir: str | None = None):
         self.port_identity = port_identity
-        # Do not use tempfile.gettempdir(): TMPDIR differs between macOS
-        # applications, so an MCP launched by a GUI client and one launched
-        # from a shell would each believe they own the same IAC bus. /tmp is
-        # the stable system namespace; the uid keeps local users separate.
-        root = lock_dir or "/tmp"
-        uid = os.getuid() if hasattr(os, "getuid") else "user"
-        digest = hashlib.sha256(port_identity.encode("utf-8")).hexdigest()[:24]
-        self.path = os.path.join(
-            root, "fl-studio-mcp-iac-%s-%s.lock" % (uid, digest)
-        )
+        self.port_digest = hashlib.sha256(
+            port_identity.encode("utf-8")
+        ).hexdigest()[:24]
+        self._windows = os.name == "nt"
+        if self._windows:
+            # LOCALAPPDATA is a stable per-user namespace shared by GUI and
+            # shell processes. Unlike ProgramData it is writable without
+            # elevation, and unlike a relative /tmp it is drive-independent.
+            local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
+            if not local_app_data or not os.path.isabs(local_app_data):
+                local_app_data = os.path.join(
+                    os.path.expanduser("~"), "AppData", "Local"
+                )
+            root = lock_dir or os.path.join(
+                local_app_data, "Postfader", "midi-locks"
+            )
+            filename = "fl-studio-mcp-midi-%s.lock" % self.port_digest
+            # Byte zero is reserved for msvcrt.locking. Metadata starts after
+            # it so a contender can read the owner PID without touching the
+            # locked range.
+            self._metadata_offset = 1
+        else:
+            # Do not use tempfile.gettempdir(): TMPDIR differs between macOS
+            # applications, so an MCP launched by a GUI client and one launched
+            # from a shell would each believe they own the same IAC bus. /tmp is
+            # the stable system namespace; the uid keeps local users separate.
+            root = lock_dir or "/tmp"
+            uid = os.getuid()
+            filename = "fl-studio-mcp-iac-%s-%s.lock" % (uid, self.port_digest)
+            self._metadata_offset = 0
+        self.root = os.path.abspath(root)
+        self.path = os.path.join(self.root, filename)
         self._fd: int | None = None
 
     def _owner_metadata(self, fd: int) -> dict:
         try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            raw = os.read(fd, 4096).decode("utf-8", errors="replace")
+            os.lseek(fd, self._metadata_offset, os.SEEK_SET)
+            raw = os.read(fd, 1024).decode("utf-8", errors="replace")
             value = json.loads(raw) if raw else {}
         except (OSError, ValueError, TypeError):
             value = {}
         return value if isinstance(value, dict) else {}
+
+    def _lock(self, fd: int) -> None:
+        if self._windows:
+            if msvcrt is None:
+                raise OSError("Windows file locking is unavailable")
+            if os.fstat(fd).st_size < 1:
+                os.lseek(fd, 0, os.SEEK_SET)
+                if os.write(fd, b"\0") != 1:
+                    raise OSError("could not initialize ownership lock byte")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            return
+        if fcntl is None:
+            raise OSError("POSIX advisory file locking is unavailable")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _unlock(self, fd: int) -> None:
+        if self._windows:
+            if msvcrt is not None:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            return
+        if fcntl is not None:
+            fcntl.flock(fd, fcntl.LOCK_UN)
 
     @staticmethod
     def _owner_description(value: dict) -> str:
@@ -193,25 +331,32 @@ class _MidiPortOwnership:
     def acquire(self) -> None:
         if self._fd is not None:
             return
-        if fcntl is None:
-            raise BridgeError(
-                "MIDI IAC transport ownership requires POSIX advisory locks; "
-                "refusing to open the physical port without them"
-            )
+        if self._windows:
+            try:
+                os.makedirs(self.root, mode=0o700, exist_ok=True)
+            except OSError as exc:
+                raise BridgeError(
+                    "could not create the per-user MIDI ownership directory %r: %s"
+                    % (self.root, exc)
+                ) from exc
         flags = os.O_CREAT | os.O_RDWR
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
+        if hasattr(os, "O_BINARY"):
+            flags |= os.O_BINARY
+        if hasattr(os, "O_NOINHERIT"):
+            flags |= os.O_NOINHERIT
         try:
             fd = os.open(self.path, flags, 0o600)
         except OSError as exc:
             raise BridgeError(
-                "could not create the MIDI IAC ownership lock %r: %s"
+                "could not create the MIDI transport ownership lock %r: %s"
                 % (self.path, exc)
             ) from exc
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._lock(fd)
         except OSError as exc:
             owner_metadata = self._owner_metadata(fd)
             owner = self._owner_description(owner_metadata)
@@ -222,9 +367,11 @@ class _MidiPortOwnership:
                 os.close(fd)
             except OSError:
                 pass
-            if exc.errno in {errno.EACCES, errno.EAGAIN}:
+            if exc.errno in {errno.EACCES, errno.EAGAIN} or getattr(
+                exc, "winerror", None
+            ) in {32, 33}:
                 raise MidiTransportOwnedError(
-                    "MIDI IAC transport %r is already owned by another live "
+                    "MIDI transport %r is already owned by another live "
                     "fl-studio-mcp connector instance (%s). Stop the duplicate "
                     "MCP/doctor process or let it close before retrying."
                     % (self.port_identity, owner),
@@ -233,33 +380,33 @@ class _MidiPortOwnership:
                     owner_pid=owner_pid,
                 ) from exc
             raise BridgeError(
-                "could not lock MIDI IAC transport %r: %s"
+                "could not lock MIDI transport %r: %s"
                 % (self.port_identity, exc)
             ) from exc
 
         metadata = json.dumps(
             {
                 "pid": os.getpid(),
-                "port": self.port_identity,
+                "port_sha256": self.port_digest,
                 "acquired_unix": int(time.time()),
             },
             sort_keys=True,
         ).encode("utf-8")
         try:
-            os.ftruncate(fd, 0)
-            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, self._metadata_offset)
+            os.lseek(fd, self._metadata_offset, os.SEEK_SET)
             if os.write(fd, metadata) != len(metadata):
                 raise OSError("short ownership metadata write")
         except OSError as exc:
             try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                self._unlock(fd)
             finally:
                 try:
                     os.close(fd)
                 except OSError:
                     pass
             raise BridgeError(
-                "could not record MIDI IAC ownership for %r: %s"
+                "could not record MIDI ownership for %r: %s"
                 % (self.port_identity, exc)
             ) from exc
         self._fd = fd
@@ -269,8 +416,7 @@ class _MidiPortOwnership:
         if fd is None:
             return
         try:
-            if fcntl is not None:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+            self._unlock(fd)
         except OSError:
             # Closing the descriptor releases the lock even if an explicit
             # unlock reports a teardown race.
@@ -291,13 +437,13 @@ class _MidiPortOwnership:
 
 
 def _native_midi_probe_blocked() -> bool:
-    """Avoid native CoreMIDI startup when the caller says it is sandboxed.
+    """Avoid native MIDI backend startup when the caller says it is sandboxed.
 
     RtMidi can terminate the interpreter from C++ while constructing a MIDI
     client instead of raising a Python exception. Isolating that startup in a
     child protects this process, but on macOS the operating system still shows
     a "Python quit unexpectedly" report for the child. Automation harnesses,
-    CI runners, and any process without CoreMIDI entitlements hit this, so
+    CI runners, and any process without native MIDI access hit this, so
     such a caller sets FL_BRIDGE_SANDBOXED=1 to fail closed instead: the MIDI
     transport reports itself unavailable and no probe child is created.
 
@@ -309,7 +455,7 @@ def _native_midi_probe_blocked() -> bool:
 
 
 def _midi_preflight(port_name: str) -> bool:
-    """Probe RtMidi in a child so a native CoreMIDI abort cannot kill MCP."""
+    """Probe RtMidi in a child so a native backend abort cannot kill MCP."""
     if not MIDI_ENABLED or _native_midi_probe_blocked():
         return False
     now = time.monotonic()
@@ -329,12 +475,21 @@ def _midi_preflight(port_name: str) -> bool:
             text=True,
             timeout=8,
         )
-        parsed = json.loads(probe.stdout) if probe.returncode == 0 else {}
-        ports = parsed if isinstance(parsed, dict) else {}
-        found = (
-            any(port_name.lower() in str(name).lower() for name in ports.get("in", []))
-            and any(port_name.lower() in str(name).lower() for name in ports.get("out", []))
-        )
+        if probe.returncode != 0:
+            found = False
+        else:
+            parsed = json.loads(probe.stdout)
+            ports = parsed if isinstance(parsed, dict) else {}
+            inputs, outputs = ports.get("in"), ports.get("out")
+            if not isinstance(inputs, list) or not isinstance(outputs, list):
+                found = False
+            else:
+                try:
+                    match_midi_port(port_name, inputs, direction="input")
+                    match_midi_port(port_name, outputs, direction="output")
+                except MidiPortMatchError as exc:
+                    raise BridgeError(str(exc)) from exc
+                found = True
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, TypeError):
         found = False
     _MIDI_PREFLIGHT[port_name] = (now, found)
@@ -462,7 +617,7 @@ class _FileTransport:
 
 
 class _MidiTransport:
-    """SysEx over the IAC bus - the only channel FL's sandbox leaves open.
+    """SysEx over a virtual MIDI endpoint that FL's sandbox leaves open.
 
     FL blocks sockets and every filesystem write inside its script
     interpreter, but `device.midiOutSysex` goes through FL's own API. The bus
@@ -485,7 +640,11 @@ class _MidiTransport:
         self.partial_bytes = 0
         self.replies = {}
         self.hello_seen = False
+        self.hello_payload = None
+        self.bridge_protocol_version = None
+        self.midi_wire_protocol_version = None
         self._active_request_id = None
+        self._active_client_session = None
 
     # -- ports ------------------------------------------------------------
 
@@ -501,23 +660,43 @@ class _MidiTransport:
         mo = mi = None
         ownership = None
         try:
-            mo, mi = rtmidi.MidiOut(), rtmidi.MidiIn()
+            mo = rtmidi.MidiOut()
+            try:
+                # The python-rtmidi default retains only 1,024 messages. A
+                # valid bounded response may contain more than 4,000 SysEx
+                # frames, so the default can silently discard the middle of a
+                # large read before Python has a chance to drain it.
+                mi = rtmidi.MidiIn(queue_size_limit=MIDI_INPUT_QUEUE_SIZE)
+            except TypeError:
+                # Test doubles and older compatible backends may not expose
+                # the optional constructor argument. Their own queue policy
+                # remains in force; supported python-rtmidi builds take the
+                # explicit bound above.
+                mi = rtmidi.MidiIn()
             names = mi.get_ports()
-            match = next((i for i, n in enumerate(names)
-                          if self.port_name.lower() in n.lower()), None)
+            match, input_name = match_midi_port(
+                self.port_name, names, direction="input"
+            )
             out_names = mo.get_ports()
-            out_match = next((i for i, n in enumerate(out_names)
-                              if self.port_name.lower() in n.lower()), None)
-            if match is None or out_match is None:
-                raise LookupError("configured MIDI port is no longer present")
+            out_match, output_name = match_midi_port(
+                self.port_name, out_names, direction="output"
+            )
             port_identity = "input=%s; output=%s" % (
-                names[match], out_names[out_match]
+                input_name, output_name
             )
             ownership = _MidiPortOwnership(port_identity)
             ownership.acquire()
             mi.open_port(match)
             mo.open_port(out_match)
             mi.ignore_types(sysex=False, timing=True, active_sense=True)
+        except MidiPortMatchError as exc:
+            for handle in (mi, mo):
+                try:
+                    if handle is not None:
+                        handle.close_port()
+                except Exception:
+                    pass
+            raise BridgeError(str(exc)) from exc
         except BridgeError:
             for handle in (mi, mo):
                 try:
@@ -540,13 +719,13 @@ class _MidiTransport:
             return False
         self.midi_in, self.midi_out = mi, mo
         self._ownership = ownership
-        self.resolved_input_name = names[match]
-        self.resolved_output_name = out_names[out_match]
+        self.resolved_input_name = input_name
+        self.resolved_output_name = output_name
         self.resolved_port_identity = port_identity
         return True
 
     def ownership_evidence(self) -> dict:
-        """Describe the exact currently held IAC endpoints and advisory lock."""
+        """Describe the exact held MIDI endpoints and process lock."""
         if (
             self.midi_in is None
             or self.midi_out is None
@@ -555,13 +734,13 @@ class _MidiTransport:
             or self.resolved_output_name is None
             or self.resolved_port_identity is None
         ):
-            raise BridgeError("MIDI IAC ownership is not currently held")
+            raise BridgeError("MIDI endpoint ownership is not currently held")
         ownership = self._ownership.evidence()
         if (
             ownership.get("port_identity") != self.resolved_port_identity
             or ownership.get("acquired") is not True
         ):
-            raise BridgeError("MIDI IAC ownership evidence is internally inconsistent")
+            raise BridgeError("MIDI endpoint ownership evidence is internally inconsistent")
         return {
             "configured_port_query": self.port_name,
             "resolved_input_name": self.resolved_input_name,
@@ -569,8 +748,109 @@ class _MidiTransport:
             "resolved_port_identity": self.resolved_port_identity,
             "lock_path": ownership.get("lock_path"),
             "owner_pid": ownership.get("owner_pid"),
+            "bridge_protocol_version": self.bridge_protocol_version,
+            "midi_wire_protocol_version": self.midi_wire_protocol_version,
             "acquired": True,
         }
+
+    @staticmethod
+    def _version_number(value) -> int | None:
+        return value if type(value) is int and value > 0 else None
+
+    def _require_supported_wire_protocol(self) -> None:
+        """Refuse a legacy MIDI bridge before sending the first request.
+
+        A v0.12 heartbeat is small enough to survive either framing limit, so
+        it is a reliable negotiation message.  Its missing wire-version field
+        identifies the implicit legacy contract: 1,024-byte payload chunks and
+        no response correlation.  Receiving arbitrary v0.12 responses is not a
+        safe compatibility mode on Windows because a full frame is 1,034 bytes
+        while WinMM gives python-rtmidi 1,024-byte input buffers.
+        """
+
+        payload = self.hello_payload if isinstance(self.hello_payload, dict) else {}
+        bridge_protocol = self._version_number(payload.get("protocol"))
+        wire_field_present = MIDI_WIRE_PROTOCOL_FIELD in payload
+        advertised_wire = self._version_number(
+            payload.get(MIDI_WIRE_PROTOCOL_FIELD)
+        )
+        detected_wire = (
+            LEGACY_MIDI_WIRE_PROTOCOL_VERSION
+            if not wire_field_present and bridge_protocol in {1, 2}
+            else advertised_wire
+        )
+        self.bridge_protocol_version = bridge_protocol
+        self.midi_wire_protocol_version = detected_wire
+        if detected_wire == MIDI_WIRE_PROTOCOL_VERSION:
+            return
+
+        user_data = fl_studio_user_data_dir()
+        target = os.fspath(
+            user_data
+            / "Settings"
+            / "Hardware"
+            / "Universal Bridge"
+            / "device_UniversalBridge.py"
+        )
+        legacy_chunk = MIDI_WIRE_SYSEX_CHUNKS[
+            LEGACY_MIDI_WIRE_PROTOCOL_VERSION
+        ]
+        legacy_frame = MIDI_WIRE_FRAME_BYTES[
+            LEGACY_MIDI_WIRE_PROTOCOL_VERSION
+        ]
+        if detected_wire == LEGACY_MIDI_WIRE_PROTOCOL_VERSION:
+            detected = (
+                "legacy MIDI wire protocol 1 (the v0.12 %s-byte framing "
+                "without response correlation)" % format(legacy_chunk, ",")
+            )
+        elif advertised_wire is None:
+            detected = "no recognizable MIDI wire protocol version"
+        else:
+            detected = "MIDI wire protocol %d" % advertised_wire
+        family = platform_family()
+        if family == "windows":
+            platform_detail = (
+                " On Windows, the legacy %s-byte payload also becomes a "
+                "%s-byte SysEx message, which exceeds WinMM's %s-byte input "
+                "buffer."
+                % (
+                    format(legacy_chunk, ","),
+                    format(legacy_frame, ","),
+                    format(WINMM_SYSEX_BUFFER_BYTES, ","),
+                )
+            )
+        elif family == "macos":
+            platform_detail = (
+                " On macOS, CoreMIDI can carry the legacy frame size, but "
+                "the missing response correlation still makes an automatic "
+                "downgrade unsafe."
+            )
+        else:
+            platform_detail = (
+                " The native MIDI backend may carry different frame sizes, "
+                "but the missing response correlation still makes an "
+                "automatic downgrade unsafe."
+            )
+        raise MidiWireProtocolMismatchError(
+            "A live Universal Bridge answered on MIDI, but it uses %s; this "
+            "client requires MIDI wire protocol %d. No command was sent, "
+            "because the legacy contract lacks response correlation, so a "
+            "downgrade could accept an abandoned reply.%s "
+            "Run: postfader-install-bridge\n"
+            "Expected bridge target: %s\n"
+            "Then in FL Studio open View > Script output and click Reload "
+            "script before retrying."
+            % (
+                detected,
+                MIDI_WIRE_PROTOCOL_VERSION,
+                platform_detail,
+                target,
+            ),
+            bridge_protocol_version=bridge_protocol,
+            detected_wire_protocol_version=detected_wire,
+            expected_wire_protocol_version=MIDI_WIRE_PROTOCOL_VERSION,
+            bridge_target_path=target,
+        )
 
     def available(self) -> bool:
         """Wait briefly for the bridge's heartbeat."""
@@ -580,6 +860,11 @@ class _MidiTransport:
         while time.monotonic() < deadline:
             self._drain()
             if self.hello_seen:
+                try:
+                    self._require_supported_wire_protocol()
+                except MidiWireProtocolMismatchError:
+                    self.close()
+                    raise
                 return True
             time.sleep(0.01)
         self.close()
@@ -608,16 +893,19 @@ class _MidiTransport:
         if mid == 0:
             return MAX_SYSEX_HELLO_PARTS, MAX_SYSEX_HELLO_BYTES
         if mid == self._active_request_id:
-            return MAX_SYSEX_RESPONSE_PARTS, MAX_SYSEX_RESPONSE_BYTES
+            return MAX_SYSEX_RESPONSE_PARTS, MAX_SYSEX_RESPONSE_WIRE_BYTES
         return None
 
-    def _drain(self):
+    def _drain(self) -> int:
+        """Drain queued MIDI and return new active-response frame progress."""
+
+        progress = 0
         now = time.monotonic()
         self._expire_partial(now)
         while True:
             msg = self.midi_in.get_message()
             if not msg:
-                return
+                return progress
             data = msg[0]
             if (
                 len(data) < 10
@@ -683,6 +971,8 @@ class _MidiTransport:
             slot["bytes"] += added
             slot["updated"] = now
             self.partial_bytes += added
+            if mid == self._active_request_id:
+                progress += 1
             if len(slot["parts"]) < total:
                 continue
 
@@ -699,7 +989,15 @@ class _MidiTransport:
                 continue
             if mid == 0 and payload.get("hello") is True:
                 self.hello_seen = True
-            elif mid == self._active_request_id:
+                self.hello_payload = dict(payload)
+            elif (
+                mid == self._active_request_id
+                and (
+                    self._active_client_session is None
+                    or payload.get("client_session")
+                    == self._active_client_session
+                )
+            ):
                 self.replies[mid] = payload
 
     def request(self, rid: int, payload: dict) -> dict:
@@ -720,6 +1018,7 @@ class _MidiTransport:
         self._drop_partial(rid)
         self.replies.pop(rid, None)
         self._active_request_id = rid
+        self._active_client_session = payload.get("client_session")
         try:
             for seq, chunk in enumerate(chunks):
                 frame = [0xF0, SYSEX_ID, TAG_REQUEST,
@@ -730,18 +1029,39 @@ class _MidiTransport:
                 frame.append(0xF7)
                 self.midi_out.send_message(frame)
 
-            deadline = time.monotonic() + self.timeout
-            while time.monotonic() < deadline:
-                self._drain()
+            started = time.monotonic()
+            idle_deadline = started + self.timeout
+            hard_timeout = max(
+                self.timeout,
+                min(
+                    self.timeout * MIDI_RESPONSE_HARD_TIMEOUT_MULTIPLIER,
+                    MIDI_RESPONSE_HARD_TIMEOUT_MAX_SECONDS,
+                ),
+            )
+            hard_deadline = started + hard_timeout
+            while True:
+                progress = self._drain()
+                now = time.monotonic()
                 if rid in self.replies:
                     return self.replies.pop(rid)
+                if progress:
+                    idle_deadline = now + self.timeout
+                if now >= hard_deadline:
+                    raise TimeoutError(
+                        "MIDI reply exceeded the %.1fs hard deadline"
+                        % hard_timeout
+                    )
+                if now >= idle_deadline:
+                    raise TimeoutError(
+                        "no MIDI reply progress within %ss" % self.timeout
+                    )
                 time.sleep(0.002)
-            raise TimeoutError("no reply within %ss" % self.timeout)
         finally:
             self._drop_partial(rid)
             self.replies.pop(rid, None)
             if self._active_request_id == rid:
                 self._active_request_id = None
+                self._active_client_session = None
 
     def close(self):
         for port in (self.midi_in, self.midi_out):
@@ -755,7 +1075,11 @@ class _MidiTransport:
         self.partial_bytes = 0
         self.replies.clear()
         self.hello_seen = False
+        self.hello_payload = None
+        self.bridge_protocol_version = None
+        self.midi_wire_protocol_version = None
         self._active_request_id = None
+        self._active_client_session = None
         ownership, self._ownership = self._ownership, None
         if ownership is not None:
             ownership.release()
@@ -781,17 +1105,29 @@ class BridgeClient:
             _FileTransport(roots, timeout),
         ]
         # FL_BRIDGE_ENABLE_MIDI gates the transport itself, not merely the
-        # preflight probe. Opening CoreMIDI is the one transport that can take
+        # preflight probe. Opening native MIDI is the one transport that can take
         # a shared system resource -- and abort the interpreter from native
         # code doing it -- so a caller that has not asked for MIDI must never
         # have it attempted behind their back. Every supported entry point
         # (the MCP server config, doctor, and the inspect/validate scripts)
         # sets this; omitting it is what "I do not want this process touching
-        # the IAC bus" looks like.
+        # a physical endpoint" looks like.
         if MIDI_ENABLED:
+            if not midi_port:
+                raise BridgeError(
+                    "FL_BRIDGE_MIDI_PORT must name the user-configured virtual "
+                    "MIDI endpoint on Windows before MIDI transport can be enabled"
+                )
             self._transports.append(_MidiTransport(midi_port, timeout))
         self._active = None
-        self._id = 0
+        # Wire IDs are only 14-bit, but every process used to start at 1. An
+        # abandoned multi-frame MIDI reply from one short-lived acceptance
+        # worker could therefore be mistaken for another worker's unrelated
+        # command. Start in a process-unique region and add an echoed session
+        # token so even a wire-ID collision cannot satisfy the new request.
+        self._client_session = uuid.uuid4().hex
+        self._id = int(self._client_session[:8], 16) % MAX_WIRE_ID
+        self._request_sequence = 0
         self._lock = threading.Lock()
         self.host, self.port = host, port
         self.mailbox = mailbox or ", ".join(roots)
@@ -844,7 +1180,7 @@ class BridgeClient:
                     link_error = exc
 
                 # A transport-level failure can mean FL restarted, its script
-                # reloaded, or CoreMIDI dropped the endpoint. Close it fully so
+                # reloaded, or the MIDI backend dropped the endpoint. Close it fully so
                 # the next bounded attempt must reselect/reopen from scratch.
                 self._drop()
                 if attempt + 1 < attempts:
@@ -879,10 +1215,31 @@ class BridgeClient:
         # safe and avoids a permanent timeout after request 16,383.
         self._id = (self._id % MAX_WIRE_ID) + 1
         rid = self._id
-        resp = transport.request(rid, {"id": rid, "cmd": cmd, "args": args})
+        self._request_sequence += 1
+        request_token = "%s-%d" % (
+            self._client_session,
+            self._request_sequence,
+        )
+        resp = transport.request(
+            rid,
+            {
+                "id": rid,
+                "cmd": cmd,
+                "args": args,
+                "client_session": self._client_session,
+                "request_token": request_token,
+            },
+        )
         if not isinstance(resp, dict) or resp.get("id") != rid:
             raise ValueError(
                 "bridge returned a malformed or mismatched response envelope"
+            )
+        if isinstance(transport, _MidiTransport) and (
+            resp.get("client_session") != self._client_session
+            or resp.get("request_token") != request_token
+        ):
+            raise ValueError(
+                "bridge returned a response for an abandoned MIDI request"
             )
         if not resp.get("ok"):
             detail = resp.get("error", "unknown error")
@@ -1000,3 +1357,19 @@ def get_client() -> BridgeClient:
     if _client is None:
         _client = BridgeClient()
     return _client
+
+
+def close_client() -> bool:
+    """Close and discard this process's lazily-created bridge client.
+
+    Live acceptance workers call this exactly once while shutting down.  Each
+    worker is a separate process, so clearing its process-local singleton can
+    never replace a client that is still serving an older invocation.
+    """
+
+    global _client
+    client, _client = _client, None
+    if client is None:
+        return False
+    client.close()
+    return True

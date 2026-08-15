@@ -24,6 +24,7 @@ from typing import Iterable, Literal, Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import audio
+from .host_config import fl_studio_user_data_dir
 
 
 ADVISORY_SCHEMA_VERSION = "1.0"
@@ -48,24 +49,10 @@ DEFAULT_MAX_SECONDS = 600.0
 MAX_DISCOVERY_DEPTH = 4
 MAX_DISCOVERY_ENTRIES = 20_000
 
-def _fl_studio_user_root() -> Path:
-    """FL Studio's user-data folder, honouring the same override as the installer.
-
-    install.sh and doctor.py both read FL_STUDIO_USER_DATA_DIR. Discovery has to
-    as well: on a host whose FL data folder has been moved, hardcoding the
-    default means recent-bounce discovery quietly searches a directory that does
-    not exist and reports nothing, with no indication that it looked in the
-    wrong place. The roots stay fixed at import and remain not caller-controlled
-    -- an agent cannot point this at an arbitrary directory by passing a tool
-    argument.
-    """
-    override = os.environ.get("FL_STUDIO_USER_DATA_DIR", "").strip()
-    if override:
-        return Path(override).expanduser()
-    return Path.home() / "Documents" / "Image-Line" / "FL Studio"
-
-
-FL_STUDIO_USER_ROOT = _fl_studio_user_root()
+# Resolve once at import so discovery roots remain fixed and caller-independent
+# for the process lifetime. The shared resolver keeps this aligned with bridge
+# installation, diagnostics, mailbox lookup, and generated MCP configuration.
+FL_STUDIO_USER_ROOT = fl_studio_user_data_dir()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # FL writes bounces to Audio/Rendered, recorded takes to Audio/Recorded, and

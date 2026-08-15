@@ -22,7 +22,6 @@ from typing import Any, Literal, Protocol
 
 from . import __version__
 from .plugin_profile import PluginProfile, markdown_text, summarise
-from .readonly_inspector import connection_from_ping
 
 
 PluginFormat = Literal["native", "VST", "VST3", "AU", "unknown"]
@@ -182,11 +181,18 @@ def _safe_fl_version(value: Any) -> str:
 
 
 def _safe_platform() -> str:
-    if platform.system() != "Darwin":
+    system = platform.system()
+    if system not in {"Darwin", "Windows"}:
         return "unknown"
     architecture = platform.machine().casefold()
-    architecture = architecture if architecture in {"arm64", "x86_64"} else "unknown"
-    return f"macOS {architecture}"
+    architecture = {
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
+        "arm64": "arm64",
+        "aarch64": "arm64",
+    }.get(architecture, "unknown")
+    host = "macOS" if system == "Darwin" else "Windows"
+    return f"{host} {architecture}"
 
 
 def build_public_report(
@@ -416,6 +422,11 @@ def validate_representative_write(
     parameter_index: int,
 ) -> WriteValidationEvidence:
     """Move one known control, restore it, and independently verify restoration."""
+    # Keep bridge_client out of a plain plugin_report import. The installed
+    # live command establishes transport intent in main() before reaching this
+    # import, so bridge_client cannot freeze MIDI_ENABLED too early.
+    from .readonly_inspector import connection_from_ping
+
     if track <= 0:
         raise ValueError("representative write validation refuses the Master track")
     if slot < 0 or slot > 9 or parameter_index < 0:
@@ -575,6 +586,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--track", type=int, help="mixer track index (live mode)")
     parser.add_argument("--slot", type=int, help="effect slot index, 0-9 (live mode)")
     parser.add_argument(
+        "--midi-port",
+        help=(
+            "exact virtual MIDI endpoint name (live mode); required on Windows "
+            "unless FL_BRIDGE_MIDI_PORT is already set"
+        ),
+    )
+    parser.add_argument(
         "--from-json",
         metavar="PATH",
         help="reduce a saved raw or MCP scan without contacting FL Studio",
@@ -632,6 +650,8 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
             parser.error("--validate-write requires live FL Studio, not --from-json")
         if args.max_indices is not None:
             parser.error("--max-indices applies only to a live scan, not --from-json")
+        if args.midi_port is not None:
+            parser.error("--midi-port applies only to a live scan, not --from-json")
     elif args.track is None or args.slot is None:
         parser.error("--track and --slot are required unless --from-json is used")
     if args.track == 0 and args.validate_write is not None:
@@ -648,6 +668,8 @@ def _validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) ->
         )
     if args.confirm_disposable_project and args.validate_write is None:
         parser.error("--confirm-disposable-project is only valid with --validate-write")
+    if args.midi_port is not None and not args.midi_port.strip():
+        parser.error("--midi-port must not be empty")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -662,12 +684,14 @@ def main(argv: list[str] | None = None) -> int:
             with Path(args.from_json).open(encoding="utf-8") as handle:
                 scan: Any = json.load(handle)
         else:
-            # The installed command is an explicitly supported IAC entry
+            # The installed command is an explicitly supported MIDI entry
             # point. Set the opt-in before importing bridge_client, which
             # freezes transport availability at import time. Merely importing
             # this reporting module does not change process state or touch
-            # CoreMIDI.
-            os.environ.setdefault("FL_BRIDGE_ENABLE_MIDI", "1")
+            # native MIDI.
+            os.environ["FL_BRIDGE_ENABLE_MIDI"] = "1"
+            if args.midi_port is not None:
+                os.environ["FL_BRIDGE_MIDI_PORT"] = args.midi_port.strip()
             from .bridge_client import get_client
             from .readonly_inspector import (
                 IncompatibleFLStudio,

@@ -13,10 +13,86 @@ permissions:
   contents: read
 
 jobs:
+  # Publication waits for this matrix as one job dependency. GitHub marks it
+  # successful only when both native hosts pass on both declared edge Python
+  # versions, so the Ubuntu artifact build cannot bypass supported platforms.
+  platform-verify:
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        python-version: ["3.10", "3.14"]
+    env:
+      FL_BRIDGE_ENABLE_MIDI: "0"
+      FL_BRIDGE_ENABLE_WRITES: "0"
+      FL_BRIDGE_SANDBOXED: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Check public tree
+        run: python scripts/check_public_tree.py
+
+      - name: Install hermetic test and build environment
+        run: |
+          python -m pip install --upgrade pip build
+          python -m pip install --editable ".[test]"
+
+      - name: Run hermetic safe suite
+        run: python scripts/run_safe_tests.py
+
+      - name: Parse and dry-run native PowerShell entry points
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($path in @('scripts/install.ps1', 'scripts/launch_fl_studio.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $path), [ref]$tokens, [ref]$errors
+            ) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+          $userData = Join-Path $env:RUNNER_TEMP 'FL Studio User Data'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/install.ps1 -DryRun `
+            -Python (Get-Command python.exe).Source -UserDataDir $userData
+          if ($LASTEXITCODE -ne 0) { throw "install.ps1 dry run failed" }
+          $fakeFl = Join-Path $env:RUNNER_TEMP 'FL Studio 2026\FakeFL64.exe'
+          New-Item -ItemType Directory -Force (Split-Path $fakeFl) | Out-Null
+          Set-Content -LiteralPath $fakeFl -Value 'dry run only'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/launch_fl_studio.ps1 -DryRun -Executable $fakeFl
+          if ($LASTEXITCODE -ne 0) { throw "read-only launcher dry run failed" }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass `
+            -File scripts/launch_fl_studio.ps1 -DryRun -EnableWrites `
+            -Executable $fakeFl
+          if ($LASTEXITCODE -ne 0) { throw "write-mode launcher dry run failed" }
+
+      - name: Build wheel and sdist on the native host
+        run: python -m build
+
+      - name: Verify archive contents and publication metadata
+        run: python scripts/verify_distribution.py --dist-dir dist
+
+      - name: Install and verify the wheel in a clean native environment
+        run: python scripts/clean_wheel_smoke.py --dist-dir dist
+
   build:
-    name: Build and verify distributions
+    name: Build verified publishing artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@v5
@@ -49,61 +125,33 @@ jobs:
           /tmp/postfader-mcp-publisher/mcp-publisher --version
           /tmp/postfader-mcp-publisher/mcp-publisher validate server.json
 
-      - name: Install hermetic test environment
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install --editable ".[test]"
-
-      - name: Run hermetic safe suite
-        env:
-          FL_BRIDGE_SANDBOXED: "1"
-        run: python scripts/run_safe_tests.py
-
-      # A tag that disagrees with the version in the package is the one
-      # mistake that cannot be taken back once it reaches PyPI, so refuse
-      # before building rather than discovering it afterwards.
-      - name: Refuse a tag that disagrees with the package version
+      # A tag that disagrees with the package version is irreversible once it
+      # reaches PyPI, so refuse it before creating publication artifacts.
+      - name: Refuse a tag that disagrees with public version declarations
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           python - <<'PY'
-          import os, sys, tomllib, pathlib
+          import json, os, pathlib, sys, tomllib
 
-          tag = os.environ["GITHUB_REF_NAME"]
           declared = tomllib.loads(
               pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
           )["project"]["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
           expected = f"v{declared}"
-          print(f"tag={tag}  pyproject={declared}")
           if tag != expected:
-              print(f"::error::tag {tag} does not match pyproject version "
-                    f"{declared}; expected {expected}")
+              print(f"::error::tag {tag} does not match {expected}")
               sys.exit(1)
 
-          manifest = pathlib.Path("server.json")
-          if manifest.is_file():
-              import json
-              data = json.loads(manifest.read_text(encoding="utf-8"))
-              versions = {data.get("version")} | {
-                  package.get("version") for package in data.get("packages", [])
-              }
-              if versions != {declared}:
-                  print(f"::error::server.json declares {sorted(versions)}, "
-                        f"expected {declared}")
-                  sys.exit(1)
-              print("server.json agrees")
-
-          desktop_manifest = pathlib.Path("manifest.json")
-          if not desktop_manifest.is_file():
-              print("::error::manifest.json is missing")
+          server = json.loads(pathlib.Path("server.json").read_text(encoding="utf-8"))
+          manifest = json.loads(
+              pathlib.Path("manifest.json").read_text(encoding="utf-8")
+          )
+          versions = [server.get("version"), manifest.get("version")]
+          versions.extend(item.get("version") for item in server.get("packages", []))
+          if any(version != declared for version in versions):
+              print(f"::error::public versions {versions!r} do not all equal {declared}")
               sys.exit(1)
-          import json
-          data = json.loads(desktop_manifest.read_text(encoding="utf-8"))
-          if data.get("version") != declared:
-              print(f"::error::manifest.json declares {data.get('version')!r}, "
-                    f"expected {declared}")
-              sys.exit(1)
-          print("manifest.json agrees")
-          print("versions agree")
+          print(f"tag and public versions agree: {tag}")
           PY
 
       - name: Build wheel and sdist
@@ -112,83 +160,13 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-      - name: Verify distribution metadata
-        run: |
-          python - <<'PY'
-          import email.parser, pathlib, sys, tarfile, tomllib, zipfile
+      # This centralized verifier also refuses a wheel whose PyPI long
+      # description lost the MCP Registry ownership marker.
+      - name: Verify archive contents and publication metadata
+        run: python scripts/verify_distribution.py --dist-dir dist
 
-          dist = pathlib.Path("dist")
-          wheel = next(iter(dist.glob("*.whl")))
-          sdist = next(iter(dist.glob("*.tar.gz")))
-          print(f"wheel: {wheel.name}\nsdist: {sdist.name}")
-
-          with zipfile.ZipFile(wheel) as archive:
-              names = archive.namelist()
-              metadata = next(n for n in names if n.endswith(".dist-info/METADATA"))
-              text = archive.read(metadata).decode("utf-8")
-              entry_points = next(
-                  (n for n in names if n.endswith(".dist-info/entry_points.txt")), None
-              )
-              scripts = archive.read(entry_points).decode("utf-8") if entry_points else ""
-
-          failures = []
-          declared_version = tomllib.loads(
-              pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
-          )["project"]["version"]
-          wheel_version = email.parser.Parser().parsestr(text).get("Version")
-          if wheel_version != declared_version:
-              failures.append(
-                  f"wheel version {wheel_version!r} does not match pyproject "
-                  f"version {declared_version!r}"
-              )
-          if "License-Expression: Apache-2.0" not in text:
-              failures.append("wheel METADATA is missing the Apache-2.0 license expression")
-          for required in ("LICENSE", "NOTICE"):
-              if not any(n.endswith(f".dist-info/licenses/{required}") for n in names):
-                  failures.append(f"wheel does not carry {required}")
-          # Without the bridge, an installed copy can never reach FL Studio.
-          if "fl_studio_mcp/_bridge/device_UniversalBridge.py" not in names:
-              failures.append("the packaged bridge script is missing from the wheel")
-          for required_module in (
-              "fl_studio_mcp/performance.py",
-              "fl_studio_mcp/plugin_profile.py",
-              "fl_studio_mcp/plugin_report.py",
-              "fl_studio_mcp/track_b_contracts.py",
-          ):
-              if required_module not in names:
-                  failures.append(f"wheel does not carry {required_module}")
-          for command in ("fl-studio-mcp = fl_studio_mcp.mcp_server:main",
-                          "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
-                          "postfader-doctor = fl_studio_mcp.diagnostics:main",
-                          "postfader-plugin-report = fl_studio_mcp.plugin_report:main"):
-              if command not in scripts:
-                  failures.append(f"missing console entry point: {command}")
-          # The MCP Registry reads this out of the PyPI description to verify
-          # that whoever publishes the package controls it.
-          if "mcp-name: io.github.synopsys0/postfader-fl-studio-mcp" not in text:
-              failures.append("METADATA is missing the mcp-name ownership marker")
-
-          with tarfile.open(sdist) as archive:
-              members = archive.getnames()
-          for required in ("LICENSE", "NOTICE", "SECURITY.md", "CONTRIBUTING.md"):
-              if not any(m.endswith("/" + required) for m in members):
-                  failures.append(f"sdist does not carry {required}")
-          if not any(m.endswith("/docs/plugin-matrix.md") for m in members):
-              failures.append("sdist does not carry docs/plugin-matrix.md")
-
-          if failures:
-              print("\nDistribution check failed:")
-              for failure in failures:
-                  print(f"  - {failure}")
-              sys.exit(1)
-          print("\nDistribution metadata OK")
-          PY
-
-      - name: Smoke-test the installed reporter
-        run: |
-          python -m venv /tmp/postfader-wheel-smoke
-          /tmp/postfader-wheel-smoke/bin/python -m pip install dist/*.whl
-          /tmp/postfader-wheel-smoke/bin/postfader-plugin-report --help
+      - name: Install and verify the wheel in a clean environment
+        run: python scripts/clean_wheel_smoke.py --dist-dir dist
 
       # scripts/build_mcpb.py validates with an exact
       # @anthropic-ai/mcpb@2.1.2 pin before it creates the archive.
@@ -215,17 +193,16 @@ jobs:
 
   publish:
     name: Publish to PyPI
-    needs: build
+    needs: [build, platform-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Only ever publishes for a version tag, never for a manual run on a
-    # branch. `workflow_dispatch` above exists to rehearse the build job.
+    # branch. `workflow_dispatch` above exists to rehearse all verification.
     if: startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
       url: https://pypi.org/p/postfader-fl-studio-mcp
     permissions:
-      # The OIDC token that stands in for an API key. Scoped to this job only.
       id-token: write
     steps:
       - name: Fetch the verified distributions
@@ -261,8 +238,6 @@ jobs:
       - name: Create the release or replace its assets on a retry
         env:
           GH_TOKEN: ${{ github.token }}
-          # This job deliberately does not check out the repository. Tell gh
-          # which repository to address instead of relying on local Git state.
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
@@ -287,8 +262,6 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v5
 
-      # Pin the publisher release so a moving download cannot change the
-      # release path between a rehearsed commit and its tag.
       - name: Install MCP Registry publisher v1.7.9
         run: |
           mkdir -p /tmp/postfader-mcp-publisher
