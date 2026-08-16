@@ -3,7 +3,7 @@
 The original prototype models intentionally accept almost any bridge payload.
 That is useful while exploring an API, but it is too permissive for an agent
 boundary.  The models in this module are the stable, fail-closed contracts used
-by the Phase 1 read-only server.
+by the read-only inspection surface.
 """
 
 from __future__ import annotations
@@ -98,6 +98,9 @@ class CapabilitiesReport(ContractModel):
 class TransportState(ContractModel):
     playing: bool | None = None
     recording: bool | None = None
+    metronome_enabled: bool | None = None
+    precount_enabled: bool | None = None
+    time_signature_numerator: int | None = Field(default=None, ge=1, le=32)
     tempo_bpm: float | None = Field(default=None, ge=0.0)
     song_position_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
     song_position_display: str | None = None
@@ -405,6 +408,28 @@ class VerifiedMixerVolumeWrite(VerifiedWrite):
     after_volume_db: float | None = None
 
 
+class ExpectedMixerVolumeState(ContractModel):
+    volume_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
+    volume_db: float | None = Field(default=None, ge=-200.0, le=12.0)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedMixerVolumeState":
+        if self.volume_normalized is None and self.volume_db is None:
+            raise ValueError("expected mixer volume needs normalized and/or dB state")
+        return self
+
+
+class VerifiedMixerVolumeDbWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.set_volume_db"] = "mixer.set_volume_db"
+    requested_volume_db: float = Field(ge=-60.0, le=6.0)
+    tolerance_db: float = Field(gt=0.0, le=1.0)
+    before_volume_normalized: float | None = None
+    after_volume_normalized: float | None = None
+    before_volume_db: float | None = None
+    after_volume_db: float | None = None
+    search_iterations: int = Field(ge=0, le=20)
+
+
 class VerifiedMixerPanWrite(VerifiedWrite):
     bridge_command: Literal["mixer.set_pan"] = "mixer.set_pan"
     requested_pan: float = Field(ge=-1.0, le=1.0)
@@ -417,6 +442,43 @@ class VerifiedMixerMuteWrite(VerifiedWrite):
     requested_muted: bool
     before_muted: bool | None = None
     after_muted: bool | None = None
+
+
+class VerifiedMixerSoloWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.set_solo"] = "mixer.set_solo"
+    requested_soloed: bool
+    before_soloed: bool | None = None
+    after_soloed: bool | None = None
+
+
+class VerifiedMixerArmWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.set_arm"] = "mixer.set_arm"
+    requested_armed: bool
+    before_armed: bool | None = None
+    after_armed: bool | None = None
+
+
+class VerifiedMixerColorWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.set_color"] = "mixer.set_color"
+    requested_color: int = Field(ge=0, le=0xFFFFFFFF)
+    before_color: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
+    after_color: int | None = Field(default=None, ge=0, le=0xFFFFFFFF)
+
+
+class VerifiedMixerStereoSeparationWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.set_stereo_separation"] = (
+        "mixer.set_stereo_separation"
+    )
+    requested_stereo_separation: float = Field(ge=-1.0, le=1.0)
+    before_stereo_separation: float | None = Field(default=None, ge=-1.0, le=1.0)
+    after_stereo_separation: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+
+class VerifiedMixerSelectionWrite(VerifiedWrite):
+    bridge_command: Literal["mixer.select_track"] = "mixer.select_track"
+    requested_active_track_index: int = Field(ge=0)
+    before_active_track_index: int | None = Field(default=None, ge=0)
+    after_active_track_index: int | None = Field(default=None, ge=0)
 
 
 class VerifiedPluginDisplayWrite(VerifiedWrite):

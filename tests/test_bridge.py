@@ -530,14 +530,24 @@ def check_lean_writes(c):
     check("flag on in the copy loaded with it",
           w.LEAN_WRITES_ENABLED is True, w.LEAN_WRITES_ENABLED)
     published_writes = frozenset({
-              "mixer.set_volume", "mixer.set_pan", "mixer.set_mute",
+              "mixer.set_volume", "mixer.set_volume_db", "mixer.set_pan", "mixer.set_mute",
+              "mixer.set_solo", "mixer.set_arm", "mixer.set_color",
+              "mixer.set_stereo_separation", "mixer.select_track",
               "mixer.set_eq", "mixer.set_name", "mixer.set_send",
               "mixer.set_send_level",
               "plugin.set_param", "plugin.set_param_display",
               "plugin.set_param_option",
               "transport.set_playing", "transport.stop",
               "transport.set_song_position", "transport.set_loop_mode",
-              "transport.set_tempo", "channel.set_mix",
+              "transport.set_tempo", "transport.set_recording",
+              "transport.set_metronome", "transport.set_precount",
+              "project.set_time_signature_numerator", "project.undo",
+              "project.redo", "channel.set_mix",
+              "channel.set_solo", "channel.set_pitch", "channel.select",
+              "pattern.select", "pattern.set_identity", "pattern.set_length",
+              "playlist.set_identity", "playlist.set_state",
+              "creative.prepare_piano_roll", "arrangement.add_markers",
+              "automation.record_value",
               "channel.set_identity", "channel.route_to_mixer",
               "sequencer.set", "channel.trigger_note",
           })
@@ -564,8 +574,14 @@ def check_lean_writes(c):
     vol_before = _state.TRACKS[3].volume
     gated = [
         ("mixer.set_volume", {"track": 3, "value": 0.5}),
+        ("mixer.set_volume_db", {"track": 3, "volume_db": -6.0}),
         ("mixer.set_pan", {"track": 3, "value": 0.5}),
         ("mixer.set_mute", {"track": 3, "muted": True}),
+        ("mixer.set_solo", {"track": 3, "soloed": True}),
+        ("mixer.set_arm", {"track": 3, "armed": True}),
+        ("mixer.set_color", {"track": 3, "color": 0x0055AA}),
+        ("mixer.set_stereo_separation", {"track": 3, "stereo_separation": 0.25}),
+        ("mixer.select_track", {"track": 3}),
         ("mixer.set_eq", {"track": 3, "band": 0, "gain": 0.7}),
         ("mixer.set_name", {"track": 3, "name": "gated"}),
         ("mixer.set_send", {"track": 3, "to": 5, "enabled": True}),
@@ -581,6 +597,21 @@ def check_lean_writes(c):
         ("transport.set_loop_mode", {"loop_mode": "song"}),
         ("transport.set_tempo", {"tempo_bpm": 120.0}),
         ("channel.set_mix", {"channel": 0, "volume": 0.5}),
+        ("channel.set_solo", {"channel": 0, "soloed": True}),
+        ("channel.set_pitch", {"channel": 0, "pitch": 0.25}),
+        ("channel.select", {"channel": 1, "exclusive": True}),
+        ("pattern.select", {"pattern": 2}),
+        ("pattern.set_identity", {"pattern": 1, "name": "gated"}),
+        ("pattern.set_length", {"pattern": 1, "length": 8}),
+        ("playlist.set_identity", {"track": 1, "name": "gated"}),
+        ("playlist.set_state", {"track": 1, "muted": True}),
+        ("creative.prepare_piano_roll", {
+            "channel": 0, "pattern": 1, "index_scope": "global"}),
+        ("arrangement.add_markers", {
+            "markers": [{"time_ticks": 0, "name": "gated"}]}),
+        ("automation.record_value", {
+            "target_kind": "mixer", "target_index": 3,
+            "property": "volume", "value_normalized": 0.5}),
         ("channel.set_identity", {"channel": 0, "name": "gated"}),
         ("channel.route_to_mixer", {"channel": 0, "destination": 5}),
         ("sequencer.set", {"pattern": 1, "channel": 0,
@@ -777,6 +808,11 @@ def check_lean_writes(c):
         ("mixer.set_volume", {"track": 0, "value": 0.5}),
         ("mixer.set_pan", {"track": 0, "value": 0.5}),
         ("mixer.set_mute", {"track": 0, "muted": True}),
+        ("mixer.set_solo", {"track": 0, "soloed": True}),
+        ("mixer.set_arm", {"track": 0, "armed": True}),
+        ("mixer.set_color", {"track": 0, "color": 0x0055AA}),
+        ("mixer.set_stereo_separation", {"track": 0, "stereo_separation": 0.25}),
+        ("mixer.select_track", {"track": 0}),
         ("mixer.set_eq", {"track": 0, "band": 0, "gain": 0.7}),
         ("plugin.set_param", {"track": 0, "slot": 0, "index": 0, "value": 0.9}),
     ):
@@ -824,6 +860,21 @@ def check_lean_writes(c):
           res["before_db"] is not None and res["after_db"] is not None, res)
     check("volume made exactly one undo point",
           len(_state.UNDO) == undo_at + 1, _state.UNDO[-2:])
+    undo_at = len(_state.UNDO)
+    r, db_yields = drive(
+        w, "mixer.set_volume_db", track=3, volume_db=-6.0,
+        tolerance_db=0.1,
+        expected_before={
+            "volume_normalized": r["result"]["after"],
+            "volume_db": r["result"]["after_db"],
+        },
+    )
+    check("dB fader search verifies against FL's authoritative dB getter",
+          r["ok"] and r["result"]["verified"] and db_yields >= 1
+          and abs(r["result"]["after_db"] + 6.0) <= 0.1,
+          (r, db_yields))
+    check("dB fader search takes one undo point for the bounded search",
+          len(_state.UNDO) == undo_at + 1, _state.UNDO[-2:])
 
     undo_at = len(_state.UNDO)
     was = _state.TRACKS[3].pan
@@ -851,6 +902,57 @@ def check_lean_writes(c):
     check("unmute verified and applied",
           r["result"]["verified"] is True and _state.TRACKS[3].muted is False,
           r["result"])
+
+    r = dispatch(w, "mixer.set_solo", track=3, soloed=True)
+    check("solo is an absolute verified state",
+          r["ok"] and r["result"]["verified"]
+          and r["result"]["before"] is False
+          and r["result"]["after"] is True
+          and _state.TRACKS[3].solo is True, r)
+    r = dispatch(w, "mixer.set_solo", track=3, soloed=False)
+    check("unsolo is explicit rather than a blind toggle",
+          r["result"]["verified"] and _state.TRACKS[3].solo is False, r)
+
+    arm_calls = []
+    real_arm = fake_mixer.armTrack
+
+    def counting_arm(index):
+        arm_calls.append(index)
+        return real_arm(index)
+
+    fake_mixer.armTrack = counting_arm
+    try:
+        r = dispatch(w, "mixer.set_arm", track=3, armed=True)
+        check("record arm is verified after one toggle-only API call",
+              r["result"]["verified"] and _state.TRACKS[3].armed is True
+              and arm_calls == [3], (r, arm_calls))
+        r = dispatch(w, "mixer.set_arm", track=3, armed=True)
+        check("record arm at the requested state dispatches no toggle",
+              r["result"]["verified"] and arm_calls == [3]
+              and r["result"]["toggle_dispatched"] is False, (r, arm_calls))
+    finally:
+        fake_mixer.armTrack = real_arm
+
+    r = dispatch(w, "mixer.set_color", track=3, color=0x0055AA)
+    check("mixer color is readback verified",
+          r["result"]["verified"] and r["result"]["after"] == 0x0055AA
+          and _state.TRACKS[3].color == 0x0055AA, r)
+
+    r = dispatch(w, "mixer.set_stereo_separation", track=3,
+                 stereo_separation=0.35)
+    check("stereo separation is readback verified",
+          r["result"]["verified"]
+          and abs(r["result"]["after"] - 0.35) < 1e-9
+          and abs(_state.TRACKS[3].stereo_sep - 0.35) < 1e-9, r)
+
+    undo_at = len(_state.UNDO)
+    r = dispatch(w, "mixer.select_track", track=3)
+    check("active mixer selection is readback verified",
+          r["result"]["verified"] and r["result"]["after"] == 3
+          and _state.ACTIVE_MIXER_TRACK == 3, r)
+    check("active selection truthfully reports no undo point",
+          r["result"]["undo_point_created"] is None
+          and len(_state.UNDO) == undo_at, r["result"])
 
     undo_at = len(_state.UNDO)
     band_was = dict(_state.TRACKS[3].eq[1])
@@ -1362,12 +1464,179 @@ def check_track_b():
     import channels as fake_channels
     import mixer as fake_mixer
     import patterns as fake_patterns
+    import playlist as fake_playlist
     import plugins as fake_plugins
     import transport as fake_transport
 
     _state.reset()
     w = _load_bridge_with_writes()
     session = dispatch(w, "ping")["result"]["session_fingerprint"]
+
+    print("\n-- patterns and Playlist tracks use getter-backed public APIs --")
+    listed, pattern_yields = drive(w, "patterns.list")
+    check("pattern inventory reports current identity and length",
+          listed["ok"] and pattern_yields == 0
+          and listed["result"]["current_pattern"] == 1
+          and listed["result"]["patterns"][0]["name"] == "Pattern 1"
+          and listed["result"]["patterns"][0]["length"] == 16,
+          (listed, pattern_yields))
+    empty, empty_yields = drive(w, "patterns.find_empty", start=1)
+    check("empty-pattern search leaves the current pattern unchanged",
+          empty["ok"] and empty_yields == 0
+          and empty["result"]["empty_pattern"] == 3
+          and empty["result"]["current_pattern_unchanged"] is True,
+          (empty, empty_yields))
+
+    selected, selection_yields = drive(
+        w, "pattern.select", pattern=2,
+        expected_before={"current_pattern_number": 1},
+    )
+    check("pattern selection is absolute and later-tick verified",
+          selected["ok"] and selection_yields == 1
+          and selected["result"]["verified"]
+          and selected["result"]["after"] == 2,
+          (selected, selection_yields))
+    identity, identity_yields = drive(
+        w, "pattern.set_identity", pattern=1, name="Intro", color=0x0055AA,
+        expected_before={"name": "Pattern 1", "color": 0x334455},
+    )
+    check("pattern name and color verify independently",
+          identity["ok"] and identity_yields == 1
+          and identity["result"]["verified_fields"]
+          == {"name": True, "color": True},
+          (identity, identity_yields))
+    length, length_yields = drive(
+        w, "pattern.set_length", pattern=1, length=8,
+        expected_before={"length_beats": 16},
+    )
+    check("pattern length uses the API 39 getter/setter pair",
+          length["ok"] and length_yields == 1
+          and length["result"]["verified"]
+          and length["result"]["after"] == 8,
+          (length, length_yields))
+
+    playlist_rows, playlist_yields = drive(w, "playlist.list")
+    check("Playlist inventory is one-based and bounded",
+          playlist_rows["ok"] and playlist_yields == 0
+          and playlist_rows["result"]["track_count"] == 16
+          and playlist_rows["result"]["tracks"][0]["track"] == 1,
+          (playlist_rows, playlist_yields))
+    playlist_identity, identity_yields = drive(
+        w, "playlist.set_identity", track=1,
+        name="Vocals", color=0x112233,
+        expected_before={"name": "Track 1", "color": 0x223344},
+    )
+    check("Playlist track identity has per-field later-tick proof",
+          playlist_identity["ok"] and identity_yields == 1
+          and playlist_identity["result"]["verified_fields"]
+          == {"name": True, "color": True},
+          (playlist_identity, identity_yields))
+
+    selection_calls = []
+    real_select_track = fake_playlist.selectTrack
+
+    def counting_playlist_select(index):
+        selection_calls.append(index)
+        return real_select_track(index)
+
+    fake_playlist.selectTrack = counting_playlist_select
+    try:
+        playlist_state, state_yields = drive(
+            w, "playlist.set_state", track=2,
+            muted=True, soloed=True, selected=True,
+            expected_before={"muted": False, "soloed": False, "selected": False},
+        )
+        playlist_same, _ = drive(
+            w, "playlist.set_state", track=2, selected=True,
+            expected_before={"selected": True},
+        )
+    finally:
+        fake_playlist.selectTrack = real_select_track
+    check("Playlist mute, solo and selection verify as absolute states",
+          playlist_state["ok"] and state_yields == 1
+          and playlist_state["result"]["verified"]
+          and playlist_state["result"]["verified_fields"]
+          == {"muted": True, "soloed": True, "selected": True},
+          (playlist_state, state_yields))
+    check("toggle-only Playlist selection is dispatched at most once",
+          playlist_same["result"]["verified"] and selection_calls == [2],
+          (playlist_same, selection_calls))
+
+    print("\n-- creative targeting, section markers and automation boundaries --")
+    target, target_yields = drive(
+        w,
+        "creative.prepare_piano_roll",
+        channel=0,
+        pattern=3,
+        index_scope="global",
+        session_fingerprint=session,
+    )
+    check("Piano Roll target selection is later-tick verified",
+          target["ok"] and target_yields == 1
+          and target["result"]["selected_target_verified"]
+          and target["result"]["piano_roll_visibility_verified"] is True
+          and target["result"]["after_channel_indices"] == [0]
+          and target["result"]["after_pattern_number"] == 3,
+          (target, target_yields))
+
+    marker, marker_yields = drive(
+        w,
+        "arrangement.add_markers",
+        markers=[
+            {"time_ticks": 0, "name": "Intro"},
+            {"time_ticks": 1536, "name": "Chorus"},
+        ],
+        session_fingerprint=session,
+    )
+    check("section marker names are observed after one later tick",
+          marker["ok"] and marker_yields == 1
+          and marker["result"]["names_verified"] is True
+          and marker["result"]["times_verified"] is False
+          and marker["result"]["verified"] is False
+          and [item[1] for item in _state.ARRANGEMENT_MARKERS]
+          == ["Intro", "Chorus"], marker)
+    check("marker time proof is withheld because FL exposes no getter",
+          marker["result"]["verification_status"]
+          == "name_count_verified_time_unobservable", marker["result"])
+
+    _state.PLAYING = True
+    _state.RECORDING = True
+    automation, automation_yields = drive(
+        w,
+        "automation.record_value",
+        target_kind="mixer",
+        target_index=3,
+        property="pan",
+        value_normalized=0.25,
+        expected_before=0.5,
+        session_fingerprint=session,
+    )
+    check("REC-event automation verifies the controlled value",
+          automation["ok"] and automation_yields == 1
+          and automation["result"]["control_value_verified"] is True
+          and automation["result"]["capture_conditions_held"] is True
+          and abs(_state.TRACKS[3].pan - (-0.5)) < 1e-4,
+          (automation, automation_yields))
+    check("automation-point proof is withheld without a public point getter",
+          automation["result"]["verified"] is False
+          and automation["result"]["automation_event_recorded"] is None
+          and len(_state.RECORDED_AUTOMATION_EVENTS) == 1,
+          automation["result"])
+    master_automation = dispatch(
+        w,
+        "automation.record_value",
+        target_kind="mixer",
+        target_index=0,
+        property="volume",
+        value_normalized=0.5,
+        session_fingerprint=session,
+    )
+    check("automation keeps Master protected by default",
+          not master_automation["ok"] and "master" in master_automation["error"].lower(),
+          master_automation)
+    _state.PLAYING = False
+    _state.RECORDING = False
+
     channel_scopes = []
     color_writes = []
     plugin_scopes = []
@@ -1558,6 +1827,14 @@ def check_track_b():
         )
         check("sequencer.get remains available with writes disabled",
               sequence_read["ok"], sequence_read)
+        preset_count = dispatch(
+            ro, "plugin.preset_count", target_kind="mixer_effect",
+            track=3, slot=1, use_global_index=False
+        )
+        check("plug-in preset count is an authoritative read",
+              preset_count["ok"]
+              and preset_count["result"]["preset_count"] == 12,
+              preset_count)
 
         print("\n-- Track B transport is absolute and later-tick verified --")
         r, yields = drive(
@@ -1681,6 +1958,71 @@ def check_track_b():
               not refused["ok"] and _state.TEMPO == tempo_before
               and _state.UNDO == undo_before, refused)
         _state.RECORDING = False
+
+        r, yields = drive(
+            w, "transport.set_recording", recording=True,
+            expected_before={"recording": False}
+        )
+        check("record arm is absolute and later-tick verified",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and _state.RECORDING is True, (r, yields))
+        r, yields = drive(w, "transport.set_recording", recording=True)
+        check("record arm at target state dispatches no extra toggle",
+              r["ok"] and yields == 1 and _state.RECORDING is True, (r, yields))
+        dispatch(w, "transport.set_recording", recording=False)
+
+        r, yields = drive(
+            w, "transport.set_metronome", enabled=True,
+            expected_before={"enabled": False}
+        )
+        check("metronome toggle is exposed as a verified absolute state",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and _state.METRONOME is True, (r, yields))
+        r, yields = drive(
+            w, "transport.set_precount", enabled=True,
+            expected_before={"enabled": False}
+        )
+        check("recording precount is exposed as a verified absolute state",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and _state.PRECOUNT is True, (r, yields))
+
+        numerator_before = _state.TIME_SIGNATURE_NUMERATOR
+        r, yields = drive(
+            w, "project.set_time_signature_numerator", numerator=3,
+            expected_before={"numerator": numerator_before}
+        )
+        check("time-signature numerator is proved by PPB divided by PPQ",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and r["result"]["after"]["pulses_per_bar"]
+              == r["result"]["after"]["ppq"] * 3,
+              (r, yields))
+
+        history = dispatch(ro, "project.history")
+        history_position = history["result"]["position"] if history["ok"] else -1
+        check("project history reports absolute bounds and dirty state",
+              history["ok"] and history_position > 0
+              and history["result"]["can_undo"] is True,
+              history)
+        undone, undo_yields = drive(
+            w, "project.undo",
+            expected_before={
+                "position": history_position,
+                "count": history["result"]["count"],
+            },
+        )
+        check("undo moves one absolute history position and verifies it",
+              undone["ok"] and undo_yields == 1
+              and undone["result"]["after"]["position"] == history_position - 1,
+              (undone, undo_yields))
+        redone, redo_yields = drive(
+            w, "project.redo",
+            expected_before={"position": history_position - 1},
+        )
+        check("redo moves one absolute history position and verifies it",
+              redone["ok"] and redo_yields == 1
+              and redone["result"]["after"]["position"] == history_position,
+              (redone, redo_yields))
+
         _state.PLAYING = True
         _state.SONG_POS = 0.8
         r, yields = drive(w, "transport.stop", playing=False, position=0.0)
@@ -1911,6 +2253,39 @@ def check_track_b():
               r["ok"] and r["result"]["verified"] is False
               and r["result"]["verified_fields"]
               == {"volume": True, "pan": False}, r)
+
+        r, yields = drive(
+            w, "channel.set_solo", channel=1, index_scope="global",
+            soloed=True, expected_before={"soloed": False},
+        )
+        check("channel solo is absolute and readback verified",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and r["result"]["after"]["soloed"] is True
+              and _state.CHANNELS[1].solo is True, (r, yields))
+
+        r, yields = drive(
+            w, "channel.set_pitch", channel=2, index_scope="global",
+            pitch=0.5, expected_before={"pitch_normalized": 0.0},
+        )
+        check("channel pitch reports normalized, semitone and range readback",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and r["result"]["after"]["pitch"] == 0.5
+              and r["result"]["after"]["pitch_semitones"] == 1.0
+              and r["result"]["after"]["pitch_range"] == 2.0,
+              (r, yields))
+
+        selection_undo_at = len(_state.UNDO)
+        r, yields = drive(
+            w, "channel.select", channel=2, index_scope="global",
+            exclusive=True, expected_before={"selected_channel_indices": [0]},
+        )
+        check("exclusive channel selection verifies the complete selected set",
+              r["ok"] and yields == 1 and r["result"]["verified"]
+              and r["result"]["before"] == [0]
+              and r["result"]["after"] == [2], (r, yields))
+        check("channel selection reports transient non-undoable state honestly",
+              r["result"]["undo_point_created"] is None
+              and len(_state.UNDO) == selection_undo_at, r["result"])
 
         fingerprint = dispatch(w, "channels.list", global_count=True)["result"]
         fingerprint = fingerprint["channels"][1]["channel_fingerprint"]
@@ -2529,6 +2904,14 @@ def main():
     r = c.call("mixer.list", only_used=False)
     check("only_used=False returns all", len(r["result"]["tracks"]) == 126,
           len(r["result"]["tracks"]))
+    peak_frame = c.call("mixer.peaks", only_used=True, max_tracks=16)
+    check("lightweight peak frame reports live mixer evidence",
+          peak_frame["ok"]
+          and peak_frame["result"]["command"] == "mixer.peaks"
+          and peak_frame["result"]["scanned_track_count"] == 16
+          and any(row["track"] == 3 and row["peak_l"] == 0.42
+                  for row in peak_frame["result"]["tracks"]),
+          peak_frame)
 
     check_mixer_count_sentinel(c)
 

@@ -162,7 +162,7 @@ The supported MIDI scripting modules provide no operation for:
 - reading raw audio buffers;
 - rendering or exporting audio;
 - inserting, removing, or reordering plug-ins;
-- enumerating detailed Playlist clips or editing automation points; or
+- enumerating detailed Playlist clips or reading/editing automation points; or
 - performing a verified Save As or version-copy operation.
 
 FL Studio contains undocumented internal operations, but they are not a stable
@@ -175,6 +175,33 @@ server; verification and parameter configuration remain inside it.
 
 Audio must likewise be exported or recorded through FL Studio before the
 audio-analysis tools can measure it.
+
+## Piano Roll scripts are a separate runtime
+
+FL's controller scripting API can select a global channel and pattern and show
+the Piano Roll, but it cannot enumerate or edit the score. FL exposes those
+notes to a separate `.pyscript` runtime instead. Postfader therefore installs a
+small user-run bootstrap and atomically replaces one generated **Postfader
+Apply** script for each requested write or transform.
+
+The controller bridge verifies the intended channel, pattern, and Piano Roll
+visibility before the host sends the platform shortcut. A successful shortcut
+dispatch proves focus/key delivery only. Because the controller side has no
+note getter, `application_verified` is always false and no second Piano Roll
+mutation should be inferred safe merely from dispatch.
+
+## Markers and automation have asymmetric getters
+
+Image-Line exposes marker insertion and marker-name enumeration, but no public
+getter for each marker's timeline position. Section-marker receipts can prove
+names on a later tick while leaving `times_verified=false`.
+
+The public REC-event path can record one controller value while playback and
+recording are active. Postfader verifies those capture conditions and reads the
+controlled mixer/channel value back, but FL exposes no public getter for the
+new automation point. `automation_event_recorded` therefore remains null and
+the aggregate receipt remains unverified. These helpers do not provide
+automation-clip CRUD.
 
 ## A send level requires an existing route
 
@@ -223,8 +250,10 @@ The verified write surface includes these narrow mixer operations:
 | Set one track name | `fl_set_mixer_name` |
 | Create or remove one route | `fl_set_mixer_send` |
 | Set one existing route's amount | `fl_set_mixer_send_level` |
-| Set one fader, pan, mute state, or built-in EQ band | Corresponding `fl_set_*` tool |
+| Set one fader by normalized value or dB | `fl_set_mixer_volume`, `fl_set_mixer_volume_db` |
+| Set pan, mute, solo, recording arm, color, or stereo separation | Corresponding `fl_set_mixer_*` tool |
+| Select the active mixer track | `fl_select_mixer_track` |
+| Set one built-in EQ band | `fl_set_track_eq` |
 
-Other documented mixer operations—channel linking, arming, soloing, stereo
-separation, polarity, and channel swapping—are intentionally outside the
-public MCP write surface.
+Channel linking, polarity, channel swapping, and the unreliable per-effect-slot
+controls remain outside the public MCP write surface.

@@ -33,12 +33,17 @@ from fl_studio_mcp.contracts import (  # noqa: E402
     MixerTrackSummary,
     PluginParameter,
     SelectedRangeObservation,
+    VerifiedMixerArmWrite,
+    VerifiedMixerColorWrite,
     VerifiedMixerEqWrite,
     VerifiedMixerMuteWrite,
     VerifiedMixerNameWrite,
     VerifiedMixerPanWrite,
+    VerifiedMixerSelectionWrite,
     VerifiedMixerSendLevelWrite,
     VerifiedMixerSendWrite,
+    VerifiedMixerSoloWrite,
+    VerifiedMixerStereoSeparationWrite,
     VerifiedMixerVolumeWrite,
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
@@ -879,6 +884,17 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertTrue(any("session fingerprint" in w for w in info.warnings))
         self.assertEqual(inspector.project_summary().project_title, "Synthetic Test Project")
 
+    def test_transport_read_includes_every_direct_transport_option(self):
+        _state.METRONOME = True
+        _state.PRECOUNT = True
+        _state.TIME_SIGNATURE_NUMERATOR = 7
+
+        transport = self.inspector.transport_state()
+
+        self.assertIs(transport.metronome_enabled, True)
+        self.assertIs(transport.precount_enabled, True)
+        self.assertEqual(transport.time_signature_numerator, 7)
+
     def test_reads_continue_when_packaged_bridge_digest_is_unavailable(self):
         with mock.patch(
             "fl_studio_mcp.readonly_inspector.expected_bridge_deployment",
@@ -989,11 +1005,23 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "copilot_capture_readonly_inspection",
             "fl_list_channels",
             "fl_get_step_sequence",
+            "fl_list_patterns",
+            "fl_find_empty_pattern",
+            "fl_list_playlist_tracks",
+            "fl_get_project_history",
+            "fl_get_plugin_preset_count",
         }
         write_tools = {
+            "fl_apply_verified_batch",
             "fl_set_mixer_volume",
+            "fl_set_mixer_volume_db",
             "fl_set_mixer_pan",
             "fl_set_mixer_mute",
+            "fl_set_mixer_solo",
+            "fl_set_mixer_arm",
+            "fl_set_mixer_color",
+            "fl_set_mixer_stereo_separation",
+            "fl_select_mixer_track",
             "fl_set_track_eq",
             "fl_set_mixer_name",
             "fl_set_mixer_send",
@@ -1006,7 +1034,21 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "fl_set_song_position",
             "fl_set_loop_mode",
             "fl_set_tempo",
+            "fl_set_recording",
+            "fl_set_metronome",
+            "fl_set_precount",
+            "fl_set_time_signature_numerator",
+            "fl_undo",
+            "fl_redo",
             "fl_set_channel_mix",
+            "fl_set_channel_solo",
+            "fl_set_channel_pitch",
+            "fl_select_channel",
+            "fl_select_pattern",
+            "fl_set_pattern_identity",
+            "fl_set_pattern_length",
+            "fl_set_playlist_track_identity",
+            "fl_set_playlist_track_state",
             "fl_set_channel_identity",
             "fl_route_channel_to_mixer",
             "fl_set_step_sequence",
@@ -1021,16 +1063,59 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "audio_analyze_masking",
             "audio_find_recent_bounces",
         }
+        mix_read_tools = {
+            "mix_doctor",
+            "mix_reference_recommendations",
+            "mix_masking_recommendations",
+            "mix_get_peak_watch",
+            "mix_list_plugin_profiles",
+            "mix_inspect_plugin_compatibility",
+            "mix_resolve_processing_intent",
+            "mix_get_plan",
+            "mix_finish_assessment",
+        }
+        workflow_state_tools = {
+            "mix_start_peak_watch",
+            "mix_stop_peak_watch",
+            "mix_create_gain_stage_plan",
+            "mix_create_plan",
+            "piano_roll_bridge",
+        }
+        plan_apply_tools = {"mix_apply_plan"}
+        creative_read_tools = {
+            "compose_chord_progression",
+            "compose_melody",
+            "compose_bassline",
+            "compose_drums",
+            "audio_estimate_tempo_and_key",
+            "audio_transcribe_melody",
+        }
+        creative_fl_tools = {
+            "piano_roll_write_notes",
+            "piano_roll_transform",
+            "arrangement_prepare_pattern",
+            "arrangement_add_section_markers",
+            "automation_record_value",
+        }
+        file_mutating_tools = {"midi_export_type1"}
         self.assertEqual(
             names,
-            read_tools | write_tools | audition_tools | mode_tools | audio_tools,
+            read_tools
+            | write_tools
+            | audition_tools
+            | mode_tools
+            | audio_tools
+            | mix_read_tools
+            | workflow_state_tools
+            | plan_apply_tools
+            | creative_read_tools
+            | creative_fl_tools
+            | file_mutating_tools,
         )
-        # Still no undo, render, approval ceremony or reflective escape hatch,
-        # whatever it might be called.
+        # Still no render, rollback ceremony, project save, or reflective
+        # escape hatch, whatever it might be called.
         prohibited_fragments = (
-            "apply",
             "rollback",
-            "undo",
             "render",
             "api_call",
             "save",
@@ -1041,7 +1126,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             [name for name in names if any(fragment in name for fragment in prohibited_fragments)]
         )
         by_name = {tool.name: tool for tool in tools}
-        for name in read_tools | audio_tools:
+        for name in read_tools | audio_tools | mix_read_tools | creative_read_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertTrue(annotations and annotations.read_only_hint)
@@ -1065,6 +1150,10 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                     self.assertNotIn("expected_before", properties)
                     self.assertIn("expected_digest", properties)
                     self.assertIn("expected_digest", required)
+                elif name == "fl_apply_verified_batch":
+                    self.assertNotIn("expected_before", properties)
+                    self.assertIn("operations", properties)
+                    self.assertIn("operations", required)
                 else:
                     self.assertIn("expected_before", properties)
                     self.assertNotIn("expected_before", required)
@@ -1078,6 +1167,32 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertIs(mode_annotations.read_only_hint, False)
         self.assertIs(mode_annotations.destructive_hint, True)
         self.assertIs(mode_annotations.idempotent_hint, True)
+        for name in workflow_state_tools:
+            with self.subTest(tool=name):
+                annotations = by_name[name].annotations
+                self.assertIsNotNone(annotations)
+                self.assertIs(annotations.read_only_hint, False)
+                self.assertIs(annotations.destructive_hint, False)
+                self.assertIs(annotations.idempotent_hint, False)
+        plan_annotations = by_name["mix_apply_plan"].annotations
+        self.assertIsNotNone(plan_annotations)
+        self.assertIs(plan_annotations.read_only_hint, False)
+        self.assertIs(plan_annotations.destructive_hint, True)
+        self.assertIs(plan_annotations.idempotent_hint, False)
+        for name in creative_fl_tools:
+            with self.subTest(tool=name):
+                annotations = by_name[name].annotations
+                self.assertIsNotNone(annotations)
+                self.assertIs(annotations.read_only_hint, False)
+                self.assertIs(annotations.destructive_hint, True)
+                self.assertIs(annotations.idempotent_hint, False)
+                self.assertIs(annotations.open_world_hint, True)
+        file_annotations = by_name["midi_export_type1"].annotations
+        self.assertIsNotNone(file_annotations)
+        self.assertIs(file_annotations.read_only_hint, False)
+        self.assertIs(file_annotations.destructive_hint, True)
+        self.assertIs(file_annotations.idempotent_hint, False)
+        self.assertIs(file_annotations.open_world_hint, False)
         self.assertEqual(
             set(by_name["fl_set_write_mode"].input_schema["properties"]),
             {"enabled", "confirm_user_present"},
@@ -1323,7 +1438,9 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(
             WriteGateway.ALLOWED_COMMANDS,
             {
-                "mixer.set_volume", "mixer.set_pan", "mixer.set_mute",
+                "mixer.set_volume", "mixer.set_volume_db", "mixer.set_pan", "mixer.set_mute",
+                "mixer.set_solo", "mixer.set_arm", "mixer.set_color",
+                "mixer.set_stereo_separation", "mixer.select_track",
                 "mixer.set_eq", "mixer.set_name", "mixer.set_send",
                 "mixer.set_send_level", "plugin.set_param",
                 "plugin.set_param_display", "plugin.set_param_option",
@@ -1353,6 +1470,14 @@ class VerifiedWriteTests(unittest.TestCase):
             ),
             ("set_mixer_pan", {"track_index": 0, "pan": 0.25}),
             ("set_mixer_mute", {"track_index": 0, "muted": True}),
+            ("set_mixer_solo", {"track_index": 0, "soloed": True}),
+            ("set_mixer_arm", {"track_index": 0, "armed": True}),
+            ("set_mixer_color", {"track_index": 0, "color": 0x0055AA}),
+            (
+                "set_mixer_stereo_separation",
+                {"track_index": 0, "stereo_separation": 0.25},
+            ),
+            ("select_mixer_track", {"track_index": 0}),
             (
                 "set_mixer_eq",
                 {"track_index": 0, "band_index": 1, "gain_normalized": 0.6},
@@ -1848,6 +1973,72 @@ class VerifiedWriteTests(unittest.TestCase):
             self.writer.set_mixer_mute(track_index=-3, muted=True)
         self.assertEqual(self.dispatched(), [])
 
+    # -- mixer parity controls -----------------------------------------
+
+    def test_solo_write_returns_the_verified_typed_shape(self):
+        result = self.writer.set_mixer_solo(track_index=3, soloed=True)
+        self.assertIsInstance(result, VerifiedMixerSoloWrite)
+        self.assert_write_report(result, "mixer.set_solo", 3)
+        self.assertIs(result.requested_soloed, True)
+        self.assertIs(result.before_soloed, False)
+        self.assertIs(result.after_soloed, True)
+        self.assertTrue(_state.TRACKS[3].solo)
+
+    def test_arm_write_calls_fl_toggle_at_most_once(self):
+        with mock.patch.object(
+            bridge.mixer, "armTrack", wraps=bridge.mixer.armTrack
+        ) as arm:
+            result = self.writer.set_mixer_arm(track_index=3, armed=True)
+            again = self.writer.set_mixer_arm(track_index=3, armed=True)
+        self.assertIsInstance(result, VerifiedMixerArmWrite)
+        self.assert_write_report(result, "mixer.set_arm", 3)
+        self.assertIs(result.before_armed, False)
+        self.assertIs(result.after_armed, True)
+        self.assertIs(again.verified, True)
+        self.assertEqual(arm.call_count, 1)
+
+    def test_arm_write_reports_an_ignored_toggle(self):
+        with mock.patch.object(bridge.mixer, "armTrack", lambda *a, **k: None):
+            result = self.writer.set_mixer_arm(track_index=3, armed=True)
+        self.assert_unverified(result)
+        self.assertIs(result.after_armed, False)
+
+    def test_color_write_returns_the_verified_typed_shape(self):
+        result = self.writer.set_mixer_color(track_index=3, color=0x0055AA)
+        self.assertIsInstance(result, VerifiedMixerColorWrite)
+        self.assert_write_report(result, "mixer.set_color", 3)
+        self.assertEqual(result.requested_color, 0x0055AA)
+        self.assertEqual(result.before_color, 0x565148)
+        self.assertEqual(result.after_color, 0x0055AA)
+
+    def test_color_write_rejects_out_of_word_range_locally(self):
+        for value in (-1, 0x100000000, 1.5, True):
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    self.writer.set_mixer_color(track_index=3, color=value)
+        self.assertEqual(self.dispatched(), [])
+
+    def test_stereo_separation_returns_the_verified_typed_shape(self):
+        result = self.writer.set_mixer_stereo_separation(
+            track_index=3, stereo_separation=0.35
+        )
+        self.assertIsInstance(result, VerifiedMixerStereoSeparationWrite)
+        self.assert_write_report(result, "mixer.set_stereo_separation", 3)
+        self.assertEqual(result.before_stereo_separation, 0.0)
+        self.assertEqual(result.after_stereo_separation, 0.35)
+
+    def test_active_track_selection_has_explicit_non_undoable_proof(self):
+        result = self.writer.select_mixer_track(track_index=3)
+        self.assertIsInstance(result, VerifiedMixerSelectionWrite)
+        self.assertEqual(result.bridge_command, "mixer.select_track")
+        self.assertEqual(result.track_index, 3)
+        self.assertIs(result.verified, True)
+        self.assertEqual(result.before_active_track_index, 0)
+        self.assertEqual(result.after_active_track_index, 3)
+        self.assertIsNone(result.undo_point_created)
+        self.assertEqual(_state.ACTIVE_MIXER_TRACK, 3)
+        self.assertEqual(_state.UNDO, [])
+
     # -- built-in EQ -----------------------------------------------------
 
     def test_eq_write_returns_the_verified_typed_shape(self):
@@ -1999,12 +2190,20 @@ class VerifiedWriteTests(unittest.TestCase):
 
 
 class VerifiedWriteToolTests(unittest.TestCase):
-    """All ten writes as the agent reaches them: through the MCP tools."""
+    """Every verified-kernel write as the agent reaches it through MCP."""
 
     TOOLS = {
         "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 0.65},
         "fl_set_mixer_pan": {"track_index": 3, "pan": -0.4},
         "fl_set_mixer_mute": {"track_index": 3, "muted": True},
+        "fl_set_mixer_solo": {"track_index": 3, "soloed": True},
+        "fl_set_mixer_arm": {"track_index": 3, "armed": True},
+        "fl_set_mixer_color": {"track_index": 3, "color": 0x0055AA},
+        "fl_set_mixer_stereo_separation": {
+            "track_index": 3,
+            "stereo_separation": 0.35,
+        },
+        "fl_select_mixer_track": {"track_index": 3},
         "fl_set_track_eq": {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
         "fl_set_plugin_param": {
             "track_index": 3,
@@ -2040,6 +2239,11 @@ class VerifiedWriteToolTests(unittest.TestCase):
         "fl_set_mixer_volume": 0.72,
         "fl_set_mixer_pan": 0.0,
         "fl_set_mixer_mute": False,
+        "fl_set_mixer_solo": False,
+        "fl_set_mixer_arm": False,
+        "fl_set_mixer_color": 0x565148,
+        "fl_set_mixer_stereo_separation": 0.0,
+        "fl_select_mixer_track": 0,
         "fl_set_track_eq": {"gain_normalized": 0.5},
         "fl_set_mixer_name": "Lead Vox",
         "fl_set_mixer_send": False,
@@ -2061,6 +2265,11 @@ class VerifiedWriteToolTests(unittest.TestCase):
         "fl_set_mixer_volume": 0.1,
         "fl_set_mixer_pan": 0.25,
         "fl_set_mixer_mute": True,
+        "fl_set_mixer_solo": True,
+        "fl_set_mixer_arm": True,
+        "fl_set_mixer_color": 0x123456,
+        "fl_set_mixer_stereo_separation": -0.5,
+        "fl_select_mixer_track": 2,
         "fl_set_track_eq": {"gain_normalized": 0.1},
         "fl_set_mixer_name": "A Different Track",
         "fl_set_mixer_send": True,
@@ -2073,6 +2282,14 @@ class VerifiedWriteToolTests(unittest.TestCase):
         "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 1.5},
         "fl_set_mixer_pan": {"track_index": 3, "pan": -4.0},
         "fl_set_mixer_mute": {"track_index": -2, "muted": True},
+        "fl_set_mixer_solo": {"track_index": -2, "soloed": True},
+        "fl_set_mixer_arm": {"track_index": -2, "armed": True},
+        "fl_set_mixer_color": {"track_index": 3, "color": 0x100000000},
+        "fl_set_mixer_stereo_separation": {
+            "track_index": 3,
+            "stereo_separation": 4.0,
+        },
+        "fl_select_mixer_track": {"track_index": -1},
         "fl_set_track_eq": {"track_index": 3, "band_index": 7, "gain_normalized": 0.7},
         "fl_set_plugin_param": {
             "track_index": 3,
@@ -2136,7 +2353,10 @@ class VerifiedWriteToolTests(unittest.TestCase):
                 self.assertEqual(
                     body["verification_basis"], "readback_on_a_later_fl_idle_tick"
                 )
-                self.assertIs(body["undo_point_created"], True)
+                if name == "fl_select_mixer_track":
+                    self.assertIsNone(body["undo_point_created"])
+                else:
+                    self.assertIs(body["undo_point_created"], True)
                 self.assertIs(body["project_saved"], False)
                 self.assertEqual(body["session_fingerprint"], SESSION_FINGERPRINT)
                 self.assertIs(body["session_precondition_applied"], False)
