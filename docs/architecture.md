@@ -1,9 +1,9 @@
 # Architecture
 
 Postfader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The public MCP surface contains 37 tools: 12 inspection
-tools, one session write-mode control, 19 opt-in readback-verified state tools,
-one bounded live-note audition tool, and four audio-file tools.
+controller script. The v0.20 public surface contains 90 tools and 8 resources.
+It is organized as a verified control kernel, a production-workflow layer, and
+an optional creative layer rather than one undifferentiated raw API catalog.
 
 ```text
 MCP-compatible client
@@ -12,7 +12,10 @@ MCP-compatible client
 fl_studio_mcp/mcp_server.py
         ├── readonly_inspector.py ─┐
         ├── verified_writer.py ────┤
-        ├── performance.py ──────┼── bridge_client.py
+        ├── performance.py ────────┼── bridge_client.py
+        ├── workflows.py ──────────┤
+        ├── mixing.py ─────────────┤
+        ├── creative.py ───────────┤
         │                          │        │
         │                          │        │ local SysEx over a configured virtual MIDI endpoint
         │                          │        ▼
@@ -21,7 +24,8 @@ fl_studio_mcp/mcp_server.py
         │                                   ▼
         │                              FL Studio 2026
         │
-        └── advisory.py ── audio.py ── caller-selected audio files
+        ├── advisory.py ── audio.py ───────── caller-selected audio files
+        └── music_analysis.py ───────────────── tempo/key/transcription
 ```
 
 The MCP process and bridge are local. The MCP client is a separate trust
@@ -32,7 +36,8 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 37 tools and their annotations. It
+`fl_studio_mcp/mcp_server.py` defines all 90 tools, 8 resources, and their
+annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
 and audio work runs off the MCP event loop.
@@ -53,11 +58,12 @@ inspector does not infer what the control means.
 
 ### Verified writes
 
-`fl_studio_mcp/verified_writer.py` has a separate allowlist containing the ten
-0.11 mixer and plug-in write commands. `fl_studio_mcp/performance.py` adds
+`fl_studio_mcp/verified_writer.py` has a separate allowlist for mixer and
+plug-in writes. `fl_studio_mcp/performance.py` adds
 separate read and non-replayable mutation gateways for transport, global
-Channel Rack targets, current-pattern step cells, live-note audition, and
-target-aware generator parameters. Both paths validate ranges and pass through
+Channel Rack targets, patterns, Playlist tracks, project history,
+current-pattern step cells, live-note audition, and target-aware generator
+parameters. Both paths validate ranges and pass through
 the bridge's proof fields without inventing defaults. A missing or
 contradictory verification field is a protocol error.
 
@@ -84,6 +90,32 @@ An optional 32-character bridge-lifetime session fingerprint and typed
 both after resolving the target and immediately before it requests undo or
 mutates FL. The fingerprint is a concurrency token, not authentication or a
 durable project identity.
+
+### Workflow engine
+
+`fl_studio_mcp/workflows.py` defines the closed batch-operation union and
+executes it with one pinned bridge preflight. A batch is ordered and
+non-atomic: each item retains its own typed verification receipt, and earlier
+successes are never hidden or rolled back when a later item is unverified.
+
+`fl_studio_mcp/mixing.py` adds process-local peak watches and mix plans plus
+Mix Doctor, gain-staging, actual-bounce reference/masking recommendations,
+processing intents, plug-in profiles, and finish assessment. Analysis creates
+recommendations or plans; only the explicit apply surface mutates FL. Registry
+IDs are intentionally process-lifetime objects.
+
+### Creative pack
+
+`fl_studio_mcp/creative.py` owns deterministic note generators, Type-1 MIDI
+serialization/readback, pattern preparation, section markers, automation
+recording helpers, and the Piano Roll script handshake. The generated Piano
+Roll script runs in FL's separate `.pyscript` environment; the normal bridge
+verifies the channel/pattern target, while the host reports hotkey dispatch
+without fabricating note readback.
+
+`fl_studio_mcp/music_analysis.py` estimates periodic tempo, ranks global
+major/minor key candidates, and performs bounded monophonic transcription from
+decoded audio. These are offline analyses and never contact FL.
 
 ### Contracts
 
@@ -135,14 +167,16 @@ so a stale installation can be detected.
 
 ## Bridge command surfaces
 
-Normal operation has four bounded command surfaces:
+Normal operation has four bounded bridge-command surfaces. Host-only
+composition, audio, MIDI-file, registry, and plan operations do not enter this
+table:
 
 | Surface | Gate | Commands |
 | --- | --- | --- |
-| Read-only | Always | `ping`, `project.info`, `arrangement.selection`, `mixer.list`, `mixer.track`, `plugin.params`, `plugin.scan_params`, `channels.list`, `sequencer.get` |
+| Read-only | Always | 15 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets, patterns, Playlist tracks, history, and sequencer reads |
 | Session capability control | Always; enabling requires confirmation and the current session fingerprint | `session.set_write_mode` |
-| Verified state changes | Current bridge session reports write mode | Ten mixer/plug-in commands; `transport.set_playing`, `transport.stop`, `transport.set_song_position`, `transport.set_loop_mode`, `transport.set_tempo`; `channel.set_mix`, `channel.set_identity`, `channel.route_to_mixer`; and `sequencer.set` |
-| Dispatch-only audition | Same session write gate | `channel.trigger_note` |
+| Direct state changes | Current bridge session reports write mode | 39 MCP setters backed by 39 direct bridge commands across transport/project, mixer, channels, plug-ins, patterns, Playlist tracks, and sequencer state |
+| Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `creative.prepare_piano_roll`, `arrangement.add_markers`, and `automation.record_value` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
 the bridge's `available` list.
@@ -169,8 +203,9 @@ replay the mutating command or roll the write back. Some mixer and plug-in
 handlers deliberately repeat their FL-facing setter inside that single command
 because FL can drop a lone call; the response still reports only readback proof.
 
-Persistent mixer, Channel Rack, sequencer, tempo, and plug-in mutations request
-one FL Studio undo point, then observe the undo-history count and position.
+Persistent mixer, Channel Rack, pattern, Playlist, sequencer, tempo, and plug-in
+mutations request one FL Studio undo point, then observe the undo-history count
+and position.
 Every mutation reports `undo_point_created` as true, false, or null; transient
 transport actions and live-note audition report null. Live-note audition only
 proves that bounded note-on and note-off dispatch completed; it does not claim

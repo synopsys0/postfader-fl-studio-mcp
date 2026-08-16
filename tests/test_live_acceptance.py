@@ -412,16 +412,28 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def scenario(self):
         arguments = {
+            "fl_redo": {},
             "fl_route_channel_to_mixer": {
                 "channel_index": 0,
                 "mixer_destination": 2,
             },
+            "fl_select_channel": {"channel_index": 0},
+            "fl_select_mixer_track": {"track_index": 1},
+            "fl_select_pattern": {"pattern_number": 1},
             "fl_set_channel_identity": {"channel_index": 0, "name": "Fixture"},
             "fl_set_channel_mix": {
                 "channel_index": 0,
                 "volume_normalized": 0.5,
             },
+            "fl_set_channel_pitch": {
+                "channel_index": 0,
+                "pitch_normalized": 0.55,
+            },
+            "fl_set_channel_solo": {"channel_index": 0, "soloed": True},
             "fl_set_loop_mode": {"loop_mode": "song"},
+            "fl_set_metronome": {"enabled": True},
+            "fl_set_mixer_arm": {"track_index": 1, "armed": True},
+            "fl_set_mixer_color": {"track_index": 1, "color": 0x0055AA},
             "fl_set_mixer_mute": {"track_index": 1, "muted": False},
             "fl_set_mixer_name": {"track_index": 1, "name": "Fixture"},
             "fl_set_mixer_pan": {"track_index": 1, "pan": 0.0},
@@ -435,11 +447,21 @@ class WriteAcceptanceTests(unittest.TestCase):
                 "destination_track_index": 2,
                 "level_normalized": 0.5,
             },
+            "fl_set_mixer_solo": {"track_index": 1, "soloed": True},
+            "fl_set_mixer_stereo_separation": {
+                "track_index": 1,
+                "stereo_separation": 0.25,
+            },
             "fl_set_mixer_volume": {
                 "track_index": 1,
                 "volume_normalized": 0.8,
             },
+            "fl_set_mixer_volume_db": {"track_index": 1, "volume_db": -6.0},
+            "fl_set_pattern_identity": {"pattern_number": 1, "name": "Fixture"},
+            "fl_set_pattern_length": {"pattern_number": 1, "length_beats": 16},
             "fl_set_playing": {"playing": False},
+            "fl_set_playlist_track_identity": {"track_index": 1, "name": "Fixture"},
+            "fl_set_playlist_track_state": {"track_index": 1, "muted": True},
             "fl_set_plugin_param": {
                 "parameter_index": 0,
                 "normalized_value": 0.5,
@@ -466,12 +488,16 @@ class WriteAcceptanceTests(unittest.TestCase):
                 "updates": [{"step_index": 0, "enabled": True}],
             },
             "fl_set_tempo": {"tempo_bpm": 120.0},
+            "fl_set_precount": {"enabled": True},
+            "fl_set_recording": {"recording": True},
+            "fl_set_time_signature_numerator": {"numerator": 4},
             "fl_set_track_eq": {
                 "track_index": 1,
                 "band_index": 0,
                 "gain_normalized": 0.5,
             },
             "fl_stop": {},
+            "fl_undo": {},
         }
         return {
             "scenario_version": 1,
@@ -911,17 +937,10 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_late_resolved_schema_error_prevents_all_writes(self):
         scenario = self.scenario()
-        scenario["operations"][-1]["mutation_arguments"] = {
-            "tempo_bpm": {"$before": "playing"}
-        }
-        scenario["operations"][-1]["tool"] = "fl_set_tempo"
-        # Preserve exact coverage by swapping the original tempo operation's tool.
         tempo = next(
-            item for item in scenario["operations"][:-1] if item["tool"] == "fl_set_tempo"
+            item for item in scenario["operations"] if item["tool"] == "fl_set_tempo"
         )
-        tempo["tool"] = "fl_stop"
-        tempo["mutation_arguments"] = {}
-        tempo["restore"] = [{"tool": "fl_stop", "arguments": {}}]
+        tempo["mutation_arguments"] = {"tempo_bpm": {"$before": "playing"}}
         calls = []
         report = self.run_acceptance(scenario, self.passing_caller(calls))
         self.assertEqual(report["overall"], "fail")
@@ -963,14 +982,14 @@ class WriteAcceptanceTests(unittest.TestCase):
             any(name in self.surface.persistent_write_tools for name, _args in calls)
         )
 
-    def test_versioned_fixture_fully_resolves_all_19_writes_without_io(self):
+    def test_versioned_fixture_fully_resolves_all_direct_writes_without_io(self):
         scenario = json.loads(
             (ROOT / "tests" / "fixtures" / "write-scenario-v1.json").read_text(
                 encoding="utf-8"
             )
         )
         prepared = validate_write_scenario_plan(self.surface, scenario)
-        self.assertEqual(len(prepared), 19)
+        self.assertEqual(len(prepared), len(self.surface.persistent_write_tools))
         step = next(item for item in prepared if item.tool == "fl_set_step_sequence")
         self.assertEqual(
             step.restore_actions[0][1]["expected_digest"],

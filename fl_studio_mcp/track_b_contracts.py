@@ -31,6 +31,10 @@ PLAYBACK_SPEED_OMISSION_REASON = (
 SESSION_FINGERPRINT_PATTERN = r"^[0-9a-f]{32}$"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 MAX_CHANNEL_NAME_LENGTH = 64
+MAX_PATTERN_NAME_LENGTH = 64
+MAX_PLAYLIST_TRACK_NAME_LENGTH = 64
+MAX_PATTERN_NUMBER = 999
+MAX_PATTERN_LENGTH_BEATS = 4096
 FL_COLOR_WORD_MAX = 0xFFFFFFFF
 FL_COLOR_RGB_MASK = 0x00FFFFFF
 FL_COLOR_SIGNED_MIN = -(1 << 31)
@@ -219,6 +223,38 @@ class ExpectedTempoState(TrackBContract):
     tempo_bpm: float = Field(ge=10.0, le=522.0)
 
 
+class ExpectedRecordingState(TrackBContract):
+    recording: bool
+
+
+class ExpectedMetronomeState(TrackBContract):
+    enabled: bool
+
+
+class ExpectedPrecountState(TrackBContract):
+    enabled: bool
+
+
+class ExpectedTimeSignatureState(TrackBContract):
+    numerator: int = Field(ge=1, le=32)
+
+
+class ExpectedProjectHistoryState(TrackBContract):
+    position: int | None = Field(default=None, ge=0)
+    count: int | None = Field(default=None, ge=0)
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedProjectHistoryState":
+        if (
+            self.position is None
+            and self.count is None
+            and self.project_dirty_flag is None
+        ):
+            raise ValueError("expected_before needs a history position, count, or dirty flag")
+        return self
+
+
 class VerifiedPlayingWrite(TrackBVerifiedMutation):
     bridge_command: Literal["transport.set_playing"] = "transport.set_playing"
     requested_playing: bool
@@ -266,6 +302,87 @@ class VerifiedTempoWrite(TrackBVerifiedMutation):
     requested_tempo_bpm: float = Field(ge=10.0, le=522.0)
     before_tempo_bpm: float | None = None
     after_tempo_bpm: float | None = None
+
+
+class VerifiedRecordingWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["transport.set_recording"] = "transport.set_recording"
+    requested_recording: bool
+    before_recording: bool | None = None
+    after_recording: bool | None = None
+
+
+class VerifiedMetronomeWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["transport.set_metronome"] = "transport.set_metronome"
+    requested_enabled: bool
+    before_enabled: bool | None = None
+    after_enabled: bool | None = None
+
+
+class VerifiedPrecountWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["transport.set_precount"] = "transport.set_precount"
+    requested_enabled: bool
+    before_enabled: bool | None = None
+    after_enabled: bool | None = None
+
+
+class TimeSignatureSnapshot(TrackBContract):
+    numerator: int | None = Field(default=None, ge=1, le=32)
+    ppq: int | None = Field(default=None, ge=1)
+    pulses_per_bar: int | None = Field(default=None, ge=1)
+    denominator_available: Literal[False] = False
+
+
+class VerifiedTimeSignatureNumeratorWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["project.set_time_signature_numerator"] = (
+        "project.set_time_signature_numerator"
+    )
+    requested_numerator: int = Field(ge=1, le=32)
+    before: TimeSignatureSnapshot
+    after: TimeSignatureSnapshot
+
+
+class ProjectHistorySnapshot(TrackBContract):
+    position: int = Field(ge=0)
+    count: int = Field(ge=0)
+    last_position: int = Field(ge=0)
+    level_hint: str = Field(max_length=512)
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    can_undo: bool
+    can_redo: bool
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> "ProjectHistorySnapshot":
+        if self.position > self.count or self.last_position > self.count:
+            raise ValueError("undo-history position/last/count bounds are inconsistent")
+        if self.can_undo != (self.position > 1):
+            raise ValueError("can_undo contradicts the history position")
+        if self.can_redo != (self.position < self.count):
+            raise ValueError("can_redo contradicts the history count")
+        return self
+
+
+class ProjectHistoryObservation(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    history: ProjectHistorySnapshot
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class VerifiedProjectHistoryMove(TrackBVerifiedMutation):
+    bridge_command: Literal["project.undo", "project.redo"]
+    direction: Literal["undo", "redo"]
+    requested_position: int = Field(ge=0)
+    before: ProjectHistorySnapshot
+    after: ProjectHistorySnapshot
+
+    @model_validator(mode="after")
+    def direction_matches_command(self) -> "VerifiedProjectHistoryMove":
+        if self.bridge_command != "project." + self.direction:
+            raise ValueError("history direction contradicts bridge command")
+        if self.verified != (self.after.position == self.requested_position):
+            raise ValueError("verified must reflect the requested history position")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +461,9 @@ class ChannelSummary(TrackBContract):
     color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
     volume_normalized: float | None = None
     pan: float | None = None
+    pitch_normalized: float | None = Field(default=None, ge=-1.0, le=1.0)
+    pitch_semitones: float | None = None
+    pitch_range_semitones: float | None = Field(default=None, ge=0.0)
     muted: bool | None = None
     soloed: bool | None = None
     selected: bool | None = None
@@ -488,6 +608,15 @@ class TargetedLoadedPluginInventory(TrackBContract):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PluginPresetCount(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    plugin: TargetedPluginSummary
+    preset_count: int = Field(ge=0)
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class PluginParameterSnapshot(TrackBContract):
     normalized_value: float | None = None
     display_text: str | None = Field(default=None, max_length=256)
@@ -625,6 +754,41 @@ class ExpectedChannelRouteState(TrackBContract):
         return self
 
 
+class ExpectedChannelSoloState(TrackBContract):
+    channel_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    soloed: bool | None = None
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedChannelSoloState":
+        if self.channel_fingerprint is None and self.soloed is None:
+            raise ValueError("expected_before needs a fingerprint and/or solo state")
+        return self
+
+
+class ExpectedChannelPitchState(TrackBContract):
+    channel_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
+    pitch_normalized: float | None = Field(default=None, ge=-1.0, le=1.0)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedChannelPitchState":
+        if self.channel_fingerprint is None and self.pitch_normalized is None:
+            raise ValueError("expected_before needs a fingerprint and/or pitch")
+        return self
+
+
+class ExpectedChannelSelectionState(TrackBContract):
+    selected_channel_indices: list[int]
+
+    @model_validator(mode="after")
+    def require_canonical_indices(self) -> "ExpectedChannelSelectionState":
+        values = self.selected_channel_indices
+        if any(type(value) is not int or value < 0 for value in values):
+            raise ValueError("selected channel indices must be non-negative integers")
+        if values != sorted(set(values)):
+            raise ValueError("selected channel indices must be sorted and unique")
+        return self
+
+
 class ExpectedChannelTargetState(TrackBContract):
     """Strong observation-scoped guard for an event aimed at one channel."""
 
@@ -646,6 +810,18 @@ class ChannelIdentitySnapshot(TrackBContract):
 
 class ChannelRouteSnapshot(TrackBContract):
     mixer_destination: int | None = None
+    channel_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+
+class ChannelSoloSnapshot(TrackBContract):
+    soloed: bool | None = None
+    channel_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+
+class ChannelPitchSnapshot(TrackBContract):
+    pitch_normalized: float | None = Field(default=None, ge=-1.0, le=1.0)
+    pitch_semitones: float | None = None
+    pitch_range_semitones: float | None = Field(default=None, ge=0.0)
     channel_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
 
 
@@ -715,6 +891,268 @@ class VerifiedChannelRouteWrite(TrackBVerifiedMutation):
     requested_mixer_destination: int = Field(ge=-1)
     before: ChannelRouteSnapshot
     after: ChannelRouteSnapshot
+
+
+class VerifiedChannelSoloWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["channel.set_solo"] = "channel.set_solo"
+    channel_index: int = Field(ge=0)
+    index_scope: Literal["global"] = "global"
+    requested_soloed: bool
+    before: ChannelSoloSnapshot
+    after: ChannelSoloSnapshot
+
+
+class VerifiedChannelPitchWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["channel.set_pitch"] = "channel.set_pitch"
+    channel_index: int = Field(ge=0)
+    index_scope: Literal["global"] = "global"
+    requested_pitch_normalized: float = Field(ge=-1.0, le=1.0)
+    before: ChannelPitchSnapshot
+    after: ChannelPitchSnapshot
+
+
+class VerifiedChannelSelectionWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["channel.select"] = "channel.select"
+    channel_index: int = Field(ge=0)
+    index_scope: Literal["global"] = "global"
+    exclusive: Literal[True] = True
+    before_selected_channel_indices: list[int]
+    after_selected_channel_indices: list[int]
+
+    @model_validator(mode="after")
+    def verify_exclusive_selection(self) -> "VerifiedChannelSelectionWrite":
+        if self.verified != (self.after_selected_channel_indices == [self.channel_index]):
+            raise ValueError("verified must reflect exclusive channel selection")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Patterns and Playlist tracks
+# ---------------------------------------------------------------------------
+
+
+class PatternSummary(TrackBContract):
+    pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    name: str = Field(max_length=MAX_PATTERN_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+    length_beats: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_LENGTH_BEATS
+    )
+    current: bool
+    selected_in_picker: bool | None = None
+    default_empty: bool | None = None
+
+
+class PatternList(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    current_pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    reported_pattern_count: int = Field(ge=0, le=MAX_PATTERN_NUMBER)
+    maximum_pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    patterns: list[PatternSummary]
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class EmptyPatternSearch(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    start_pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    empty_pattern_number: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_NUMBER
+    )
+    scanned_pattern_count: int = Field(ge=0, le=MAX_PATTERN_NUMBER)
+    current_pattern_unchanged: bool
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExpectedPatternSelectionState(TrackBContract):
+    current_pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+
+
+class ExpectedPatternIdentityState(TrackBContract):
+    name: str | None = Field(default=None, max_length=MAX_PATTERN_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedPatternIdentityState":
+        if self.name is None and self.color is None:
+            raise ValueError("expected_before needs a pattern name and/or color")
+        return self
+
+
+class ExpectedPatternLengthState(TrackBContract):
+    length_beats: int = Field(ge=1, le=MAX_PATTERN_LENGTH_BEATS)
+
+
+class PatternIdentitySnapshot(TrackBContract):
+    name: str | None = Field(default=None, max_length=MAX_PATTERN_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+
+
+class VerifiedPatternSelectionWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["pattern.select"] = "pattern.select"
+    requested_pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    before_pattern_number: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_NUMBER
+    )
+    after_pattern_number: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_NUMBER
+    )
+
+
+class VerifiedPatternIdentityWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["pattern.set_identity"] = "pattern.set_identity"
+    pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    requested_name: str | None = Field(
+        default=None, max_length=MAX_PATTERN_NAME_LENGTH
+    )
+    requested_color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+    before: PatternIdentitySnapshot
+    after: PatternIdentitySnapshot
+    name_verified: bool | None = None
+    color_verified: bool | None = None
+
+    @model_validator(mode="after")
+    def verify_requested_fields(self) -> "VerifiedPatternIdentityWrite":
+        pairs = (
+            (self.requested_name, self.name_verified),
+            (self.requested_color, self.color_verified),
+        )
+        if all(requested is None for requested, _ in pairs):
+            raise ValueError("name, color, or both must be requested")
+        if any((requested is None) != (proof is None) for requested, proof in pairs):
+            raise ValueError("only requested pattern fields may have proof flags")
+        expected = all(bool(proof) for requested, proof in pairs if requested is not None)
+        if self.verified != expected:
+            raise ValueError("verified must be the AND of requested pattern fields")
+        return self
+
+
+class VerifiedPatternLengthWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["pattern.set_length"] = "pattern.set_length"
+    pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
+    requested_length_beats: int = Field(ge=1, le=MAX_PATTERN_LENGTH_BEATS)
+    before_length_beats: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_LENGTH_BEATS
+    )
+    after_length_beats: int | None = Field(
+        default=None, ge=1, le=MAX_PATTERN_LENGTH_BEATS
+    )
+
+
+class PlaylistTrackSummary(TrackBContract):
+    track_index: int = Field(ge=1)
+    name: str = Field(max_length=MAX_PLAYLIST_TRACK_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+    muted: bool | None = None
+    soloed: bool | None = None
+    selected: bool | None = None
+    activity_level: float | None = None
+
+
+class PlaylistTrackList(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    total_track_count: int = Field(ge=0)
+    tracks: list[PlaylistTrackSummary]
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ExpectedPlaylistTrackIdentityState(TrackBContract):
+    name: str | None = Field(default=None, max_length=MAX_PLAYLIST_TRACK_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedPlaylistTrackIdentityState":
+        if self.name is None and self.color is None:
+            raise ValueError("expected_before needs a Playlist name and/or color")
+        return self
+
+
+class ExpectedPlaylistTrackState(TrackBContract):
+    muted: bool | None = None
+    soloed: bool | None = None
+    selected: bool | None = None
+
+    @model_validator(mode="after")
+    def require_one_field(self) -> "ExpectedPlaylistTrackState":
+        if self.muted is None and self.soloed is None and self.selected is None:
+            raise ValueError("expected_before needs a Playlist track state")
+        return self
+
+
+class PlaylistTrackIdentitySnapshot(TrackBContract):
+    name: str | None = Field(default=None, max_length=MAX_PLAYLIST_TRACK_NAME_LENGTH)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+
+
+class PlaylistTrackStateSnapshot(TrackBContract):
+    muted: bool | None = None
+    soloed: bool | None = None
+    selected: bool | None = None
+
+
+class VerifiedPlaylistTrackIdentityWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["playlist.set_identity"] = "playlist.set_identity"
+    track_index: int = Field(ge=1)
+    requested_name: str | None = Field(
+        default=None, max_length=MAX_PLAYLIST_TRACK_NAME_LENGTH
+    )
+    requested_color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+    before: PlaylistTrackIdentitySnapshot
+    after: PlaylistTrackIdentitySnapshot
+    name_verified: bool | None = None
+    color_verified: bool | None = None
+
+    @model_validator(mode="after")
+    def verify_requested_fields(self) -> "VerifiedPlaylistTrackIdentityWrite":
+        pairs = (
+            (self.requested_name, self.name_verified),
+            (self.requested_color, self.color_verified),
+        )
+        if all(requested is None for requested, _ in pairs):
+            raise ValueError("name, color, or both must be requested")
+        if any((requested is None) != (proof is None) for requested, proof in pairs):
+            raise ValueError("only requested Playlist identity fields may have proof")
+        expected = all(bool(proof) for requested, proof in pairs if requested is not None)
+        if self.verified != expected:
+            raise ValueError("verified must be the AND of requested identity fields")
+        return self
+
+
+class VerifiedPlaylistTrackStateWrite(TrackBVerifiedMutation):
+    bridge_command: Literal["playlist.set_state"] = "playlist.set_state"
+    track_index: int = Field(ge=1)
+    requested_muted: bool | None = None
+    requested_soloed: bool | None = None
+    requested_selected: bool | None = None
+    before: PlaylistTrackStateSnapshot
+    after: PlaylistTrackStateSnapshot
+    mute_verified: bool | None = None
+    solo_verified: bool | None = None
+    selection_verified: bool | None = None
+
+    @model_validator(mode="after")
+    def verify_requested_fields(self) -> "VerifiedPlaylistTrackStateWrite":
+        pairs = (
+            (self.requested_muted, self.mute_verified),
+            (self.requested_soloed, self.solo_verified),
+            (self.requested_selected, self.selection_verified),
+        )
+        if all(requested is None for requested, _ in pairs):
+            raise ValueError("mute, solo, selection, or a combination is required")
+        if any((requested is None) != (proof is None) for requested, proof in pairs):
+            raise ValueError("only requested Playlist state fields may have proof")
+        expected = all(bool(proof) for requested, proof in pairs if requested is not None)
+        if self.verified != expected:
+            raise ValueError("verified must be the AND of requested Playlist states")
+        return self
 
 
 # ---------------------------------------------------------------------------
@@ -878,6 +1316,17 @@ TrackBResult = (
     | VerifiedTempoWrite
     | ChannelList
     | VerifiedChannelMixWrite
+    | VerifiedChannelSoloWrite
+    | VerifiedChannelPitchWrite
+    | VerifiedChannelSelectionWrite
+    | PatternList
+    | EmptyPatternSearch
+    | VerifiedPatternSelectionWrite
+    | VerifiedPatternIdentityWrite
+    | VerifiedPatternLengthWrite
+    | PlaylistTrackList
+    | VerifiedPlaylistTrackIdentityWrite
+    | VerifiedPlaylistTrackStateWrite
     | VerifiedChannelIdentityWrite
     | VerifiedChannelRouteWrite
     | TargetedPluginParameterPage

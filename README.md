@@ -7,7 +7,7 @@
 Explore the project you already have open, make carefully checked changes, and
 compare exported mixes—all from an MCP-compatible AI client.
 
-[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.13.0-blue)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.20.0-blue)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [Features](#what-you-can-do) · [AI clients](#works-with-your-ai-client) · [Quick start](#quick-start) · [Supported versions](#supported-versions) · [Safety](#safe-by-default) · [Documentation](#documentation)
 
@@ -18,17 +18,15 @@ compare exported mixes—all from an MCP-compatible AI client.
 > with Image-Line.
 
 Postfader connects a local AI client to FL Studio through a small controller
-script. You can ask questions about the current project, change supported
-controls, audition a note, or measure audio files without building a custom FL
-Studio integration.
+script. Version 0.20 expands the verified control kernel into an all-around
+production copilot: it can inspect and shape the live project, diagnose real
+bounces, build reviewable mix plans, compose MIDI parts, and drive an optional
+Piano Roll scripting bridge.
 
-It includes **37 focused tools**:
-
-- 12 tools for reading the open FL Studio project;
-- 19 tools for changing supported project settings and checking the result;
-- one session control for enabling or disabling those changes without restarting FL Studio;
-- one short live-note audition tool; and
-- four tools for analyzing exported audio files.
+It includes **90 supported tools and 8 live resources**. There are no catalog
+entries whose only behavior is “unsupported.” Direct FL setters retain
+later-idle-tick readback, while focus-sensitive or getter-limited workflows
+state their narrower evidence explicitly.
 
 ## Works with your AI client
 
@@ -51,11 +49,13 @@ or plug-in runtime before it can connect.
 
 ## What you can do
 
-| 🔎 Understand your project | 🎚️ Shape the mix |
+| 🔎 Understand your project | 🎚️ Control the session |
 | --- | --- |
-| See mixer tracks, effects, routing, channels, transport state, patterns, and plug-in parameters. | Change mixer volume, pan, mute, names, built-in EQ, sends, and send levels. |
-| **🎹 Work with channels and patterns** | **📊 Measure exported audio** |
-| Route channels, change channel mix and identity, edit step cells, control tempo and playback, or audition a bounded note. | Measure loudness, spectrum, dynamics, stereo image, optional monophonic pitch, masking, and differences between two bounces. |
+| Read project, transport, mixer, channels, plug-ins, patterns, Playlist tracks, history, presets, and eight always-addressable MCP resources. | Apply 39 direct guarded setters across transport, mixer, Channel Rack, patterns, Playlist tracks, plug-ins, history, and the step sequencer. |
+| **🩺 Finish the mix** | **🎹 Compose and arrange** |
+| Run Mix Doctor, real-bounce reference and masking analysis, persistent peak watches, gain staging, processing intents, plug-in profiles, and reviewed mix plans. | Generate chords, melodies, bass, and drums; export verified Type-1 MIDI; estimate tempo/key; transcribe monophonic audio; prepare patterns; add markers; and record automation values. |
+| **⚡ Work in fewer calls** | **🎛️ Edit the Piano Roll** |
+| Use one-session write mode, closed-union verified batches, compact aggregate receipts, and plan/apply separation. | Append, replace, quantize, transpose, humanize, duplicate, delete, or clear notes through FL's separate Piano Roll script runtime. |
 
 Postfader can also inspect and control parameters exposed by native FL effects,
 VST/VST3/AU effects, and Channel Rack generators. Plug-in support is discovered
@@ -74,8 +74,14 @@ from FL Studio at runtime rather than limited to a fixed list.
 
 “Enable write mode for this session, then rename insert 4 to Lead Vocal.”
 
-“Compare my latest bounce with the reference and summarize the loudness,
-stereo, dynamics, and frequency-band differences.”
+“Run Mix Doctor on this bounce, compare it to the reference, and create a
+reviewable plan for the highest-confidence fixes.”
+
+“Watch peaks through one full playback, then build a gain-staging plan with a
+-12 dBFS target.”
+
+“Write an eight-bar D Dorian melody and bassline, export them as Type-1 MIDI,
+then prepare an empty pattern for the result.”
 ~~~
 
 ## Why use Postfader?
@@ -90,6 +96,10 @@ stereo, dynamics, and frequency-band differences.”
 - **Use the plug-ins you already own.** Postfader discovers the parameter
   surface FL Studio exposes instead of requiring a custom profile for every
   plug-in.
+- **Move from evidence to action.** Mix recommendations remain separate from
+  reviewed, one-shot plan application, with a receipt for every operation.
+- **Compose deterministically.** Creative generators accept a seed and return
+  a content digest, so the same request can be reproduced or exported.
 - **Keep it local.** Postfader has no hosted service, account, telemetry, or
   project upload step.
 
@@ -119,6 +129,9 @@ flowchart LR
     B -->|"Virtual MIDI"| C["Universal Bridge<br/>inside FL Studio"]
     C --> D["Your open project"]
     B -->|"Files you choose"| E["Exported audio<br/>measurements"]
+    B --> F["Mix workflows<br/>and creative engine"]
+    F -->|"Type-1 MIDI"| G["Verified MIDI files"]
+    F -->|"Optional generated script"| H["FL Piano Roll"]
 ~~~
 
 MCP is the connection that lets an AI client call Postfader's named tools.
@@ -130,12 +143,12 @@ does not provide live audio buffers.
 
 | Component | Support |
 | --- | --- |
-| Postfader | 0.13.0 |
+| Postfader | 0.20.0 |
 | FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer |
 | FL MIDI scripting API | Version 44 or newer |
 | Python | 3.10 through 3.14 |
-| macOS | Supported; v0.13 live-tested on macOS 27.0 arm64 using the built-in IAC bus |
-| Windows | Windows 11 x64 implementation, CI, installer, diagnostics, and packaging are complete; supervised FL/virtual-MIDI validation is still pending |
+| macOS | Supported; the verified kernel was live-tested on macOS 27.0 arm64 using the built-in IAC bus. The expanded v0.20 surface has deterministic coverage and still needs its release-candidate live matrix. |
+| Windows | Supported; v0.20 was live-qualified on Windows 11 x64 with FL Studio Producer Edition 26.1.4 build 5589. |
 | AI clients | Any local `stdio` MCP-compatible client; see [Works with your AI client](#works-with-your-ai-client) |
 
 Python 3.13/3.14 and Windows ARM64 may need a native compiler for
@@ -285,6 +298,27 @@ Additional safeguards include:
 See [Tool contracts](docs/tool-contracts.md#write-tools) for the exact behavior
 of every write.
 
+### Batches, plans, and creative writes
+
+`fl_apply_verified_batch` accepts a bounded closed union of supported direct
+operations, performs one live preflight, and returns ordered per-item receipts.
+It is not an ACID transaction: an unverified item is reported and later items
+can be skipped, but earlier changes are not rolled back.
+
+Mix workflows keep analysis and mutation separate. `mix_create_plan` stores a
+session-bound plan in the MCP process; `mix_apply_plan` can apply that plan
+once through the same verified batch kernel. Peak watches and plans disappear
+when the MCP process exits.
+
+Piano Roll editing uses FL Studio's separate `.pyscript` runtime. Call
+`piano_roll_bridge(action="prepare")`, run **Postfader Apply** once from the
+Piano Roll Scripts menu, then confirm that manual step with
+`piano_roll_bridge(action="confirm", confirm_user_ran_script=true)`. Automatic
+calls verify the target channel/pattern and report whether the platform hotkey
+was dispatched; FL exposes no controller-side note readback, so they never
+claim the notes were applied. `auto_trigger=false` prepares the script for a
+manual run instead.
+
 ## Plug-in support
 
 Postfader can work with any mixer effect or Channel Rack generator whose
@@ -310,12 +344,16 @@ Postfader cannot currently:
 - reliably control an effect slot's bypass or wet/dry mix;
 - hear FL Studio's live output;
 - render, export, or save a project;
-- decide whether a mix sounds good; or
+- create, move, or delete Playlist clips through the public scripting API;
+- prove Piano Roll note application after a focus-sensitive script shortcut;
+- read section-marker times or recorded automation points back from FL;
+- turn a technical mix diagnosis into objective artistic truth; or
 - turn raw Playlist selection endpoints into a safe automatic render range.
 
-Audio tools analyze files you explicitly select or recent bounces found in
-bounded FL Studio folders. They return measurements and comparisons, not audio
-samples or artistic judgments.
+Audio and mix tools analyze files you explicitly select or recent bounces found
+in bounded FL Studio folders. They return measurements, threshold-driven
+diagnoses, and bounded recommendations—not audio samples or a claim that one
+creative choice is universally correct.
 
 The local virtual MIDI bus is shared and unauthenticated. Use Postfader on a
 trusted, single-user workstation.
@@ -337,7 +375,7 @@ projects.
 | Guide | What it covers |
 | --- | --- |
 | [Setup and troubleshooting](docs/setup.md) | Installation, client configuration, upgrades, diagnostics, write mode, and common errors |
-| [Tool reference](docs/tool-contracts.md) | All 37 tools, accepted values, results, refusals, and safety rules |
+| [Tool reference](docs/tool-contracts.md) | All 90 tools, 8 resources, accepted values, results, refusals, and evidence boundaries |
 | [Plug-in support](docs/plugin-support.md) | Effects, generators, parameter scans, option controls, and compatibility evidence |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where Postfader deliberately stops |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, and trust boundaries |

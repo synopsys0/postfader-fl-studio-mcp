@@ -162,13 +162,19 @@ if MAX_SYSEX_FRAME_BYTES > WINMM_SYSEX_BUFFER_BYTES:
 IDEMPOTENT_READ_COMMANDS = frozenset({
     "ping",
     "project.info",
+    "project.history",
     "arrangement.selection",
     "mixer.list",
+    "mixer.peaks",
     "mixer.track",
     "plugin.params",
+    "plugin.preset_count",
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
+    "patterns.list",
+    "patterns.find_empty",
+    "playlist.list",
 })
 MAX_IDEMPOTENT_READ_RECONNECTS = 1
 RECONNECT_DELAY_SECONDS = 0.05

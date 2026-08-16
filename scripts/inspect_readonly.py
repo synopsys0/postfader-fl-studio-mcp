@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Phase 1 inspector directly and print strict JSON to stdout.
+"""Run the read-only inspector directly and print strict JSON to stdout.
 
 This command has no write operation and uses the same fail-closed allowlist as
 the read-only MCP server.

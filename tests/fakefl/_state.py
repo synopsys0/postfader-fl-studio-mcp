@@ -46,11 +46,34 @@ class Channel:
         self.name = name
         self.volume = 0.78
         self.pan = 0.0
+        self.pitch = 0.0
+        self.pitch_range = 2.0
         self.muted = False
         self.solo = False
         self.selected = False
         self.color = 0x445566
         self.target_fx = target_fx
+
+
+class Pattern:
+    def __init__(self, number):
+        self.number = number
+        self.name = "Pattern %d" % number
+        self.color = 0x334455
+        self.length = 16
+        self.selected = number == 1
+        self.default = number >= 3
+
+
+class PlaylistTrack:
+    def __init__(self, index):
+        self.index = index
+        self.name = "Track %d" % index
+        self.color = 0x223344
+        self.muted = False
+        self.solo = False
+        self.selected = index == 1
+        self.activity = 0.0
 
 
 # FL drops the first plugin-parameter write after saveUndo(UF_Plugin).
@@ -79,9 +102,15 @@ SPARSE_VST_REAL = {
 
 TRACKS = []
 CHANNELS = []
+PATTERNS = {}
+PLAYLIST_TRACKS = {}
+CURRENT_PATTERN = 1
 UNDO = []
+UNDO_POSITION = 0
 PLAYING = False
 RECORDING = False
+METRONOME = False
+PRECOUNT = False
 SONG_POS = 0.0
 SONG_POS_TICKS = 0
 SONG_LENGTH_TICKS = 3072
@@ -90,7 +119,12 @@ SELECTION_START = -1
 SELECTION_END = -1
 LOOP_MODE = 0
 REC_PPQ = 96
+TIME_SIGNATURE_NUMERATOR = 4
 TEMPO = 140000.0
+ACTIVE_MIXER_TRACK = 0
+ARRANGEMENT_MARKERS = []
+VISIBLE_WINDOWS = set()
+RECORDED_AUTOMATION_EVENTS = []
 
 
 # Parameters FL has dropped into "waiting for pickup"; see plugins.setParamValue.
@@ -99,15 +133,20 @@ PICKUP_LATCHED = {}
 
 def reset():
     """Build a small but realistic project: a vocal chain on track 3."""
-    global TRACKS, CHANNELS, UNDO, PLAYING, RECORDING, SONG_POS
+    global TRACKS, CHANNELS, PATTERNS, PLAYLIST_TRACKS, CURRENT_PATTERN
+    global UNDO, UNDO_POSITION, PLAYING, RECORDING, METRONOME, PRECOUNT, SONG_POS
     global SONG_POS_TICKS, CURRENT_TIME, SELECTION_START, SELECTION_END, LOOP_MODE
-    global REC_PPQ
+    global REC_PPQ, TIME_SIGNATURE_NUMERATOR, ACTIVE_MIXER_TRACK
+    global ARRANGEMENT_MARKERS, VISIBLE_WINDOWS, RECORDED_AUTOMATION_EVENTS
     UNDO = []
+    UNDO_POSITION = 0
     SWALLOW_NEXT_PARAM_WRITE[0] = False
     LAST_WRITE[0] = None
     PICKUP_LATCHED.clear()
     PLAYING = False
     RECORDING = False
+    METRONOME = False
+    PRECOUNT = False
     SONG_POS = 0.0
     SONG_POS_TICKS = 0
     CURRENT_TIME = 0
@@ -115,6 +154,12 @@ def reset():
     SELECTION_END = -1
     LOOP_MODE = 0
     REC_PPQ = 96
+    TIME_SIGNATURE_NUMERATOR = 4
+    ACTIVE_MIXER_TRACK = 0
+    ARRANGEMENT_MARKERS = []
+    VISIBLE_WINDOWS = set()
+    RECORDED_AUTOMATION_EVENTS = []
+    CURRENT_PATTERN = 1
 
     # FL never returns an empty mixer track name; empties are "Insert N".
     TRACKS = [Track("Master")] + [Track("Insert %d" % i)
@@ -184,6 +229,9 @@ def reset():
     TRACKS[9].name = "Tuner Bus"
 
     CHANNELS = [Channel("Vox Take 1", 3), Channel("Kick", 4), Channel("Sytrus Lead", 5)]
+    CHANNELS[0].selected = True
+    PATTERNS = {number: Pattern(number) for number in range(1, 5)}
+    PLAYLIST_TRACKS = {index: PlaylistTrack(index) for index in range(1, 17)}
 
 
 reset()

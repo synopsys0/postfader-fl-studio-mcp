@@ -95,6 +95,29 @@ wins. If none exists, one unique case-insensitive substring may be used so the
 macOS `IAC Driver` default remains compatible. Zero or multiple matches fail
 with bounded candidates before any ownership lock or endpoint open.
 
+### Optional Piano Roll scripting bridge
+
+Piano Roll notes live in FL Studio's separate `.pyscript` runtime, not its MIDI
+controller API. The creative tools therefore use one generated **Postfader
+Apply** script under:
+
+```text
+<FL Studio user-data>/Settings/Piano roll scripts/Postfader/
+```
+
+The directory follows the same Windows Known Documents and
+`FL_STUDIO_USER_DATA_DIR` resolution as the controller-script installer. An
+absolute `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` can override only this generated
+script location.
+
+For each new MCP process, call `piano_roll_bridge(action="prepare")`, open any
+Piano Roll, and run **Scripts → Postfader → Postfader Apply** once. Then call
+`piano_roll_bridge(action="confirm", confirm_user_ran_script=true)`. Automatic
+writes can then target the requested channel and pattern and dispatch FL's
+run-last-script shortcut. They report focus and key dispatch, never fabricated
+note readback; inspect the Piano Roll before issuing another mutation. Set
+`auto_trigger=false` to generate the script for manual execution instead.
+
 ## 4. Generate client configuration
 
 Configuration generation is pure and create-only. For an ordinary live,
@@ -291,6 +314,7 @@ verification detail, warnings, and the project itself.
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
+| `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` | Optional absolute override for the generated Piano Roll script directory. Otherwise it follows `FL_STUDIO_USER_DATA_DIR`. |
 
 ## 8. Hermetic tests
 
