@@ -183,6 +183,7 @@ class CreativeTests(unittest.TestCase):
             self.assertFalse(manual.application_verified)
             self.assertIn("score.clearNotes(True)", source)
             self.assertIn("score.addNote(note)", source)
+            compile(source, "Postfader_Apply.pyscript", "exec")
 
             transform = transform_piano_roll(
                 PianoRollTransform(
@@ -197,7 +198,9 @@ class CreativeTests(unittest.TestCase):
                 auto_trigger=False,
             )
             self.assertEqual(transform.status, "prepared_for_manual_run")
-            self.assertIn('operation == "humanize"', Path(transform.script_path).read_text("ascii"))
+            transform_source = Path(transform.script_path).read_text("ascii")
+            self.assertIn('operation == "humanize"', transform_source)
+            compile(transform_source, "Postfader_Apply.pyscript", "exec")
 
     def test_piano_roll_directory_reuses_platform_aware_user_data_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -513,6 +513,31 @@ class MutationGateTests(unittest.TestCase):
 
 
 class TransportControllerTests(unittest.TestCase):
+    def test_one_based_project_history_accepts_independent_last_cursor(self) -> None:
+        inspector, client = inspector_for(
+            {
+                "project.history": {
+                    "command": "project.history",
+                    "position": 1,
+                    "count": 1,
+                    "last_position": 0,
+                    "level_hint": "1 / 1",
+                    "project_dirty_flag": 0,
+                    "can_undo": False,
+                    "can_redo": False,
+                }
+            }
+        )
+
+        observed = inspector.project_history()
+
+        self.assertEqual(observed.history.position, 1)
+        self.assertEqual(observed.history.count, 1)
+        self.assertEqual(observed.history.last_position, 0)
+        self.assertFalse(observed.history.can_undo)
+        self.assertFalse(observed.history.can_redo)
+        self.assertEqual(client.calls, [("project.history", {})])
+
     def test_set_playing_returns_typed_absolute_result(self) -> None:
         controller, client = controller_for(transport_handler)
         result = controller.set_playing(

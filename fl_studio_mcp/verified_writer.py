@@ -1483,7 +1483,8 @@ class VerifiedWriter:
         summary, warnings = _verification(
             verified,
             f"FL read stereo separation back at {_show(after)} on a later idle "
-            f"tick, matching the requested {_show(wanted)}.",
+            f"tick, within FL Studio's control resolution of the requested "
+            f"{_show(wanted)}.",
             f"FL accepted the write but read stereo separation back at "
             f"{_show(after)}, not the requested {_show(wanted)}.",
         )

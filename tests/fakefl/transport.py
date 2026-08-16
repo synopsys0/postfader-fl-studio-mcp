@@ -8,7 +8,7 @@ def stop():
     _state.PLAYING = False
 def record():
     _state.RECORDING = not _state.RECORDING
-def globalTransport(command, value, flags=0):
+def globalTransport(command, value, pmeflags=midi.PME_System, flags=midi.GT_All):
     if command == midi.FPT_Metronome:
         _state.METRONOME = not _state.METRONOME
     elif command == midi.FPT_CountDown:

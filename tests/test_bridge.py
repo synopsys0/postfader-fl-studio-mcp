@@ -1971,20 +1971,38 @@ def check_track_b():
               r["ok"] and yields == 1 and _state.RECORDING is True, (r, yields))
         dispatch(w, "transport.set_recording", recording=False)
 
-        r, yields = drive(
-            w, "transport.set_metronome", enabled=True,
-            expected_before={"enabled": False}
-        )
-        check("metronome toggle is exposed as a verified absolute state",
-              r["ok"] and yields == 1 and r["result"]["verified"]
-              and _state.METRONOME is True, (r, yields))
-        r, yields = drive(
-            w, "transport.set_precount", enabled=True,
-            expected_before={"enabled": False}
-        )
-        check("recording precount is exposed as a verified absolute state",
-              r["ok"] and yields == 1 and r["result"]["verified"]
-              and _state.PRECOUNT is True, (r, yields))
+        real_global_transport = fake_transport.globalTransport
+        global_transport_calls = []
+
+        def strict_global_transport(command, value, pmeflags, flags):
+            global_transport_calls.append((command, value, pmeflags, flags))
+            return real_global_transport(command, value, pmeflags, flags)
+
+        fake_transport.globalTransport = strict_global_transport
+        try:
+            r, yields = drive(
+                w, "transport.set_metronome", enabled=True,
+                expected_before={"enabled": False}
+            )
+            check("metronome toggle is exposed as a verified absolute state",
+                  r["ok"] and yields == 1 and r["result"]["verified"]
+                  and _state.METRONOME is True, (r, yields))
+            r, yields = drive(
+                w, "transport.set_precount", enabled=True,
+                expected_before={"enabled": False}
+            )
+            check("recording precount is exposed as a verified absolute state",
+                  r["ok"] and yields == 1 and r["result"]["verified"]
+                  and _state.PRECOUNT is True, (r, yields))
+            check("transport buttons pass pmeflags and routing flags separately",
+                  global_transport_calls == [
+                      (bridge.midi.FPT_Metronome, 1,
+                       bridge.midi.PME_System, bridge.midi.GT_Global),
+                      (bridge.midi.FPT_CountDown, 1,
+                       bridge.midi.PME_System, bridge.midi.GT_Global),
+                  ], global_transport_calls)
+        finally:
+            fake_transport.globalTransport = real_global_transport
 
         numerator_before = _state.TIME_SIGNATURE_NUMERATOR
         r, yields = drive(
