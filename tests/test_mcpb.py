@@ -95,7 +95,8 @@ class MCPBPackagingTests(unittest.TestCase):
         self.assertEqual(self.manifest["tools"], discover_tools())
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
-        self.assertLess(len(names), 40)
+        self.assertGreaterEqual(len(names), 75)
+        self.assertLessEqual(len(names), 90)
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"

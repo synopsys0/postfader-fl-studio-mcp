@@ -83,6 +83,7 @@ class ReadOnlyGateway:
             "project.info",
             "arrangement.selection",
             "mixer.list",
+            "mixer.peaks",
             "mixer.track",
             "plugin.params",
             # A read, exactly like plugin.params: it walks the same indices
@@ -589,7 +590,7 @@ class ReadOnlyInspector:
                         )
                     )
                 ),
-                limitations=["Local MIDI traffic is not authenticated in Phase 1."],
+                limitations=["Local MIDI traffic is not authenticated."],
                 evidence=[
                     CapabilityEvidence(
                         kind=official,
@@ -840,6 +841,11 @@ class ReadOnlyInspector:
             transport=TransportState(
                 playing=_bool(raw.get("playing")),
                 recording=_bool(raw.get("recording")),
+                metronome_enabled=_bool(raw.get("metronome")),
+                precount_enabled=_bool(raw.get("precount")),
+                time_signature_numerator=_int(
+                    raw.get("time_signature_numerator")
+                ),
                 tempo_bpm=_float(raw.get("tempo_bpm")),
                 song_position_normalized=_float(raw.get("song_pos")),
                 song_position_display=str(raw.get("song_pos_hint") or "") or None,

@@ -33,7 +33,7 @@ the user-confirmed mode tool, rather than surfacing a raw bridge rejection.
 from __future__ import annotations
 
 import sys
-from typing import Annotated
+from typing import Annotated, Literal
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -55,6 +55,7 @@ from .advisory import (
 from .contracts import (
     CapabilitiesReport,
     ExpectedEqBandState,
+    ExpectedMixerVolumeState,
     ExpectedPluginParameterState,
     LoadedPluginInventory,
     MixerTrackInspection,
@@ -65,34 +66,115 @@ from .contracts import (
     ReadOnlyInspectionReport,
     SelectedRangeObservation,
     TransportState,
+    VerifiedMixerArmWrite,
+    VerifiedMixerColorWrite,
     VerifiedMixerEqWrite,
     VerifiedMixerMuteWrite,
     VerifiedMixerNameWrite,
     VerifiedMixerPanWrite,
+    VerifiedMixerSelectionWrite,
     VerifiedMixerSendLevelWrite,
     VerifiedMixerSendWrite,
+    VerifiedMixerSoloWrite,
+    VerifiedMixerStereoSeparationWrite,
     VerifiedMixerVolumeWrite,
+    VerifiedMixerVolumeDbWrite,
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
     WriteModeChange,
 )
+from .creative import (
+    PIANO_ROLL,
+    ArrangementMarkerReceipt,
+    AutomationRecordReceipt,
+    CreativeNote,
+    MidiExportReceipt,
+    MidiTrackSpec,
+    NoteSequence,
+    PatternPreparation,
+    PianoRollBridgeStatus,
+    PianoRollDispatch,
+    PianoRollTransform,
+    SectionMarker,
+    add_section_markers,
+    compose_bassline as generate_bassline,
+    compose_chord_progression as generate_chord_progression,
+    compose_drums as generate_drums,
+    compose_melody as generate_melody,
+    export_type1_midi,
+    prepare_empty_pattern,
+    record_automation_value,
+    transform_piano_roll,
+    write_piano_roll_notes,
+)
+from .music_analysis import (
+    AudioMusicAnalysis,
+    MelodyTranscription,
+    analyze_tempo_and_key,
+    transcribe_monophonic,
+)
 from .readonly_inspector import ReadOnlyInspector
+from .mixing import (
+    MIX_PLANS,
+    PEAK_WATCHES,
+    FinishMixAssessment,
+    GainStagePlanResult,
+    MaskingRecommendationReport,
+    MixDoctorReport,
+    MixPlan,
+    MixPlanApplication,
+    MixTarget,
+    PeakWatchReport,
+    PluginCompatibilityReport,
+    PluginProfileCatalog,
+    ProcessingIntent,
+    ProcessingIntentResolution,
+    ReferenceRecommendationReport,
+    create_gain_stage_plan,
+    finish_mix_assessment,
+    inspect_plugin_compatibility,
+    list_plugin_profiles,
+    masking_recommendations,
+    reference_recommendations,
+    resolve_processing_intent,
+    run_mix_doctor,
+)
 from .performance import TrackBController, TrackBInspector
 from .track_b_contracts import (
     ChannelList,
+    EmptyPatternSearch,
     ExpectedChannelIdentityState,
     ExpectedChannelMixState,
+    ExpectedChannelPitchState,
     ExpectedChannelRouteState,
+    ExpectedChannelSelectionState,
+    ExpectedChannelSoloState,
     ExpectedChannelTargetState,
     ExpectedLoopModeState,
+    ExpectedMetronomeState,
+    ExpectedPatternIdentityState,
+    ExpectedPatternLengthState,
+    ExpectedPatternSelectionState,
+    ExpectedPlaylistTrackIdentityState,
+    ExpectedPlaylistTrackState,
     ExpectedPlayingState,
+    ExpectedPrecountState,
+    ExpectedProjectHistoryState,
+    ExpectedRecordingState,
     ExpectedSongPositionState,
     ExpectedStopState,
     ExpectedTempoState,
+    ExpectedTimeSignatureState,
     LiveNoteDispatch,
     MAX_VERIFIED_STEP_COUNT,
+    MAX_PATTERN_LENGTH_BEATS,
+    MAX_PATTERN_NUMBER,
     PluginTarget,
+    PatternList,
+    PluginPresetCount,
+    PlaylistTrackList,
+    ProjectHistoryObservation,
     StepCellUpdate,
     StepSequenceObservation,
     TargetedLoadedPluginInventory,
@@ -100,9 +182,21 @@ from .track_b_contracts import (
     TargetedPluginParameterScan,
     VerifiedChannelIdentityWrite,
     VerifiedChannelMixWrite,
+    VerifiedChannelPitchWrite,
     VerifiedChannelRouteWrite,
+    VerifiedChannelSelectionWrite,
+    VerifiedChannelSoloWrite,
     VerifiedLoopModeWrite,
+    VerifiedMetronomeWrite,
+    VerifiedPatternIdentityWrite,
+    VerifiedPatternLengthWrite,
+    VerifiedPatternSelectionWrite,
+    VerifiedPlaylistTrackIdentityWrite,
+    VerifiedPlaylistTrackStateWrite,
     VerifiedPlayingWrite,
+    VerifiedPrecountWrite,
+    VerifiedProjectHistoryMove,
+    VerifiedRecordingWrite,
     VerifiedSongPositionWrite,
     VerifiedStepSequenceWrite,
     VerifiedStopWrite,
@@ -110,8 +204,15 @@ from .track_b_contracts import (
     VerifiedTargetedPluginOptionWrite,
     VerifiedTargetedPluginParameterWrite,
     VerifiedTempoWrite,
+    VerifiedTimeSignatureNumeratorWrite,
 )
 from .verified_writer import VerifiedWriter, WriteModeManager
+from .workflows import (
+    MAX_BATCH_OPERATIONS,
+    BatchOperation,
+    VerifiedBatchExecutor,
+    VerifiedBatchResult,
+)
 
 
 # The upstream MCP SDK's generated function-argument models ignore unknown
@@ -139,88 +240,54 @@ SessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-FL Studio 2026 project inspector with a narrow verified control surface.
+Postfader 0.20 is a local FL Studio 2026 production copilot with 90 supported
+tools and 8 live resources. It observes project, transport, mixer, Channel
+Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
+cells. Prefer the fl:// resources for initial context, then use focused reads
+before deciding on a mutation.
 
-This server can observe the running project, mixer tracks, routing, loaded
-effects and generators, transport state, global Channel Rack state, the current
-pattern's step grid, and exposed plug-in parameters. It can apply absolute,
-readback-verified transport, mixer, channel, routing, step, and parameter
-targets. fl_set_plugin_param takes a normalised 0..1.
-fl_set_plugin_param_display takes the number the plug-in itself shows, so
-"Attack to 20 ms" needs no knowledge of the curve.
-fl_set_plugin_param_option takes the text of an enumerated control such as Key
-or Scale, and also reports every option it found. Prefer the latter two: real
-third-party controls frequently have no name at all and are identified only
-by what they display. Plug-in insertion, removal, and reordering are unavailable
-through the public MIDI scripting backend. It cannot render audio, save
-projects, write automation, undo, set playback speed without a verifiable
-getter, or invoke arbitrary FL API functions.
+The bridge starts read-only. Only call fl_set_write_mode(enabled=true,
+confirm_user_present=true) after the present user explicitly asks to change the
+open project. The authorization is session-only. Direct setters are bounded,
+Master-protected, never automatically replayed after an ambiguous outcome, and
+read FL back on a later idle tick. Treat verified=false as the headline: the
+requested state was not proven. False or null undo evidence means Ctrl+Z may
+not recover the change. Postfader never saves the project.
 
-Two FL limits shape this surface. A send's level cannot be set before the send
-exists, so create the route with fl_set_mixer_send first. And FL ignores both
-of its per-effect-slot controls when a script drives them -- the slot mute
-cannot be undone and the wet/dry mix never moves -- so there is no tool for
-bypassing or blending an individual plug-in. Change the plug-in's own
-parameters instead, or the track's send levels.
+fl_apply_verified_batch performs one preflight and ordered direct operations
+with per-item receipts. It is non-atomic: successful earlier items are not
+rolled back. mix_create_plan and mix_apply_plan keep recommendation and action
+separate and apply a stored plan at most once. Peak watches and mix plans live
+only in this MCP process.
 
-The state-setting tools apply the change and report what happened; they never ask
-first. Every one of them reads FL back on a later idle tick and returns
-`verified`. Treat `verified: false` as the headline of that result, not a
-footnote: FL genuinely accepts writes it then ignores, so an unverified write
-means the control may not have moved. Mixer and plug-in parameter handlers may
-repeat an FL-facing setter inside one dispatched command because FL drops a
-lone call; transport, direct Channel Rack state, routing, and step setters are
-issued once. No mutating command is dispatched again after an ambiguous
-transport outcome, an unverified result is not retried for the caller, and
-nothing that landed is rolled back. Re-read the target before deciding what to
-do next.
+Mix Doctor, gain staging, reference matching, masking recommendations,
+processing intents, plug-in profiles, and finish assessment use actual decoded
+bounces where audio evidence is required. Recommendations are bounded policy,
+not proof of artistic quality. The server cannot hear FL's live output; the
+user must export candidate audio before bounce analysis.
 
-Every mutation reports `undo_point_created`. Commands that ask FL for an undo
-point report whether one was observed by watching its undo history; transient
-transport actions and live-note dispatch truthfully return null. Treat false or
-null as "this may not be undoable with Ctrl+Z". The project is never saved.
-`fl_trigger_note` is a separate bounded note-on/note-off dispatch receipt. It
-has no authoritative state readback, returns no `verified` field, and must not
-be presented as a verified mutation or proof that sound was produced.
+Composition tools generate deterministic chords, melody, bass, and drums.
+midi_export_type1 writes a local MIDI file, reopens it, and verifies its event
+content. Tempo/key estimation and monophonic transcription read caller-selected
+audio files and do not mutate FL.
 
-Writes are dispatchable only while the bridge reports verified write mode. It
-starts read-only by default. When the user explicitly asks to enable writes,
-call fl_set_write_mode with enabled=true and confirm_user_present=true. That
-changes only the current loaded bridge session, never saves the project, and is
-proved with a second handshake; call it with enabled=false to lock writes again.
-A write also refuses when the running bridge source hash does not match this
-package. Optional session and expected-before guards let callers reject a
-decision made against stale state.
+Piano Roll mutations use FL's separate .pyscript runtime. First prepare the
+bridge, manually run Postfader Apply once, and confirm that step. Automatic
+calls verify the target channel and pattern, but hotkey dispatch is not note
+readback: application_verified remains false. Section-marker names are read
+back, but marker times are not. Automation helpers verify the controlled value
+while explicitly leaving automation-point existence unknown.
 
-Call fl_get_capabilities before relying on a feature. Treat every unprofiled
-plug-in parameter as unsafe to modify, even though its normalized value can be
-read. Display text is optional because Image-Line documents it as supported by
-only some plug-ins.
+Plug-in insertion/removal/reordering, per-slot bypass/wet control, Playlist
+clip CRUD, live audio buffers, rendering, project save, playback speed, and a
+generic raw FL API escape hatch are unavailable. A send must exist before its
+level can be set. Unprofiled plug-in parameters remain unsafe by default;
+prefer displayed-value or exact-option tools when their meaning is known.
 
-fl_get_selected_range preserves repeated raw endpoints and project PPQ only.
-Those values do not establish a time-signature denominator or a complete
-marker map. Therefore state, presence, units, and normalized ticks remain
-unknown/null for every ordinary live result. Render endpoint inclusivity
-remains unknown and every response is structurally marked unsafe for rendering.
-
-Step reads can observe up to 512 cells. Verified step writes refuse grids over
-256 cells and require step_count + update_count + 8 <= 320 so the final digest
-recheck and batch remain atomic below the idle-tick call ceiling. A 256-cell
-grid therefore permits at most 56 updates per call. Split larger edits and call
-fl_get_step_sequence again for a fresh digest between successful batches.
-
-The server is pinned to FL Studio 2026 version 26.1.3 build 5336 or newer. It
-will refuse project inspection if the shared bridge is attached to FL Studio
-2025.
-
-The audio_* tools answer the questions the FL API cannot: they measure a
-rendered file on disk. Bounce a stem, mix, or instrumental from FL, then call
-audio_analyze_file, audio_compare_files, or audio_analyze_masking on absolute
-paths, or audio_find_recent_bounces to see what FL wrote most recently. These
-tools return measurements, provenance, the analyzer's own confidence, and its
-limitations. They never rank a mix, choose a candidate, or emit a processing
-instruction; interpreting the numbers against the observed mixer state is the
-agent's job.
+fl_get_selected_range intentionally leaves selection semantics and render
+inclusivity unknown. Step writes require the latest grid digest and preserve
+the published bounded call budget. This server requires FL Studio 26.1.3 build
+5336 or newer and MIDI scripting API 44 or newer.
 """
 
 READ_ONLY = ToolAnnotations(
@@ -292,6 +359,22 @@ EPHEMERAL_MUTATING = ToolAnnotations(
     openWorldHint=True,
 )
 
+WORKFLOW_STATE = ToolAnnotations(
+    title="Manage a process-local workflow",
+    readOnlyHint=False,
+    destructiveHint=False,
+    idempotentHint=False,
+    openWorldHint=True,
+)
+
+FILE_MUTATING = ToolAnnotations(
+    title="Write a local creative artifact",
+    readOnlyHint=False,
+    destructiveHint=True,
+    idempotentHint=False,
+    openWorldHint=False,
+)
+
 mcp = MCPServer(
     name="postfader-fl-studio-mcp",
     version=__version__,
@@ -309,6 +392,15 @@ async def _run(method_name: str, **arguments):
 
 async def _measure(function, *positional, **keyword):
     """Run one blocking audio measurement off the event loop."""
+
+    def invoke():
+        return function(*positional, **keyword)
+
+    return await anyio.to_thread.run_sync(invoke)
+
+
+async def _mix(function, *positional, **keyword):
+    """Run a blocking production workflow off the MCP event loop."""
 
     def invoke():
         return function(*positional, **keyword)
@@ -355,6 +447,142 @@ async def _performance_write(method_name: str, **arguments):
         return getattr(TrackBController(), method_name)(**arguments)
 
     return await anyio.to_thread.run_sync(invoke)
+
+
+async def _apply_batch(**arguments):
+    """Run one ordered verified batch off the event loop."""
+
+    def invoke():
+        return VerifiedBatchExecutor().apply(**arguments)
+
+    return await anyio.to_thread.run_sync(invoke)
+
+
+@mcp.resource(
+    "fl://capabilities",
+    name="fl-capabilities",
+    title="FL Studio capabilities",
+    description=(
+        "Live verified capability report for the connected FL Studio bridge."
+    ),
+    mime_type="application/json",
+)
+async def resource_capabilities() -> CapabilitiesReport:
+    """Read the same typed capability report exposed by fl_get_capabilities."""
+
+    return await _run("capabilities")
+
+
+@mcp.resource(
+    "fl://status",
+    name="fl-status",
+    title="FL Studio session status",
+    description=(
+        "Compact live connection, project, transport, and write-mode context."
+    ),
+    mime_type="application/json",
+)
+async def resource_status() -> dict[str, object]:
+    """Return high-signal session context without requiring several tool calls."""
+
+    capabilities = await _run("capabilities")
+    project = await _run("project_summary")
+    transport = await _run("transport_state")
+    return {
+        "connection": project.connection,
+        "project_title": project.project_title,
+        "dirty_flag": project.dirty_flag,
+        "dirty_state": project.dirty_state,
+        "transport": transport,
+        "verified_writes_enabled": (
+            capabilities.connection.verified_writes_enabled
+        ),
+        "bridge_mode": capabilities.connection.bridge_mode,
+        "session_fingerprint": capabilities.connection.session_fingerprint,
+    }
+
+
+@mcp.resource(
+    "fl://project",
+    name="fl-project",
+    title="FL Studio project",
+    description="Live typed summary of the currently open FL Studio project.",
+    mime_type="application/json",
+)
+async def resource_project() -> ProjectSummary:
+    """Read current project metadata and counts."""
+
+    return await _run("project_summary")
+
+
+@mcp.resource(
+    "fl://transport",
+    name="fl-transport",
+    title="FL Studio transport",
+    description="Live playback, recording, loop, position, and tempo state.",
+    mime_type="application/json",
+)
+async def resource_transport() -> TransportState:
+    """Read the authoritative transport observation."""
+
+    return await _run("transport_state")
+
+
+@mcp.resource(
+    "fl://mixer",
+    name="fl-mixer",
+    title="FL Studio mixer",
+    description="Live bounded mixer-track inventory without instantaneous peaks.",
+    mime_type="application/json",
+)
+async def resource_mixer() -> MixerTrackList:
+    """Read the complete bounded mixer inventory using the normal inspector."""
+
+    return await _run(
+        "list_mixer_tracks",
+        only_used=False,
+        include_peaks=False,
+        max_tracks=None,
+    )
+
+
+@mcp.resource(
+    "fl://channels",
+    name="fl-channels",
+    title="FL Studio Channel Rack",
+    description="Live global Channel Rack inventory with stable target identities.",
+    mime_type="application/json",
+)
+async def resource_channels() -> ChannelList:
+    """Read all global channels through the Track B inspection boundary."""
+
+    return await _performance_read("list_channels")
+
+
+@mcp.resource(
+    "fl://patterns",
+    name="fl-patterns",
+    title="FL Studio patterns",
+    description="Live pattern inventory, current selection, identity, and length.",
+    mime_type="application/json",
+)
+async def resource_patterns() -> PatternList:
+    """Read the current bounded pattern inventory."""
+
+    return await _performance_read("list_patterns")
+
+
+@mcp.resource(
+    "fl://plugins",
+    name="fl-plugins",
+    title="FL Studio loaded plug-ins",
+    description="Live inventory of loaded mixer effects and Channel Rack generators.",
+    mime_type="application/json",
+)
+async def resource_plugins() -> TargetedLoadedPluginInventory:
+    """Read loaded effects and generators without changing their parameters."""
+
+    return await _performance_read("scan_loaded_plugins", only_used=False)
 
 
 @mcp.tool(
@@ -664,7 +892,7 @@ async def copilot_capture_readonly_inspection(
         Field(description="Maximum loaded plug-ins whose parameters are previewed.", ge=1, le=64),
     ] = 16,
 ) -> ReadOnlyInspectionReport:
-    """Capture a compact project/mixer/effect report for Phase 1 validation."""
+    """Capture a compact project, mixer, and effect inspection report."""
     return await _run(
         "capture",
         only_used=only_used,
@@ -768,6 +996,44 @@ async def fl_set_mixer_volume(
 
 
 @mcp.tool(
+    name="fl_set_mixer_volume_db",
+    annotations=MUTATING.model_copy(update={"title": "Set a mixer fader in dB"}),
+)
+async def fl_set_mixer_volume_db(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index; Master requires allow_master.", ge=0),
+    ],
+    volume_db: Annotated[
+        float,
+        Field(description="Target fader readback in dB.", ge=-60.0, le=6.0),
+    ],
+    tolerance_db: Annotated[
+        float,
+        Field(description="Maximum accepted dB readback error.", ge=0.01, le=1.0),
+    ] = 0.1,
+    allow_master: Annotated[
+        bool, Field(description="Deliberately target Master at mixer index 0.")
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedMixerVolumeState | None,
+        Field(default=None, description="Optional expected normalized and/or dB state."),
+    ] = None,
+) -> VerifiedMixerVolumeDbWrite:
+    """Search FL's fader curve and prove the requested dB value on a later tick."""
+    return await _write(
+        "set_mixer_volume_db",
+        track_index=track_index,
+        volume_db=volume_db,
+        tolerance_db=tolerance_db,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
     name="fl_set_mixer_pan",
     annotations=MUTATING.model_copy(update={"title": "Set a mixer track's pan"}),
 )
@@ -849,6 +1115,187 @@ async def fl_set_mixer_mute(
         "set_mixer_mute",
         track_index=track_index,
         muted=muted,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_mixer_solo",
+    annotations=MUTATING.model_copy(update={"title": "Solo or unsolo a mixer track"}),
+)
+async def fl_set_mixer_solo(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
+    ],
+    soloed: Annotated[
+        bool,
+        Field(description="The absolute wanted solo state; never a toggle."),
+    ],
+    allow_master: Annotated[
+        bool,
+        Field(description="Required to target mixer track 0."),
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        bool | None,
+        Field(default=None, description="Optional expected current solo state."),
+    ] = None,
+) -> VerifiedMixerSoloWrite:
+    """Set one mixer track's solo state and verify it on a later FL tick."""
+    return await _write(
+        "set_mixer_solo",
+        track_index=track_index,
+        soloed=soloed,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_mixer_arm",
+    annotations=MUTATING.model_copy(update={"title": "Arm or disarm a mixer track"}),
+)
+async def fl_set_mixer_arm(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
+    ],
+    armed: Annotated[
+        bool,
+        Field(description="The absolute wanted recording-arm state."),
+    ],
+    allow_master: Annotated[
+        bool,
+        Field(description="Required to target mixer track 0."),
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        bool | None,
+        Field(default=None, description="Optional expected current arm state."),
+    ] = None,
+) -> VerifiedMixerArmWrite:
+    """Set recording arm with one bounded toggle and later-tick readback."""
+    return await _write(
+        "set_mixer_arm",
+        track_index=track_index,
+        armed=armed,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_mixer_color",
+    annotations=MUTATING.model_copy(update={"title": "Set a mixer track color"}),
+)
+async def fl_set_mixer_color(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
+    ],
+    color: Annotated[
+        int,
+        Field(
+            description="FL color word as unsigned 0xAABBGGRR integer.",
+            ge=0,
+            le=0xFFFFFFFF,
+        ),
+    ],
+    allow_master: Annotated[
+        bool,
+        Field(description="Required to target mixer track 0."),
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Optional expected current FL color word.",
+            ge=0,
+            le=0xFFFFFFFF,
+        ),
+    ] = None,
+) -> VerifiedMixerColorWrite:
+    """Set a mixer color, accepting FL-owned differences in the high byte."""
+    return await _write(
+        "set_mixer_color",
+        track_index=track_index,
+        color=color,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_mixer_stereo_separation",
+    annotations=MUTATING.model_copy(
+        update={"title": "Set mixer stereo separation"}
+    ),
+)
+async def fl_set_mixer_stereo_separation(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index. Index 0 is Master.", ge=0),
+    ],
+    stereo_separation: Annotated[
+        float,
+        Field(description="FL stereo-separation value from -1.0 to 1.0.", ge=-1.0, le=1.0),
+    ],
+    allow_master: Annotated[
+        bool,
+        Field(description="Required to target mixer track 0."),
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Optional expected current stereo-separation value.",
+            ge=-1.0,
+            le=1.0,
+        ),
+    ] = None,
+) -> VerifiedMixerStereoSeparationWrite:
+    """Set stereo separation and report FL's later-tick readback."""
+    return await _write(
+        "set_mixer_stereo_separation",
+        track_index=track_index,
+        stereo_separation=stereo_separation,
+        allow_master=allow_master,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_select_mixer_track",
+    annotations=MUTATING.model_copy(update={"title": "Select a mixer track"}),
+)
+async def fl_select_mixer_track(
+    track_index: Annotated[
+        int,
+        Field(description="Zero-based mixer index to make active.", ge=0),
+    ],
+    allow_master: Annotated[
+        bool,
+        Field(description="Required to select mixer track 0 (Master)."),
+    ] = False,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        int | None,
+        Field(default=None, description="Optional expected active track index.", ge=0),
+    ] = None,
+) -> VerifiedMixerSelectionWrite:
+    """Make one mixer track active and verify the active-track getter."""
+    return await _write(
+        "select_mixer_track",
+        track_index=track_index,
         allow_master=allow_master,
         session_fingerprint=session_fingerprint,
         expected_before=expected_before,
@@ -1398,6 +1845,36 @@ async def fl_set_plugin_param(
 
 
 @mcp.tool(
+    name="fl_apply_verified_batch",
+    annotations=MUTATING.model_copy(update={"title": "Apply a verified write batch"}),
+)
+async def fl_apply_verified_batch(
+    operations: Annotated[
+        list[BatchOperation],
+        Field(
+            description=(
+                "Ordered absolute writes. Operation IDs and written fields must be "
+                "unique; every attempted item gets its own later-tick receipt."
+            ),
+            min_length=1,
+            max_length=MAX_BATCH_OPERATIONS,
+        ),
+    ],
+    stop_on_unverified: Annotated[
+        bool,
+        Field(description="Skip remaining items after the first unverified receipt."),
+    ] = True,
+    session_fingerprint: SessionFingerprintArg = None,
+) -> VerifiedBatchResult:
+    """Apply a closed-union batch after one session preflight, without replay."""
+    return await _apply_batch(
+        operations=operations,
+        stop_on_unverified=stop_on_unverified,
+        session_fingerprint=session_fingerprint,
+    )
+
+
+@mcp.tool(
     name="fl_set_playing",
     annotations=MUTATING.model_copy(update={"title": "Set playback state"}),
 )
@@ -1502,12 +1979,378 @@ async def fl_set_tempo(
 
 
 @mcp.tool(
+    name="fl_set_recording",
+    annotations=MUTATING.model_copy(update={"title": "Set recording arm state"}),
+)
+async def fl_set_recording(
+    recording: Annotated[
+        bool, Field(description="Absolute transport recording-arm state.")
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedRecordingState | None,
+        Field(default=None, description="Optional expected recording state."),
+    ] = None,
+) -> VerifiedRecordingWrite:
+    """Set recording absolutely; FL's toggle is dispatched at most once."""
+    return await _performance_write(
+        "set_recording",
+        recording=recording,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_metronome",
+    annotations=MUTATING.model_copy(update={"title": "Set metronome state"}),
+)
+async def fl_set_metronome(
+    enabled: Annotated[bool, Field(description="Absolute metronome state.")],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedMetronomeState | None,
+        Field(default=None, description="Optional expected metronome state."),
+    ] = None,
+) -> VerifiedMetronomeWrite:
+    """Set the metronome absolutely and prove the later UI state."""
+    return await _performance_write(
+        "set_metronome",
+        enabled=enabled,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_precount",
+    annotations=MUTATING.model_copy(update={"title": "Set recording precount"}),
+)
+async def fl_set_precount(
+    enabled: Annotated[
+        bool, Field(description="Absolute countdown-before-recording state.")
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPrecountState | None,
+        Field(default=None, description="Optional expected precount state."),
+    ] = None,
+) -> VerifiedPrecountWrite:
+    """Set recording precount absolutely and verify it on a later FL tick."""
+    return await _performance_write(
+        "set_precount",
+        enabled=enabled,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_time_signature_numerator",
+    annotations=MUTATING.model_copy(
+        update={"title": "Set time-signature numerator"}
+    ),
+)
+async def fl_set_time_signature_numerator(
+    numerator: Annotated[
+        int,
+        Field(
+            description="Beats per bar. FL exposes no denominator getter.",
+            ge=1,
+            le=32,
+        ),
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedTimeSignatureState | None,
+        Field(default=None, description="Optional expected current numerator."),
+    ] = None,
+) -> VerifiedTimeSignatureNumeratorWrite:
+    """Set and prove beats per bar from FL's PPB/PPQ getter pair."""
+    return await _performance_write(
+        "set_time_signature_numerator",
+        numerator=numerator,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_get_project_history",
+    annotations=READ_ONLY.model_copy(update={"title": "Read project undo history"}),
+)
+async def fl_get_project_history() -> ProjectHistoryObservation:
+    """Read undo/redo bounds, current history position, hint, and dirty state."""
+    return await _performance_read("project_history")
+
+
+@mcp.tool(
+    name="fl_undo",
+    annotations=MUTATING.model_copy(update={"title": "Undo one project change"}),
+)
+async def fl_undo(
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedProjectHistoryState | None,
+        Field(default=None, description="Optional history position/count/dirty guard."),
+    ] = None,
+) -> VerifiedProjectHistoryMove:
+    """Move to the previous absolute undo-history position and verify it."""
+    return await _performance_write(
+        "undo",
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_redo",
+    annotations=MUTATING.model_copy(update={"title": "Redo one project change"}),
+)
+async def fl_redo(
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedProjectHistoryState | None,
+        Field(default=None, description="Optional history position/count/dirty guard."),
+    ] = None,
+) -> VerifiedProjectHistoryMove:
+    """Move to the next absolute undo-history position and verify it."""
+    return await _performance_write(
+        "redo",
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_get_plugin_preset_count",
+    annotations=READ_ONLY.model_copy(update={"title": "Read plug-in preset count"}),
+)
+async def fl_get_plugin_preset_count(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+) -> PluginPresetCount:
+    """Read FL's authoritative preset count for one loaded plug-in."""
+    return await _performance_read("plugin_preset_count", target=target)
+
+
+@mcp.tool(
     name="fl_list_channels",
     annotations=READ_ONLY.model_copy(update={"title": "List Channel Rack channels"}),
 )
 async def fl_list_channels() -> ChannelList:
     """List globally addressed channels, mix state, routing, and generator identity."""
     return await _performance_read("list_channels")
+
+
+@mcp.tool(
+    name="fl_list_patterns",
+    annotations=READ_ONLY.model_copy(update={"title": "List project patterns"}),
+)
+async def fl_list_patterns() -> PatternList:
+    """List pattern identity, length, current state, and empty/default status."""
+    return await _performance_read("list_patterns")
+
+
+@mcp.tool(
+    name="fl_find_empty_pattern",
+    annotations=READ_ONLY.model_copy(update={"title": "Find an empty pattern"}),
+)
+async def fl_find_empty_pattern(
+    start_pattern_number: Annotated[
+        int,
+        Field(description="First pattern number to inspect.", ge=1, le=MAX_PATTERN_NUMBER),
+    ] = 1,
+) -> EmptyPatternSearch:
+    """Find the first default-empty pattern without changing the current pattern."""
+    return await _performance_read(
+        "find_empty_pattern", start_pattern_number=start_pattern_number
+    )
+
+
+@mcp.tool(
+    name="fl_select_pattern",
+    annotations=MUTATING.model_copy(update={"title": "Select a current pattern"}),
+)
+async def fl_select_pattern(
+    pattern_number: Annotated[
+        int,
+        Field(description="Pattern number to make current.", ge=1, le=MAX_PATTERN_NUMBER),
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPatternSelectionState | None,
+        Field(default=None, description="Optional expected current pattern guard."),
+    ] = None,
+) -> VerifiedPatternSelectionWrite:
+    """Select one pattern and verify FL's current-pattern getter."""
+    return await _performance_write(
+        "select_pattern",
+        pattern_number=pattern_number,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_pattern_identity",
+    annotations=MUTATING.model_copy(update={"title": "Name or color a pattern"}),
+)
+async def fl_set_pattern_identity(
+    pattern_number: Annotated[
+        int,
+        Field(description="Pattern number to edit.", ge=1, le=MAX_PATTERN_NUMBER),
+    ],
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Absolute pattern name.", max_length=64),
+    ] = None,
+    color: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Absolute unsigned FL color word.",
+            ge=0,
+            le=0xFFFFFFFF,
+        ),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPatternIdentityState | None,
+        Field(default=None, description="Optional expected pattern name/color."),
+    ] = None,
+) -> VerifiedPatternIdentityWrite:
+    """Set pattern name and/or color with per-field later-tick proof."""
+    return await _performance_write(
+        "set_pattern_identity",
+        pattern_number=pattern_number,
+        name=name,
+        color=color,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_pattern_length",
+    annotations=MUTATING.model_copy(update={"title": "Set pattern length"}),
+)
+async def fl_set_pattern_length(
+    pattern_number: Annotated[
+        int,
+        Field(description="Pattern number to edit.", ge=1, le=MAX_PATTERN_NUMBER),
+    ],
+    length_beats: Annotated[
+        int,
+        Field(
+            description="Absolute pattern length in beats.",
+            ge=1,
+            le=MAX_PATTERN_LENGTH_BEATS,
+        ),
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPatternLengthState | None,
+        Field(default=None, description="Optional expected current length."),
+    ] = None,
+) -> VerifiedPatternLengthWrite:
+    """Set pattern length using Image-Line's API 39+ getter/setter pair."""
+    return await _performance_write(
+        "set_pattern_length",
+        pattern_number=pattern_number,
+        length_beats=length_beats,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_list_playlist_tracks",
+    annotations=READ_ONLY.model_copy(update={"title": "List Playlist tracks"}),
+)
+async def fl_list_playlist_tracks() -> PlaylistTrackList:
+    """List every one-based Playlist track and its controllable state."""
+    return await _performance_read("list_playlist_tracks")
+
+
+@mcp.tool(
+    name="fl_set_playlist_track_identity",
+    annotations=MUTATING.model_copy(update={"title": "Name or color a Playlist track"}),
+)
+async def fl_set_playlist_track_identity(
+    track_index: Annotated[
+        int,
+        Field(description="One-based Playlist track index.", ge=1),
+    ],
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Absolute Playlist track name.", max_length=64),
+    ] = None,
+    color: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Absolute unsigned FL color word.",
+            ge=0,
+            le=0xFFFFFFFF,
+        ),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPlaylistTrackIdentityState | None,
+        Field(default=None, description="Optional expected track name/color."),
+    ] = None,
+) -> VerifiedPlaylistTrackIdentityWrite:
+    """Set Playlist name and/or color with per-field later-tick proof."""
+    return await _performance_write(
+        "set_playlist_track_identity",
+        track_index=track_index,
+        name=name,
+        color=color,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_playlist_track_state",
+    annotations=MUTATING.model_copy(update={"title": "Set Playlist track states"}),
+)
+async def fl_set_playlist_track_state(
+    track_index: Annotated[
+        int,
+        Field(description="One-based Playlist track index.", ge=1),
+    ],
+    muted: Annotated[
+        bool | None,
+        Field(default=None, description="Absolute mute state."),
+    ] = None,
+    soloed: Annotated[
+        bool | None,
+        Field(default=None, description="Absolute solo state."),
+    ] = None,
+    selected: Annotated[
+        bool | None,
+        Field(default=None, description="Absolute selection state."),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedPlaylistTrackState | None,
+        Field(default=None, description="Optional expected mute/solo/selection state."),
+    ] = None,
+) -> VerifiedPlaylistTrackStateWrite:
+    """Set Playlist states; toggle-only selection is dispatched at most once."""
+    return await _performance_write(
+        "set_playlist_track_state",
+        track_index=track_index,
+        muted=muted,
+        soloed=soloed,
+        selected=selected,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
 
 
 @mcp.tool(
@@ -1536,6 +2379,83 @@ async def fl_set_channel_mix(
         "set_channel_mix", channel_index=channel_index,
         volume_normalized=volume_normalized, pan=pan, muted=muted,
         session_fingerprint=session_fingerprint, expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_channel_solo",
+    annotations=MUTATING.model_copy(update={"title": "Solo or unsolo a channel"}),
+)
+async def fl_set_channel_solo(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    soloed: Annotated[
+        bool,
+        Field(description="Absolute wanted solo state; never a toggle."),
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelSoloState | None,
+        Field(default=None, description="Optional fingerprint and/or solo-state guard."),
+    ] = None,
+) -> VerifiedChannelSoloWrite:
+    """Set a global channel solo state and verify it on a later FL tick."""
+    return await _performance_write(
+        "set_channel_solo",
+        channel_index=channel_index,
+        soloed=soloed,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_set_channel_pitch",
+    annotations=MUTATING.model_copy(update={"title": "Set Channel Rack pitch"}),
+)
+async def fl_set_channel_pitch(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    pitch_normalized: Annotated[
+        float,
+        Field(
+            description="Absolute FL channel pitch from -1.0 to 1.0.",
+            ge=-1.0,
+            le=1.0,
+        ),
+    ],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelPitchState | None,
+        Field(default=None, description="Optional fingerprint and/or pitch guard."),
+    ] = None,
+) -> VerifiedChannelPitchWrite:
+    """Set normalized channel pitch and report normalized/semitone readback."""
+    return await _performance_write(
+        "set_channel_pitch",
+        channel_index=channel_index,
+        pitch_normalized=pitch_normalized,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
+    )
+
+
+@mcp.tool(
+    name="fl_select_channel",
+    annotations=MUTATING.model_copy(update={"title": "Select one Channel Rack channel"}),
+)
+async def fl_select_channel(
+    channel_index: Annotated[int, Field(description="Global channel index.", ge=0)],
+    session_fingerprint: SessionFingerprintArg = None,
+    expected_before: Annotated[
+        ExpectedChannelSelectionState | None,
+        Field(default=None, description="Optional exact selected-channel list guard."),
+    ] = None,
+) -> VerifiedChannelSelectionWrite:
+    """Select one global channel exclusively and verify the complete selection."""
+    return await _performance_write(
+        "select_channel",
+        channel_index=channel_index,
+        session_fingerprint=session_fingerprint,
+        expected_before=expected_before,
     )
 
 
@@ -1774,6 +2694,559 @@ async def audio_find_recent_bounces(
 ) -> RecentAudioListing:
     """List the newest audio files in FL Studio's Rendered, Audio, and Projects folders."""
     return await _measure(find_recent_audio_files, limit)
+
+
+# ---------------------------------------------------------------------------
+# Production-copilot workflows
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="mix_doctor",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Diagnose a bounced mix"}),
+)
+async def mix_doctor(
+    candidate_path: Annotated[str, Field(description="Absolute path to the candidate bounce.")],
+    target: Annotated[MixTarget, Field(description="Technical review target.")] = "balanced",
+    reference_path: Annotated[str | None, Field(default=None, description="Optional absolute reference path.")] = None,
+    vocal_path: Annotated[str | None, Field(default=None, description="Optional synchronized vocal stem.")] = None,
+    instrumental_path: Annotated[str | None, Field(default=None, description="Optional synchronized instrumental stem.")] = None,
+    max_seconds: Annotated[float | None, Field(default=None, ge=1.0, le=600.0)] = None,
+) -> MixDoctorReport:
+    """Diagnose a real bounce with explicit policy thresholds and no mutation."""
+    return await _mix(
+        run_mix_doctor,
+        candidate_path,
+        target=target,
+        reference_path=reference_path,
+        vocal_path=vocal_path,
+        instrumental_path=instrumental_path,
+        max_seconds=max_seconds,
+    )
+
+
+@mcp.tool(
+    name="mix_reference_recommendations",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Recommend from a real reference comparison"}),
+)
+async def mix_reference_recommendations(
+    reference_path: Annotated[str, Field(description="Absolute path to the reference audio.")],
+    candidate_path: Annotated[str, Field(description="Absolute path to the candidate bounce.")],
+    max_seconds: Annotated[float | None, Field(default=None, ge=1.0, le=600.0)] = None,
+) -> ReferenceRecommendationReport:
+    """Return bounded tonal review ranges only when alignment/readiness passes."""
+    return await _mix(
+        reference_recommendations,
+        reference_path,
+        candidate_path,
+        max_seconds=max_seconds,
+    )
+
+
+@mcp.tool(
+    name="mix_masking_recommendations",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Recommend masking remediation"}),
+)
+async def mix_masking_recommendations(
+    vocal_path: Annotated[str, Field(description="Absolute synchronized vocal stem path.")],
+    instrumental_path: Annotated[str, Field(description="Absolute synchronized instrumental stem path.")],
+    max_seconds: Annotated[float | None, Field(default=None, ge=1.0, le=600.0)] = None,
+) -> MaskingRecommendationReport:
+    """Recommend bounded dynamic remediation from sample-synchronous stems."""
+    return await _mix(
+        masking_recommendations,
+        vocal_path,
+        instrumental_path,
+        max_seconds=max_seconds,
+    )
+
+
+@mcp.tool(
+    name="mix_start_peak_watch",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Start persistent mixer peak watch"}),
+)
+async def mix_start_peak_watch(
+    duration_seconds: Annotated[float, Field(description="Watch duration.", ge=1.0, le=3600.0)] = 180.0,
+    interval_ms: Annotated[int, Field(description="Sampling interval.", ge=250, le=5000)] = 500,
+    only_used: Annotated[bool, Field(description="Retain active/custom-named tracks plus Master.")] = True,
+    max_tracks: Annotated[int, Field(description="Maximum mixer indices scanned.", ge=1, le=126)] = 126,
+) -> PeakWatchReport:
+    """Start a process-persistent sampled peak watch and return its first frame."""
+    return await _mix(
+        PEAK_WATCHES.start,
+        duration_seconds=duration_seconds,
+        interval_ms=interval_ms,
+        only_used=only_used,
+        max_tracks=max_tracks,
+    )
+
+
+@mcp.tool(
+    name="mix_get_peak_watch",
+    annotations=READ_ONLY.model_copy(update={"title": "Read a mixer peak watch"}),
+)
+async def mix_get_peak_watch(
+    watch_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
+) -> PeakWatchReport:
+    """Read cumulative sampled peaks without stopping the watch."""
+    return await _mix(PEAK_WATCHES.get, watch_id)
+
+
+@mcp.tool(
+    name="mix_stop_peak_watch",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Stop a mixer peak watch"}),
+)
+async def mix_stop_peak_watch(
+    watch_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
+) -> PeakWatchReport:
+    """Stop one process-local watch and return its final aggregate."""
+    return await _mix(PEAK_WATCHES.stop, watch_id)
+
+
+@mcp.tool(
+    name="mix_create_gain_stage_plan",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Create a gain-staging plan"}),
+)
+async def mix_create_gain_stage_plan(
+    watch_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
+    target_peak_dbfs: Annotated[float, Field(ge=-30.0, le=-3.0)] = -12.0,
+    max_adjustment_db: Annotated[float, Field(ge=0.5, le=24.0)] = 12.0,
+    allow_master: Annotated[bool, Field(description="Explicitly include Master in the proposed plan.")] = False,
+) -> GainStagePlanResult:
+    """Create, but do not apply, dB-fader changes from a peak watch."""
+    return await _mix(
+        create_gain_stage_plan,
+        watch_id,
+        target_peak_dbfs=target_peak_dbfs,
+        max_adjustment_db=max_adjustment_db,
+        allow_master=allow_master,
+    )
+
+
+@mcp.tool(
+    name="mix_list_plugin_profiles",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "List plug-in and recipe profiles"}),
+)
+async def mix_list_plugin_profiles(
+    category: Annotated[str | None, Field(default=None, description="Optional exact profile category.")] = None,
+) -> PluginProfileCatalog:
+    """List bundled parameter-role adapters and processing recipes."""
+    return await _mix(list_plugin_profiles, category)
+
+
+@mcp.tool(
+    name="mix_inspect_plugin_compatibility",
+    annotations=READ_ONLY.model_copy(update={"title": "Match loaded plug-ins to profiles"}),
+)
+async def mix_inspect_plugin_compatibility(
+    only_used: Annotated[bool, Field(description="Filter conservatively to used mixer tracks.")] = True,
+) -> PluginCompatibilityReport:
+    """Report which loaded effects have known parameter-role adapters."""
+    return await _mix(inspect_plugin_compatibility, only_used=only_used)
+
+
+@mcp.tool(
+    name="mix_resolve_processing_intent",
+    annotations=READ_ONLY.model_copy(update={"title": "Resolve a processing intent"}),
+)
+async def mix_resolve_processing_intent(
+    intent: Annotated[ProcessingIntent, Field(description="Outcome-level processing intent.")],
+    track_index: Annotated[int, Field(description="Mixer track to inspect.", ge=0)],
+    strength: Annotated[float, Field(description="Reviewed artistic strength hint.", ge=0.0, le=1.0)] = 0.5,
+) -> ProcessingIntentResolution:
+    """Map an intent to loaded profiled controls without applying settings."""
+    return await _mix(
+        resolve_processing_intent,
+        intent,
+        track_index=track_index,
+        strength=strength,
+    )
+
+
+@mcp.tool(
+    name="mix_create_plan",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Create a reviewable mix plan"}),
+)
+async def mix_create_plan(
+    title: Annotated[str, Field(min_length=1, max_length=128)],
+    operations: Annotated[list[BatchOperation], Field(min_length=1, max_length=32)],
+    rationale: Annotated[list[str] | None, Field(default=None, max_length=32)] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+) -> MixPlan:
+    """Store a session-bound closed-union plan; no project value changes."""
+    return await _mix(
+        MIX_PLANS.create,
+        title=title,
+        operations=operations,
+        rationale=rationale,
+        session_fingerprint=session_fingerprint,
+    )
+
+
+@mcp.tool(
+    name="mix_get_plan",
+    annotations=READ_ONLY.model_copy(update={"title": "Read a mix plan"}),
+)
+async def mix_get_plan(
+    plan_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
+) -> MixPlan:
+    """Read one process-local reviewable plan."""
+    return await _mix(MIX_PLANS.get, plan_id)
+
+
+@mcp.tool(
+    name="mix_apply_plan",
+    annotations=MUTATING.model_copy(update={"title": "Apply a reviewed mix plan"}),
+)
+async def mix_apply_plan(
+    plan_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
+    stop_on_unverified: Annotated[bool, Field(description="Skip remaining plan items after unverified proof.")] = True,
+) -> MixPlanApplication:
+    """Apply a plan once through the verified batch kernel."""
+    return await _mix(
+        MIX_PLANS.apply,
+        plan_id,
+        stop_on_unverified=stop_on_unverified,
+    )
+
+
+@mcp.tool(
+    name="mix_finish_assessment",
+    annotations=READ_ONLY.model_copy(update={"title": "Assess the finish-mix workflow"}),
+)
+async def mix_finish_assessment(
+    candidate_path: Annotated[str, Field(description="Absolute candidate bounce path.")],
+    target: Annotated[MixTarget, Field(description="Technical review target.")] = "balanced",
+    reference_path: Annotated[str | None, Field(default=None)] = None,
+    vocal_path: Annotated[str | None, Field(default=None)] = None,
+    instrumental_path: Annotated[str | None, Field(default=None)] = None,
+    max_seconds: Annotated[float | None, Field(default=None, ge=1.0, le=600.0)] = None,
+) -> FinishMixAssessment:
+    """Run the end-to-end read-only finish assessment and stop at user export."""
+    return await _mix(
+        finish_mix_assessment,
+        candidate_path,
+        target=target,
+        reference_path=reference_path,
+        vocal_path=vocal_path,
+        instrumental_path=instrumental_path,
+        max_seconds=max_seconds,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Creative pack: composition, Piano Roll, MIDI, analysis, and arrangement
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="piano_roll_bridge",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Prepare or inspect the Piano Roll bridge"}),
+)
+async def piano_roll_bridge(
+    action: Annotated[
+        Literal["status", "prepare", "confirm"],
+        Field(description="Status only, write the bootstrap script, or confirm the user ran it once."),
+    ] = "status",
+    confirm_user_ran_script: Annotated[
+        bool,
+        Field(description="Required only for action='confirm', after the user manually ran Postfader Apply."),
+    ] = False,
+) -> PianoRollBridgeStatus:
+    """Manage the one-time-per-process arm for FL's separate Piano Roll script runtime."""
+    return await _mix(
+        PIANO_ROLL.bridge_action,
+        action,
+        confirm_user_ran_script=confirm_user_ran_script,
+    )
+
+
+@mcp.tool(
+    name="piano_roll_write_notes",
+    annotations=MUTATING.model_copy(update={"title": "Write notes through FL's Piano Roll script"}),
+)
+async def piano_roll_write_notes(
+    notes: Annotated[
+        list[CreativeNote],
+        Field(min_length=1, max_length=2048, description="Bounded notes in quarter-note beat units."),
+    ],
+    channel_index: Annotated[int, Field(ge=0, description="Global Channel Rack target index.")],
+    pattern_number: Annotated[int, Field(ge=1, le=999, description="Pattern to select before triggering the script.")],
+    mode: Annotated[
+        Literal["append", "replace"],
+        Field(description="Append to the score or clear all notes before adding these notes."),
+    ] = "append",
+    auto_trigger: Annotated[
+        bool,
+        Field(description="Send FL's run-last-Piano-Roll-script shortcut after verified target selection."),
+    ] = True,
+) -> PianoRollDispatch:
+    """Generate a typed Piano Roll script, select its target, and report hotkey dispatch honestly."""
+    return await _mix(
+        write_piano_roll_notes,
+        notes,
+        channel_index=channel_index,
+        pattern_number=pattern_number,
+        mode=mode,
+        auto_trigger=auto_trigger,
+    )
+
+
+@mcp.tool(
+    name="piano_roll_transform",
+    annotations=MUTATING.model_copy(update={"title": "Transform live Piano Roll notes"}),
+)
+async def piano_roll_transform(
+    request: Annotated[PianoRollTransform, Field(description="Closed transform request read by FL's live score script.")],
+    channel_index: Annotated[int, Field(ge=0, description="Global Channel Rack target index.")],
+    pattern_number: Annotated[int, Field(ge=1, le=999, description="Pattern to select before triggering the script.")],
+    auto_trigger: Annotated[bool, Field(description="Automatically send the run-last-script shortcut.")] = True,
+) -> PianoRollDispatch:
+    """Quantize, transpose, humanize, duplicate, delete, or clear selected/all notes."""
+    return await _mix(
+        transform_piano_roll,
+        request,
+        channel_index=channel_index,
+        pattern_number=pattern_number,
+        auto_trigger=auto_trigger,
+    )
+
+
+@mcp.tool(
+    name="compose_chord_progression",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compose a voice-led chord progression"}),
+)
+async def compose_chord_progression(
+    progression: Annotated[list[str], Field(min_length=1, max_length=64, description="Roman chords such as I, vi, IV, V, or V7.")],
+    root: Annotated[str, Field(description="Tonic note name, for example C, F#, or Bb.")] = "C",
+    collection: Annotated[str, Field(description="Bundled scale/mode/raga name, or custom.")] = "major",
+    custom_intervals: Annotated[list[int] | None, Field(default=None, max_length=12)] = None,
+    beats_per_chord: Annotated[float, Field(ge=0.125, le=32.0)] = 4.0,
+    octave: Annotated[int, Field(ge=0, le=8)] = 4,
+    voicing: Annotated[Literal["close", "open", "drop2"], Field(description="Deterministic voicing strategy.")] = "close",
+    velocity: Annotated[float, Field(ge=0.0, le=1.0)] = 0.78,
+    tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+) -> NoteSequence:
+    """Generate voice-led triads/sevenths without changing FL."""
+    return await _mix(
+        generate_chord_progression,
+        progression,
+        root=root,
+        collection=collection,
+        custom_intervals=custom_intervals,
+        beats_per_chord=beats_per_chord,
+        octave=octave,
+        voicing=voicing,
+        velocity=velocity,
+        tempo_bpm=tempo_bpm,
+    )
+
+
+@mcp.tool(
+    name="compose_melody",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compose a deterministic melody"}),
+)
+async def compose_melody(
+    root: Annotated[str, Field(description="Tonic note name.")] = "C",
+    collection: Annotated[str, Field(description="Bundled scale/mode/raga name, or custom.")] = "major",
+    custom_intervals: Annotated[list[int] | None, Field(default=None, max_length=12)] = None,
+    bars: Annotated[int, Field(ge=1, le=64)] = 4,
+    beats_per_bar: Annotated[int, Field(ge=1, le=16)] = 4,
+    density: Annotated[float, Field(ge=0.05, le=1.0)] = 0.65,
+    register_low: Annotated[int, Field(ge=0, le=130)] = 60,
+    register_high: Annotated[int, Field(ge=1, le=131)] = 84,
+    contour: Annotated[Literal["balanced", "rising", "falling", "arch", "wave"], Field()] = "balanced",
+    seed: Annotated[int, Field(description="Deterministic variation seed.")] = 0,
+    tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+) -> NoteSequence:
+    """Generate a bounded scale-aware melody without changing FL."""
+    return await _mix(
+        generate_melody,
+        root=root,
+        collection=collection,
+        custom_intervals=custom_intervals,
+        bars=bars,
+        beats_per_bar=beats_per_bar,
+        density=density,
+        register_low=register_low,
+        register_high=register_high,
+        contour=contour,
+        seed=seed,
+        tempo_bpm=tempo_bpm,
+    )
+
+
+@mcp.tool(
+    name="compose_bassline",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compose a progression-aware bassline"}),
+)
+async def compose_bassline(
+    progression: Annotated[list[str], Field(min_length=1, max_length=64)],
+    root: Annotated[str, Field(description="Tonic note name.")] = "C",
+    collection: Annotated[str, Field(description="Bundled scale/mode/raga name, or custom.")] = "major",
+    custom_intervals: Annotated[list[int] | None, Field(default=None, max_length=12)] = None,
+    beats_per_chord: Annotated[float, Field(ge=0.5, le=32.0)] = 4.0,
+    octave: Annotated[int, Field(ge=0, le=7)] = 2,
+    style: Annotated[Literal["roots", "eighths", "octaves", "walking"], Field()] = "roots",
+    seed: Annotated[int, Field(description="Deterministic variation seed.")] = 0,
+    tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+) -> NoteSequence:
+    """Generate a bounded bass part from Roman harmony without changing FL."""
+    return await _mix(
+        generate_bassline,
+        progression,
+        root=root,
+        collection=collection,
+        custom_intervals=custom_intervals,
+        beats_per_chord=beats_per_chord,
+        octave=octave,
+        style=style,
+        seed=seed,
+        tempo_bpm=tempo_bpm,
+    )
+
+
+@mcp.tool(
+    name="compose_drums",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compose a deterministic drum part"}),
+)
+async def compose_drums(
+    style: Annotated[Literal["house", "hiphop", "trap", "pop", "dnb"], Field()] = "house",
+    bars: Annotated[int, Field(ge=1, le=64)] = 4,
+    beats_per_bar: Annotated[int, Field(ge=1, le=16)] = 4,
+    seed: Annotated[int, Field(description="Deterministic variation seed.")] = 0,
+    swing: Annotated[float, Field(ge=0.0, le=0.49, description="Delay offbeat eighths in beats.")] = 0.0,
+    tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+) -> NoteSequence:
+    """Generate GM-mapped kick/snare/hat patterns without changing FL."""
+    return await _mix(
+        generate_drums,
+        style=style,
+        bars=bars,
+        beats_per_bar=beats_per_bar,
+        seed=seed,
+        swing=swing,
+        tempo_bpm=tempo_bpm,
+    )
+
+
+@mcp.tool(
+    name="midi_export_type1",
+    annotations=FILE_MUTATING.model_copy(update={"title": "Export and verify a Type-1 MIDI file"}),
+)
+async def midi_export_type1(
+    path: Annotated[str, Field(description="Absolute .mid/.midi output path whose parent already exists.")],
+    tracks: Annotated[list[MidiTrackSpec], Field(min_length=1, max_length=32)],
+    tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+    ppq: Annotated[int, Field(ge=24, le=9600)] = 480,
+    numerator: Annotated[int, Field(ge=1, le=32)] = 4,
+    denominator: Annotated[Literal[1, 2, 4, 8, 16, 32], Field()] = 4,
+    overwrite: Annotated[bool, Field(description="Explicitly allow atomic replacement of an existing file.")] = False,
+) -> MidiExportReceipt:
+    """Write a standard Type-1 file, reopen it, parse it, and verify its digest/events."""
+    return await _mix(
+        export_type1_midi,
+        path,
+        tracks,
+        tempo_bpm=tempo_bpm,
+        ppq=ppq,
+        numerator=numerator,
+        denominator=denominator,
+        overwrite=overwrite,
+    )
+
+
+@mcp.tool(
+    name="audio_estimate_tempo_and_key",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Estimate tempo and musical key"}),
+)
+async def audio_estimate_tempo_and_key(
+    path: Annotated[str, Field(description="Absolute path to a decoded audio file.")],
+    max_seconds: Annotated[float | None, Field(default=300.0, ge=1.0, le=600.0)] = 300.0,
+) -> AudioMusicAnalysis:
+    """Estimate periodic tempo and global major/minor key with ranked ambiguity."""
+    return await _measure(analyze_tempo_and_key, path, max_seconds=max_seconds)
+
+
+@mcp.tool(
+    name="audio_transcribe_melody",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Transcribe a monophonic melody"}),
+)
+async def audio_transcribe_melody(
+    path: Annotated[str, Field(description="Absolute path to one isolated pitched source.")],
+    tempo_bpm: Annotated[float | None, Field(default=None, ge=10.0, le=522.0)] = None,
+    fmin_hz: Annotated[float, Field(ge=30.0, le=3999.0)] = 55.0,
+    fmax_hz: Annotated[float, Field(ge=31.0, le=4000.0)] = 1760.0,
+    minimum_note_seconds: Annotated[float, Field(ge=0.03, le=2.0)] = 0.08,
+    quantize_grid_beats: Annotated[float | None, Field(default=0.25, ge=0.03125, le=4.0)] = 0.25,
+    max_seconds: Annotated[float | None, Field(default=180.0, ge=1.0, le=300.0)] = 180.0,
+) -> MelodyTranscription:
+    """Extract a reviewable note sequence from monophonic audio; it does not mutate FL."""
+    return await _measure(
+        transcribe_monophonic,
+        path,
+        tempo_bpm=tempo_bpm,
+        fmin_hz=fmin_hz,
+        fmax_hz=fmax_hz,
+        minimum_note_seconds=minimum_note_seconds,
+        quantize_grid_beats=quantize_grid_beats,
+        max_seconds=max_seconds,
+    )
+
+
+@mcp.tool(
+    name="arrangement_prepare_pattern",
+    annotations=MUTATING.model_copy(update={"title": "Prepare a verified empty pattern"}),
+)
+async def arrangement_prepare_pattern(
+    name: Annotated[str, Field(min_length=1, max_length=64)],
+    length_beats: Annotated[int, Field(ge=1, le=4096)] = 16,
+    color: Annotated[int | None, Field(default=None, ge=0, le=0xFFFFFFFF)] = None,
+    start_pattern_number: Annotated[int, Field(ge=1, le=999)] = 1,
+) -> PatternPreparation:
+    """Find an FL-reported empty pattern, select it, name/color it, and set length."""
+    return await _mix(
+        prepare_empty_pattern,
+        name=name,
+        length_beats=length_beats,
+        color=color,
+        start_pattern_number=start_pattern_number,
+    )
+
+
+@mcp.tool(
+    name="arrangement_add_section_markers",
+    annotations=MUTATING.model_copy(update={"title": "Add section markers to the arrangement"}),
+)
+async def arrangement_add_section_markers(
+    markers: Annotated[list[SectionMarker], Field(min_length=1, max_length=32)],
+) -> ArrangementMarkerReceipt:
+    """Add bar/beat section markers; name readback is available, marker-time readback is not."""
+    return await _mix(add_section_markers, markers)
+
+
+@mcp.tool(
+    name="automation_record_value",
+    annotations=MUTATING.model_copy(update={"title": "Record one public REC-event automation value"}),
+)
+async def automation_record_value(
+    target_kind: Annotated[Literal["mixer", "channel"], Field(description="Automation target namespace.")],
+    target_index: Annotated[int, Field(ge=0)],
+    property: Annotated[Literal["volume", "pan", "stereo_separation"], Field(description="Channel targets support volume/pan; mixer also supports stereo separation.")],
+    value_normalized: Annotated[float, Field(ge=0.0, le=1.0)],
+    allow_master: Annotated[bool, Field(description="Explicitly permit mixer target 0.")] = False,
+    expected_before: Annotated[float | None, Field(default=None, ge=0.0, le=1.0)] = None,
+) -> AutomationRecordReceipt:
+    """Dispatch one REC_MIDIController value while playback and recording are active."""
+    return await _mix(
+        record_automation_value,
+        target_kind=target_kind,
+        target_index=target_index,
+        property=property,
+        value_normalized=value_normalized,
+        allow_master=allow_master,
+        expected_before=expected_before,
+    )
 
 
 USAGE = """\

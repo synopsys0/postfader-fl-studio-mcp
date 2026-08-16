@@ -149,7 +149,8 @@ Changes to it must preserve these properties:
 - separate allowlists for reads, session capability control, and verified-write commands;
 - no `saveProject` call;
 - no automatic replay of a write after an ambiguous transport failure; and
-- later-tick readback for every public write.
+- an explicit verification basis for every public write, with later-tick
+  readback required whenever FL exposes the needed getter.
 
 Run `tests/test_bridge.py` and `tests/test_tick_budget.py` while iterating, then
 run the complete safe suite.
@@ -157,7 +158,7 @@ run the complete safe suite.
 ## MCP surface changes
 
 The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the current public surface contains 37 tools. Preserve
+`fl-studio`, and the current public surface contains 90 tools and 8 resources. Preserve
 existing names and response contracts unless a deliberate compatibility change
 has been discussed.
 

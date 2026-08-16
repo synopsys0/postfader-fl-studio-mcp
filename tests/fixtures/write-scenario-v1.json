@@ -4,6 +4,22 @@
   "safe_to_edit": true,
   "operations": [
     {
+      "tool": "fl_redo",
+      "before": {"tool": "fl_get_project_history", "arguments": {}},
+      "fixture_before": {"history": {"position": 2, "count": 3, "last_position": 3, "level_hint": "Fixture edit", "project_dirty_flag": 1, "can_undo": true, "can_redo": true}},
+      "mutation_arguments": {},
+      "restore": [{"tool": "fl_undo", "arguments": {}}],
+      "verify_paths": ["history.position"]
+    },
+    {
+      "tool": "fl_undo",
+      "before": {"tool": "fl_get_project_history", "arguments": {}},
+      "fixture_before": {"history": {"position": 2, "count": 3, "last_position": 3, "level_hint": "Fixture edit", "project_dirty_flag": 1, "can_undo": true, "can_redo": true}},
+      "mutation_arguments": {},
+      "restore": [{"tool": "fl_redo", "arguments": {}}],
+      "verify_paths": ["history.position"]
+    },
+    {
       "tool": "fl_route_channel_to_mixer",
       "before": {"tool": "fl_list_channels", "arguments": {}},
       "fixture_before": {"channels": [{"mixer_destination": 1}]},
@@ -168,6 +184,150 @@
       "mutation_arguments": {},
       "restore": [{"tool": "fl_set_song_position", "arguments": {"position_normalized": {"$before": "song_position_normalized"}}}],
       "verify_paths": ["playing", "song_position_normalized"]
+    },
+    {
+      "tool": "fl_select_channel",
+      "before": {"tool": "fl_list_channels", "arguments": {}},
+      "fixture_before": {"channels": [{"channel_index": 0, "selected": true}, {"channel_index": 1, "selected": false}]},
+      "mutation_arguments": {"channel_index": 1},
+      "restore": [{"arguments": {"channel_index": 0}}],
+      "verify_paths": ["channels.0.selected", "channels.1.selected"]
+    },
+    {
+      "tool": "fl_set_channel_solo",
+      "before": {"tool": "fl_list_channels", "arguments": {}},
+      "fixture_before": {"channels": [{"channel_index": 0, "soloed": false}]},
+      "mutation_arguments": {"channel_index": 0, "soloed": true},
+      "restore": [{"arguments": {"channel_index": 0, "soloed": {"$before": "channels.0.soloed"}}}],
+      "verify_paths": ["channels.0.soloed"]
+    },
+    {
+      "tool": "fl_set_channel_pitch",
+      "before": {"tool": "fl_list_channels", "arguments": {}},
+      "fixture_before": {"channels": [{"channel_index": 0, "pitch_normalized": 0.0}]},
+      "mutation_arguments": {"channel_index": 0, "pitch_normalized": 0.1},
+      "restore": [{"arguments": {"channel_index": 0, "pitch_normalized": {"$before": "channels.0.pitch_normalized"}}}],
+      "verify_paths": ["channels.0.pitch_normalized"]
+    },
+    {
+      "tool": "fl_select_mixer_track",
+      "before": {"tool": "fl_list_mixer_tracks", "arguments": {"only_used": false}},
+      "fixture_before": {"tracks": [{"index": 1, "selected": true}, {"index": 2, "selected": false}]},
+      "mutation_arguments": {"track_index": 2},
+      "restore": [{"arguments": {"track_index": 1}}],
+      "verify_paths": ["tracks.0.selected", "tracks.1.selected"]
+    },
+    {
+      "tool": "fl_set_mixer_solo",
+      "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
+      "fixture_before": {"track": {"soloed": false}},
+      "mutation_arguments": {"track_index": 1, "soloed": true},
+      "restore": [{"arguments": {"track_index": 1, "soloed": {"$before": "track.soloed"}}}],
+      "verify_paths": ["track.soloed"]
+    },
+    {
+      "tool": "fl_set_mixer_arm",
+      "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
+      "fixture_before": {"track": {"armed": false}},
+      "mutation_arguments": {"track_index": 1, "armed": true},
+      "restore": [{"arguments": {"track_index": 1, "armed": {"$before": "track.armed"}}}],
+      "verify_paths": ["track.armed"]
+    },
+    {
+      "tool": "fl_set_mixer_color",
+      "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
+      "fixture_before": {"track": {"color_rgba": 16744448}},
+      "mutation_arguments": {"track_index": 1, "color": 5636095},
+      "restore": [{"arguments": {"track_index": 1, "color": {"$before": "track.color_rgba"}}}],
+      "verify_paths": ["track.color_rgba"]
+    },
+    {
+      "tool": "fl_set_mixer_stereo_separation",
+      "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
+      "fixture_before": {"track": {"stereo_separation": 0.0}},
+      "mutation_arguments": {"track_index": 1, "stereo_separation": 0.2},
+      "restore": [{"arguments": {"track_index": 1, "stereo_separation": {"$before": "track.stereo_separation"}}}],
+      "verify_paths": ["track.stereo_separation"]
+    },
+    {
+      "tool": "fl_set_mixer_volume_db",
+      "before": {"tool": "fl_inspect_mixer_track", "arguments": {"track_index": 1}},
+      "fixture_before": {"track": {"volume_db": 0.0}},
+      "mutation_arguments": {"track_index": 1, "volume_db": -6.0},
+      "restore": [{"arguments": {"track_index": 1, "volume_db": {"$before": "track.volume_db"}}}],
+      "verify_paths": ["track.volume_db"]
+    },
+    {
+      "tool": "fl_set_metronome",
+      "before": {"tool": "fl_get_transport_state", "arguments": {}},
+      "fixture_before": {"metronome_enabled": false},
+      "mutation_arguments": {"enabled": true},
+      "restore": [{"arguments": {"enabled": {"$before": "metronome_enabled"}}}],
+      "verify_paths": ["metronome_enabled"]
+    },
+    {
+      "tool": "fl_set_precount",
+      "before": {"tool": "fl_get_transport_state", "arguments": {}},
+      "fixture_before": {"precount_enabled": false},
+      "mutation_arguments": {"enabled": true},
+      "restore": [{"arguments": {"enabled": {"$before": "precount_enabled"}}}],
+      "verify_paths": ["precount_enabled"]
+    },
+    {
+      "tool": "fl_set_recording",
+      "before": {"tool": "fl_get_transport_state", "arguments": {}},
+      "fixture_before": {"recording": false},
+      "mutation_arguments": {"recording": true},
+      "restore": [{"arguments": {"recording": {"$before": "recording"}}}],
+      "verify_paths": ["recording"]
+    },
+    {
+      "tool": "fl_set_time_signature_numerator",
+      "before": {"tool": "fl_get_transport_state", "arguments": {}},
+      "fixture_before": {"time_signature_numerator": 4},
+      "mutation_arguments": {"numerator": 3},
+      "restore": [{"arguments": {"numerator": {"$before": "time_signature_numerator"}}}],
+      "verify_paths": ["time_signature_numerator"]
+    },
+    {
+      "tool": "fl_select_pattern",
+      "before": {"tool": "fl_list_patterns", "arguments": {}},
+      "fixture_before": {"current_pattern_number": 1},
+      "mutation_arguments": {"pattern_number": 2},
+      "restore": [{"arguments": {"pattern_number": {"$before": "current_pattern_number"}}}],
+      "verify_paths": ["current_pattern_number"]
+    },
+    {
+      "tool": "fl_set_pattern_identity",
+      "before": {"tool": "fl_list_patterns", "arguments": {}},
+      "fixture_before": {"patterns": [{"pattern_number": 1, "name": "Pattern 1", "color": 16744448}]},
+      "mutation_arguments": {"pattern_number": 1, "name": "PF Temporary Pattern", "color": 5636095},
+      "restore": [{"arguments": {"pattern_number": 1, "name": {"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "name"}}, "color": {"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "color"}}}}],
+      "verify_paths": [{"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "name"}}, {"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "color"}}]
+    },
+    {
+      "tool": "fl_set_pattern_length",
+      "before": {"tool": "fl_list_patterns", "arguments": {}},
+      "fixture_before": {"patterns": [{"pattern_number": 1, "length_beats": 16}]},
+      "mutation_arguments": {"pattern_number": 1, "length_beats": 8},
+      "restore": [{"arguments": {"pattern_number": 1, "length_beats": {"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "length_beats"}}}}],
+      "verify_paths": [{"$select": {"path": "patterns", "where": {"pattern_number": 1}, "value": "length_beats"}}]
+    },
+    {
+      "tool": "fl_set_playlist_track_identity",
+      "before": {"tool": "fl_list_playlist_tracks", "arguments": {}},
+      "fixture_before": {"tracks": [{"track_index": 1, "name": "Track 1", "color": 16744448}]},
+      "mutation_arguments": {"track_index": 1, "name": "PF Temporary Playlist", "color": 5636095},
+      "restore": [{"arguments": {"track_index": 1, "name": {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "name"}}, "color": {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "color"}}}}],
+      "verify_paths": [{"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "name"}}, {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "color"}}]
+    },
+    {
+      "tool": "fl_set_playlist_track_state",
+      "before": {"tool": "fl_list_playlist_tracks", "arguments": {}},
+      "fixture_before": {"tracks": [{"track_index": 1, "muted": false, "soloed": false, "selected": false}]},
+      "mutation_arguments": {"track_index": 1, "muted": true, "soloed": true, "selected": true},
+      "restore": [{"arguments": {"track_index": 1, "muted": {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "muted"}}, "soloed": {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "soloed"}}, "selected": {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "selected"}}}}],
+      "verify_paths": [{"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "muted"}}, {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "soloed"}}, {"$select": {"path": "tracks", "where": {"track_index": 1}, "value": "selected"}}]
     }
   ]
 }

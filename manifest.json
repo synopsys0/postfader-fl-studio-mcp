@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "Postfader for FL Studio",
-  "version": "0.13.0",
-  "description": "Readback-verified FL Studio transport, mixer, Channel Rack, and plug-in control.",
-  "long_description": "A local MCP server and MIDI bridge for inspecting FL Studio projects, applying narrow opt-in transport, mixer, Channel Rack, sequencer, and plug-in changes with later-tick readback, auditioning bounded live notes, and analyzing rendered audio. Before opening this extension, install the matching Python package and run postfader-install-bridge; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint. FL Studio mutations remain disabled unless FL Studio itself is launched in write mode.",
+  "version": "0.20.0",
+  "description": "All-around FL Studio MCP for verified control, mixing, composition, and arrangement.",
+  "long_description": "A local 90-tool MCP server and MIDI bridge for inspecting and controlling FL Studio, diagnosing real bounces, building and applying reviewable mix plans, composing deterministic parts, exporting verified MIDI, and driving FL's optional Piano Roll script runtime. Direct setters keep later-tick readback and mutations remain disabled until the present user enables write mode for that bridge session. Before opening this extension, install the matching Python package and run postfader-install-bridge; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -87,7 +87,7 @@
     },
     {
       "name": "copilot_capture_readonly_inspection",
-      "description": "Capture a compact project/mixer/effect report for Phase 1 validation."
+      "description": "Capture a compact project, mixer, and effect inspection report."
     },
     {
       "name": "fl_set_write_mode",
@@ -98,12 +98,36 @@
       "description": "Set one mixer fader and report the readback FL gave on a later tick."
     },
     {
+      "name": "fl_set_mixer_volume_db",
+      "description": "Search FL's fader curve and prove the requested dB value on a later tick."
+    },
+    {
       "name": "fl_set_mixer_pan",
       "description": "Set one mixer pan and report the readback FL gave on a later tick."
     },
     {
       "name": "fl_set_mixer_mute",
       "description": "Set one track's mute state and report the readback FL gave on a later tick."
+    },
+    {
+      "name": "fl_set_mixer_solo",
+      "description": "Set one mixer track's solo state and verify it on a later FL tick."
+    },
+    {
+      "name": "fl_set_mixer_arm",
+      "description": "Set recording arm with one bounded toggle and later-tick readback."
+    },
+    {
+      "name": "fl_set_mixer_color",
+      "description": "Set a mixer color, accepting FL-owned differences in the high byte."
+    },
+    {
+      "name": "fl_set_mixer_stereo_separation",
+      "description": "Set stereo separation and report FL's later-tick readback."
+    },
+    {
+      "name": "fl_select_mixer_track",
+      "description": "Make one mixer track active and verify the active-track getter."
     },
     {
       "name": "fl_set_track_eq",
@@ -134,6 +158,10 @@
       "description": "Set one plug-in parameter; verified from FL's display string changing."
     },
     {
+      "name": "fl_apply_verified_batch",
+      "description": "Apply a closed-union batch after one session preflight, without replay."
+    },
+    {
       "name": "fl_set_playing",
       "description": "Set playback to an absolute state and verify it on a later FL idle tick."
     },
@@ -154,12 +182,88 @@
       "description": "Set project tempo while stopped and verify BPM on a later FL idle tick."
     },
     {
+      "name": "fl_set_recording",
+      "description": "Set recording absolutely; FL's toggle is dispatched at most once."
+    },
+    {
+      "name": "fl_set_metronome",
+      "description": "Set the metronome absolutely and prove the later UI state."
+    },
+    {
+      "name": "fl_set_precount",
+      "description": "Set recording precount absolutely and verify it on a later FL tick."
+    },
+    {
+      "name": "fl_set_time_signature_numerator",
+      "description": "Set and prove beats per bar from FL's PPB/PPQ getter pair."
+    },
+    {
+      "name": "fl_get_project_history",
+      "description": "Read undo/redo bounds, current history position, hint, and dirty state."
+    },
+    {
+      "name": "fl_undo",
+      "description": "Move to the previous absolute undo-history position and verify it."
+    },
+    {
+      "name": "fl_redo",
+      "description": "Move to the next absolute undo-history position and verify it."
+    },
+    {
+      "name": "fl_get_plugin_preset_count",
+      "description": "Read FL's authoritative preset count for one loaded plug-in."
+    },
+    {
       "name": "fl_list_channels",
       "description": "List globally addressed channels, mix state, routing, and generator identity."
     },
     {
+      "name": "fl_list_patterns",
+      "description": "List pattern identity, length, current state, and empty/default status."
+    },
+    {
+      "name": "fl_find_empty_pattern",
+      "description": "Find the first default-empty pattern without changing the current pattern."
+    },
+    {
+      "name": "fl_select_pattern",
+      "description": "Select one pattern and verify FL's current-pattern getter."
+    },
+    {
+      "name": "fl_set_pattern_identity",
+      "description": "Set pattern name and/or color with per-field later-tick proof."
+    },
+    {
+      "name": "fl_set_pattern_length",
+      "description": "Set pattern length using Image-Line's API 39+ getter/setter pair."
+    },
+    {
+      "name": "fl_list_playlist_tracks",
+      "description": "List every one-based Playlist track and its controllable state."
+    },
+    {
+      "name": "fl_set_playlist_track_identity",
+      "description": "Set Playlist name and/or color with per-field later-tick proof."
+    },
+    {
+      "name": "fl_set_playlist_track_state",
+      "description": "Set Playlist states; toggle-only selection is dispatched at most once."
+    },
+    {
       "name": "fl_set_channel_mix",
       "description": "Set channel volume, pan, and/or mute with per-field readback proof."
+    },
+    {
+      "name": "fl_set_channel_solo",
+      "description": "Set a global channel solo state and verify it on a later FL tick."
+    },
+    {
+      "name": "fl_set_channel_pitch",
+      "description": "Set normalized channel pitch and report normalized/semitone readback."
+    },
+    {
+      "name": "fl_select_channel",
+      "description": "Select one global channel exclusively and verify the complete selection."
     },
     {
       "name": "fl_set_channel_identity",
@@ -196,6 +300,114 @@
     {
       "name": "audio_find_recent_bounces",
       "description": "List the newest audio files in FL Studio's Rendered, Audio, and Projects folders."
+    },
+    {
+      "name": "mix_doctor",
+      "description": "Diagnose a real bounce with explicit policy thresholds and no mutation."
+    },
+    {
+      "name": "mix_reference_recommendations",
+      "description": "Return bounded tonal review ranges only when alignment/readiness passes."
+    },
+    {
+      "name": "mix_masking_recommendations",
+      "description": "Recommend bounded dynamic remediation from sample-synchronous stems."
+    },
+    {
+      "name": "mix_start_peak_watch",
+      "description": "Start a process-persistent sampled peak watch and return its first frame."
+    },
+    {
+      "name": "mix_get_peak_watch",
+      "description": "Read cumulative sampled peaks without stopping the watch."
+    },
+    {
+      "name": "mix_stop_peak_watch",
+      "description": "Stop one process-local watch and return its final aggregate."
+    },
+    {
+      "name": "mix_create_gain_stage_plan",
+      "description": "Create, but do not apply, dB-fader changes from a peak watch."
+    },
+    {
+      "name": "mix_list_plugin_profiles",
+      "description": "List bundled parameter-role adapters and processing recipes."
+    },
+    {
+      "name": "mix_inspect_plugin_compatibility",
+      "description": "Report which loaded effects have known parameter-role adapters."
+    },
+    {
+      "name": "mix_resolve_processing_intent",
+      "description": "Map an intent to loaded profiled controls without applying settings."
+    },
+    {
+      "name": "mix_create_plan",
+      "description": "Store a session-bound closed-union plan; no project value changes."
+    },
+    {
+      "name": "mix_get_plan",
+      "description": "Read one process-local reviewable plan."
+    },
+    {
+      "name": "mix_apply_plan",
+      "description": "Apply a plan once through the verified batch kernel."
+    },
+    {
+      "name": "mix_finish_assessment",
+      "description": "Run the end-to-end read-only finish assessment and stop at user export."
+    },
+    {
+      "name": "piano_roll_bridge",
+      "description": "Manage the one-time-per-process arm for FL's separate Piano Roll script runtime."
+    },
+    {
+      "name": "piano_roll_write_notes",
+      "description": "Generate a typed Piano Roll script, select its target, and report hotkey dispatch honestly."
+    },
+    {
+      "name": "piano_roll_transform",
+      "description": "Quantize, transpose, humanize, duplicate, delete, or clear selected/all notes."
+    },
+    {
+      "name": "compose_chord_progression",
+      "description": "Generate voice-led triads/sevenths without changing FL."
+    },
+    {
+      "name": "compose_melody",
+      "description": "Generate a bounded scale-aware melody without changing FL."
+    },
+    {
+      "name": "compose_bassline",
+      "description": "Generate a bounded bass part from Roman harmony without changing FL."
+    },
+    {
+      "name": "compose_drums",
+      "description": "Generate GM-mapped kick/snare/hat patterns without changing FL."
+    },
+    {
+      "name": "midi_export_type1",
+      "description": "Write a standard Type-1 file, reopen it, parse it, and verify its digest/events."
+    },
+    {
+      "name": "audio_estimate_tempo_and_key",
+      "description": "Estimate periodic tempo and global major/minor key with ranked ambiguity."
+    },
+    {
+      "name": "audio_transcribe_melody",
+      "description": "Extract a reviewable note sequence from monophonic audio; it does not mutate FL."
+    },
+    {
+      "name": "arrangement_prepare_pattern",
+      "description": "Find an FL-reported empty pattern, select it, name/color it, and set length."
+    },
+    {
+      "name": "arrangement_add_section_markers",
+      "description": "Add bar/beat section markers; name readback is available, marker-time readback is not."
+    },
+    {
+      "name": "automation_record_value",
+      "description": "Dispatch one REC_MIDIController value while playback and recording are active."
     }
   ],
   "tools_generated": false,

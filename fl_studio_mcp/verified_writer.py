@@ -42,16 +42,23 @@ from .contracts import (
     ConnectionInfo,
     EqBandObservation,
     ExpectedEqBandState,
+    ExpectedMixerVolumeState,
     ExpectedPluginParameterState,
     PluginParameterObservation,
     PluginVerificationBasis,
+    VerifiedMixerArmWrite,
+    VerifiedMixerColorWrite,
     VerifiedMixerEqWrite,
     VerifiedMixerMuteWrite,
     VerifiedMixerNameWrite,
     VerifiedMixerPanWrite,
+    VerifiedMixerSelectionWrite,
     VerifiedMixerSendLevelWrite,
     VerifiedMixerSendWrite,
+    VerifiedMixerSoloWrite,
+    VerifiedMixerStereoSeparationWrite,
     VerifiedMixerVolumeWrite,
+    VerifiedMixerVolumeDbWrite,
     VerifiedPluginDisplayWrite,
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
@@ -62,14 +69,25 @@ from .readonly_inspector import (
     IncompatibleFLStudio,
     connection_from_ping,
 )
+from .track_b_contracts import (
+    FL_COLOR_WORD_MAX,
+    fl_colors_equivalent,
+    normalize_fl_color,
+)
 
 
 # Exactly the commands the bridge locks behind its current-session write gate.
 WRITE_COMMANDS = frozenset(
     {
         "mixer.set_volume",
+        "mixer.set_volume_db",
         "mixer.set_pan",
         "mixer.set_mute",
+        "mixer.set_solo",
+        "mixer.set_arm",
+        "mixer.set_color",
+        "mixer.set_stereo_separation",
+        "mixer.select_track",
         "mixer.set_eq",
         "mixer.set_name",
         "mixer.set_send",
@@ -292,6 +310,23 @@ def _normalized(value: Any, label: str, *, low: float, high: float) -> float:
 
 def _show(value: float | None) -> str:
     return "unknown" if value is None else f"{value:.4f}"
+
+
+def _optional_index(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _color(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    if value < 0 or value > FL_COLOR_WORD_MAX:
+        raise ValueError(f"{label} must be within 0..{FL_COLOR_WORD_MAX}")
+    normalized = normalize_fl_color(value)
+    if normalized is None:  # kept explicit for the type checker
+        raise ValueError(f"{label} must be a valid FL color word")
+    return normalized
 
 
 def _verification(verified: bool, landed: str, missed: str) -> tuple[str, list[str]]:
@@ -686,6 +721,68 @@ class VerifiedWriter:
             after_volume_normalized=after,
             before_volume_db=_optional_float(raw.get("before_db")),
             after_volume_db=_optional_float(raw.get("after_db")),
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def set_mixer_volume_db(
+        self,
+        *,
+        track_index: int,
+        volume_db: float,
+        tolerance_db: float = 0.1,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedMixerVolumeState | None = None,
+    ) -> VerifiedMixerVolumeDbWrite:
+        """Set a fader against FL's dB getter with a bounded monotonic search."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        wanted = _normalized(volume_db, "volume_db", low=-60.0, high=6.0)
+        tolerance = _normalized(tolerance_db, "tolerance_db", low=0.01, high=1.0)
+        if expected_before is not None:
+            expected_before = ExpectedMixerVolumeState.model_validate(expected_before)
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_volume_db",
+            {
+                "track": index,
+                "volume_db": wanted,
+                "tolerance_db": tolerance,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        verified = _strict_bool(raw, "verified")
+        after_db = _optional_float(raw.get("after_db"))
+        if verified and (
+            after_db is None or abs(after_db - wanted) > tolerance + 1e-9
+        ):
+            raise ValueError(
+                "FL bridge marked the dB fader write verified but its readback "
+                "is outside the requested tolerance"
+            )
+        summary, warnings = _verification(
+            verified,
+            f"FL read the fader back at {_show(after_db)} dB on a later idle tick.",
+            f"FL read the fader back at {_show(after_db)} dB, outside the target tolerance.",
+        )
+        return VerifiedMixerVolumeDbWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_volume_db=wanted,
+            tolerance_db=tolerance,
+            before_volume_normalized=_optional_float(raw.get("before")),
+            after_volume_normalized=_optional_float(raw.get("after")),
+            before_volume_db=_optional_float(raw.get("before_db")),
+            after_volume_db=after_db,
+            search_iterations=_index(
+                raw.get("search_iterations"), "search_iterations", low=0, high=20
+            ),
             warnings=list(connection.warnings) + warnings,
             **metadata,
         )
@@ -1197,6 +1294,254 @@ class VerifiedWriter:
             requested_muted=muted,
             before_muted=_optional_bool(raw.get("before")),
             after_muted=after,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def set_mixer_solo(
+        self,
+        *,
+        track_index: int,
+        soloed: bool,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: bool | None = None,
+    ) -> VerifiedMixerSoloWrite:
+        """Put one mixer track into an explicit solo state."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        wanted = _boolean(soloed, "soloed")
+        if expected_before is not None:
+            expected_before = _boolean(expected_before, "expected_before")
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_solo",
+            {"track": index, "soloed": wanted, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_bool(raw.get("after"))
+        requested_text = "soloed" if wanted else "not soloed"
+        observed_text = "unknown" if after is None else (
+            "soloed" if after else "not soloed"
+        )
+        summary, warnings = _verification(
+            verified,
+            f"FL read the track back as {observed_text} on a later idle tick, "
+            f"matching the requested {requested_text} state.",
+            f"FL accepted the write but read the track back as {observed_text}, "
+            f"not the requested {requested_text} state.",
+        )
+        return VerifiedMixerSoloWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_soloed=wanted,
+            before_soloed=_optional_bool(raw.get("before")),
+            after_soloed=after,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def set_mixer_arm(
+        self,
+        *,
+        track_index: int,
+        armed: bool,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: bool | None = None,
+    ) -> VerifiedMixerArmWrite:
+        """Put one mixer track into an explicit recording-arm state."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        wanted = _boolean(armed, "armed")
+        if expected_before is not None:
+            expected_before = _boolean(expected_before, "expected_before")
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_arm",
+            {"track": index, "armed": wanted, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_bool(raw.get("after"))
+        requested_text = "armed" if wanted else "disarmed"
+        observed_text = "unknown" if after is None else (
+            "armed" if after else "disarmed"
+        )
+        summary, warnings = _verification(
+            verified,
+            f"FL read the track back as {observed_text} on a later idle tick, "
+            f"matching the requested {requested_text} state.",
+            f"FL accepted the write but read the track back as {observed_text}, "
+            f"not the requested {requested_text} state.",
+        )
+        return VerifiedMixerArmWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_armed=wanted,
+            before_armed=_optional_bool(raw.get("before")),
+            after_armed=after,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def set_mixer_color(
+        self,
+        *,
+        track_index: int,
+        color: int,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: int | None = None,
+    ) -> VerifiedMixerColorWrite:
+        """Set one mixer color as FL's unsigned 32-bit color word."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        wanted = _color(color, "color")
+        expected = (
+            None if expected_before is None else _color(expected_before, "expected_before")
+        )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_color",
+            {"track": index, "color": wanted, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
+        )
+        verified = _strict_bool(raw, "verified")
+        before = normalize_fl_color(raw.get("before"))
+        after = normalize_fl_color(raw.get("after"))
+        # The high byte is owned by FL. Reject contradictory proof while
+        # accepting equivalent RGB readbacks with a different high byte.
+        if verified and not fl_colors_equivalent(after, wanted):
+            raise ValueError(
+                "FL bridge marked the color verified but its readback does not "
+                "match the requested RGB bits"
+            )
+        shown = "unknown" if after is None else f"0x{after:08X}"
+        summary, warnings = _verification(
+            verified,
+            f"FL read the color back as {shown} on a later idle tick, matching "
+            f"the requested RGB value 0x{wanted:08X}.",
+            f"FL accepted the write but read the color back as {shown}, not "
+            f"the requested RGB value 0x{wanted:08X}.",
+        )
+        return VerifiedMixerColorWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_color=wanted,
+            before_color=before,
+            after_color=after,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def set_mixer_stereo_separation(
+        self,
+        *,
+        track_index: int,
+        stereo_separation: float,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: float | None = None,
+    ) -> VerifiedMixerStereoSeparationWrite:
+        """Set one track's stereo separation in FL's -1..1 units."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        wanted = _normalized(
+            stereo_separation, "stereo_separation", low=-1.0, high=1.0
+        )
+        expected = (
+            None
+            if expected_before is None
+            else _normalized(expected_before, "expected_before", low=-1.0, high=1.0)
+        )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.set_stereo_separation",
+            {
+                "track": index,
+                "stereo_separation": wanted,
+                "allow_master": allow_master,
+            },
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_float(raw.get("after"))
+        summary, warnings = _verification(
+            verified,
+            f"FL read stereo separation back at {_show(after)} on a later idle "
+            f"tick, matching the requested {_show(wanted)}.",
+            f"FL accepted the write but read stereo separation back at "
+            f"{_show(after)}, not the requested {_show(wanted)}.",
+        )
+        return VerifiedMixerStereoSeparationWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_stereo_separation=wanted,
+            before_stereo_separation=_optional_float(raw.get("before")),
+            after_stereo_separation=after,
+            warnings=list(connection.warnings) + warnings,
+            **metadata,
+        )
+
+    def select_mixer_track(
+        self,
+        *,
+        track_index: int,
+        allow_master: bool = False,
+        session_fingerprint: str | None = None,
+        expected_before: int | None = None,
+    ) -> VerifiedMixerSelectionWrite:
+        """Make one mixer track active and verify FL's active-track getter."""
+        allow_master = _boolean(allow_master, "allow_master")
+        index = self._target(track_index, allow_master)
+        expected = (
+            None
+            if expected_before is None
+            else _index(expected_before, "expected_before", low=0)
+        )
+        raw, connection, metadata = self._call_guarded(
+            "mixer.select_track",
+            {"track": index, "allow_master": allow_master},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_index(raw.get("after"))
+        summary, warnings = _verification(
+            verified,
+            f"FL reported mixer track {after} active on a later idle tick, "
+            f"matching the requested track {index}.",
+            f"FL accepted the selection but reported active mixer track {after}, "
+            f"not the requested track {index}.",
+        )
+        return VerifiedMixerSelectionWrite(
+            applied_at=_now(),
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            track_index=_echoed_track(raw, index),
+            targeted_master=index == 0,
+            verified=verified,
+            verification_summary=summary,
+            requested_active_track_index=index,
+            before_active_track_index=_optional_index(raw.get("before")),
+            after_active_track_index=after,
             warnings=list(connection.warnings) + warnings,
             **metadata,
         )

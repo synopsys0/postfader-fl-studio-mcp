@@ -1,12 +1,12 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "0.13.0"
-description = "Unofficial local MCP bridge for readback-verified FL Studio control"
+version = "0.20.0"
+description = "All-around local FL Studio MCP for verified control, mixing, and composition"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10"
-keywords = ["fl-studio", "mcp", "model-context-protocol", "midi", "music-production"]
+keywords = ["fl-studio", "mcp", "model-context-protocol", "midi", "music-production", "mixing", "composition"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",

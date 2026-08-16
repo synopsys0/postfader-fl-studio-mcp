@@ -1,16 +1,13 @@
 # Tool and command reference
 
-Postfader exposes 37 MCP tools. The MCP layer is the supported
+Postfader exposes 90 MCP tools and 8 MCP resources. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. Twelve inspection tools and four audio tools are
-annotated read-only. Nineteen absolute state tools are annotated mutating,
-destructive, and non-idempotent because repeating a call can add undo history
-and parameter searches can perform transient writes. `fl_trigger_note` is also
-mutating and non-idempotent, but non-destructive; it returns a bounded dispatch
-receipt rather than claiming state verification. `fl_set_write_mode` is a
+and non-finite numbers. The surface contains 36 read-only tools, 39 directly
+guarded FL setters, 8 specialized mutating workflows, 6 non-destructive
+workflow/dispatch tools, and one session-mode control. `fl_set_write_mode` is a
 destructive capability change but an idempotent, session-only absolute state.
 
 ## Inspection tools
@@ -19,7 +16,7 @@ destructive capability change but an idempotent, session-only absolute state.
 | --- | --- |
 | `fl_get_capabilities` | Report direct, partial, unavailable, and unvalidated integration paths. Call this before relying on a feature. |
 | `fl_get_project_summary` | Read project metadata, counts, PPQ, dirty state, undo position, version, and a transport observation. |
-| `fl_get_transport_state` | Read playback, recording, loop mode, position, and song length. |
+| `fl_get_transport_state` | Read playback, recording, metronome, precount, time-signature numerator, loop mode, position, and song length. |
 | `fl_get_selected_range` | Return repeated raw Playlist endpoints and project PPQ without interpreting render semantics. |
 | `fl_list_mixer_tracks` | List mixer tracks, levels, selection state, routing, and loaded effects. `only_used=false` is authoritative; peaks and a page limit are optional. |
 | `fl_inspect_mixer_track` | Read one track's state, effects, built-in EQ, and outgoing routes. Track 0 is Master. |
@@ -29,6 +26,27 @@ destructive capability change but an idempotent, session-only absolute state.
 | `copilot_capture_readonly_inspection` | Capture project, mixer, and bounded plug-in previews under one observation ID. |
 | `fl_list_channels` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
 | `fl_get_step_sequence` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |
+| `fl_list_patterns` | List bounded pattern identity, color, length, current state, and default-empty evidence. |
+| `fl_find_empty_pattern` | Find a default/empty pattern without changing the current pattern. |
+| `fl_list_playlist_tracks` | List every one-based Playlist track and its controllable identity/state. |
+| `fl_get_project_history` | Read undo/redo bounds, current position, history hint, and dirty state. |
+| `fl_get_plugin_preset_count` | Read FL's authoritative preset count for one explicit effect or generator target. |
+
+## Live resources
+
+Resources are read through the same contracts and compatibility gates as the
+corresponding tools. They do not bypass read-only mode.
+
+| URI | Content |
+| --- | --- |
+| `fl://capabilities` | Compatibility, provenance, current write availability, and capability statuses. |
+| `fl://status` | Compact project, transport, write-mode, and session context. |
+| `fl://project` | Typed project summary. |
+| `fl://transport` | Current transport and recording-option state. |
+| `fl://mixer` | Complete bounded mixer inventory without peak sampling. |
+| `fl://channels` | Global Channel Rack inventory. |
+| `fl://plugins` | Loaded mixer effects and channel generators. |
+| `fl://patterns` | Current bounded pattern inventory. |
 
 ### Unprofiled parameters
 
@@ -98,8 +116,14 @@ call shape; supplying them makes stale decisions fail closed.
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
 | `fl_set_mixer_volume` | `track_index`; `volume_normalized` 0–1; optional `allow_master` | `mixer.set_volume` |
+| `fl_set_mixer_volume_db` | `track_index`; displayed fader target -60 to +6 dB; optional tolerance and `allow_master` | `mixer.set_volume_db` |
 | `fl_set_mixer_pan` | `track_index`; `pan` -1–1; optional `allow_master` | `mixer.set_pan` |
 | `fl_set_mixer_mute` | `track_index`; absolute `muted` state; optional `allow_master` | `mixer.set_mute` |
+| `fl_set_mixer_solo` | `track_index`; absolute `soloed` state; optional `allow_master` | `mixer.set_solo` |
+| `fl_set_mixer_arm` | `track_index`; absolute recording-arm state; optional `allow_master` | `mixer.set_arm` |
+| `fl_set_mixer_color` | `track_index`; unsigned FL color word; optional `allow_master` | `mixer.set_color` |
+| `fl_set_mixer_stereo_separation` | `track_index`; absolute -1–1 stereo separation; optional `allow_master` | `mixer.set_stereo_separation` |
+| `fl_select_mixer_track` | Absolute active mixer `track_index`; optional `allow_master` | `mixer.select_track` |
 | `fl_set_track_eq` | `track_index`; `band_index` 0–2; gain and/or frequency normalized 0–1; optional `allow_master` | `mixer.set_eq` |
 | `fl_set_mixer_name` | `track_index`; `name`; optional `allow_master` | `mixer.set_name` |
 | `fl_set_mixer_send` | source and destination track indices; absolute `enabled` state; optional `allow_master` for a Master source | `mixer.set_send` |
@@ -123,10 +147,29 @@ target or the legacy mixer track/slot pair, never both.
 | `fl_set_song_position` | normalized position 0–1; transport must be stopped | `transport.set_song_position` |
 | `fl_set_loop_mode` | absolute `pattern` or `song` mode | `transport.set_loop_mode` |
 | `fl_set_tempo` | absolute 10–522 BPM; playback and recording must be stopped | `transport.set_tempo` |
+| `fl_set_recording` | absolute recording-arm boolean | `transport.set_recording` |
+| `fl_set_metronome` | absolute metronome boolean | `transport.set_metronome` |
+| `fl_set_precount` | absolute recording-precount boolean | `transport.set_precount` |
+| `fl_set_time_signature_numerator` | beats per bar 1–32; FL exposes no denominator getter | `project.set_time_signature_numerator` |
+| `fl_undo` | move one position backward when undo is available | `project.undo` |
+| `fl_redo` | move one position forward when redo is available | `project.redo` |
 | `fl_set_channel_mix` | global channel; volume, pan, mute, or any combination | `channel.set_mix` |
+| `fl_set_channel_solo` | global channel and absolute solo state | `channel.set_solo` |
+| `fl_set_channel_pitch` | global channel and normalized pitch -1–1 | `channel.set_pitch` |
+| `fl_select_channel` | select one global channel exclusively | `channel.select` |
 | `fl_set_channel_identity` | global channel; name, color, or both. Color observations preserve FL's unsigned 32-bit `0x--BBGGRR` word; guards and proof compare the controllable low 24 bits because FL owns the high byte. | `channel.set_identity` |
 | `fl_route_channel_to_mixer` | global channel and absolute mixer destination; `-1` is unassigned | `channel.route_to_mixer` |
 | `fl_set_step_sequence` | explicit current pattern, global channel, required prior digest, and unique absolute cell updates | `sequencer.set` |
+
+### Pattern and Playlist state
+
+| Tool | Required target and value | Bridge command |
+| --- | --- | --- |
+| `fl_select_pattern` | absolute current pattern number | `pattern.select` |
+| `fl_set_pattern_identity` | pattern number plus name, color, or both | `pattern.set_identity` |
+| `fl_set_pattern_length` | pattern number plus absolute beat length | `pattern.set_length` |
+| `fl_set_playlist_track_identity` | one-based Playlist track plus name, color, or both | `playlist.set_identity` |
+| `fl_set_playlist_track_state` | one-based Playlist track plus mute, solo, selection, or a combination | `playlist.set_state` |
 
 Multi-field stop, channel, EQ, and step responses include a proof flag for each
 requested field or cell. Aggregate `verified` is the logical AND of those
@@ -238,6 +281,92 @@ addressable parameters. A reported VST count can contain thousands of padding
 and MIDI CC entries, so scan before selecting a parameter and never treat the
 reported count as proof that an index is a meaningful control.
 
+## Verified batch and production workflows
+
+`fl_apply_verified_batch` accepts 1–32 operations from a closed discriminated
+union. Supported operation kinds cover the direct mixer, plug-in, transport,
+project-history, channel, pattern, Playlist, and step-sequencer setters. The
+executor pins one compatible session and adds the session guard internally.
+Each item keeps its original typed receipt.
+
+A batch is ordered but not transactional. With `stop_on_unverified=true`, an
+unverified result skips later items; a bridge or validation error stops the
+batch. Earlier successful mutations remain applied. `completed`, `verified`,
+`stopped_early`, counts, and ordered item outcomes make partial success
+explicit. No automatic replay, rollback, or save occurs.
+
+### Mix analysis and recommendations
+
+| Tool | Purpose |
+| --- | --- |
+| `mix_doctor` | Diagnose a real candidate bounce against versioned thresholds, with optional real reference and synchronized masking inputs. |
+| `mix_reference_recommendations` | Turn measured, aligned candidate/reference band deltas into bounded review ranges. |
+| `mix_masking_recommendations` | Turn synchronized vocal/instrument masking evidence into bounded dynamic-remediation suggestions. |
+| `mix_finish_assessment` | Run the complete read-only finish assessment and stop at the user-export boundary. |
+| `mix_list_plugin_profiles` | List bundled parameter-role adapters and processing recipes. |
+| `mix_inspect_plugin_compatibility` | Match currently loaded effects against those profiles without claiming an exact plug-in version. |
+| `mix_resolve_processing_intent` | Resolve an outcome such as `reduce_mud`, `control_dynamics`, or `add_depth` to loaded, profiled controls without applying it. |
+
+### Persistent metering and plans
+
+| Tool | Purpose |
+| --- | --- |
+| `mix_start_peak_watch` | Start a process-local peak sampler for 1–3,600 seconds. |
+| `mix_get_peak_watch` | Read cumulative peaks and sampling coverage for one watch. |
+| `mix_stop_peak_watch` | Stop the watch and return its final aggregate. |
+| `mix_create_gain_stage_plan` | Convert a watch into bounded dB-fader operations without applying them. |
+| `mix_create_plan` | Store 1–32 reviewed batch operations against the current bridge session. |
+| `mix_get_plan` | Read a stored plan and its lifecycle state. |
+| `mix_apply_plan` | Apply a stored plan once through the verified batch executor. |
+
+Peak watches and plans are in-memory process state. IDs cease to exist when
+the MCP process exits. Creating a plan is not approval to apply it; plan
+application is a distinct destructive, non-idempotent tool.
+
+## Creative, MIDI, arrangement, and automation tools
+
+### Deterministic composition and offline analysis
+
+| Tool | Purpose |
+| --- | --- |
+| `compose_chord_progression` | Voice Roman-numeral triads/sevenths using a scale, mode, raga, or custom pitch collection. |
+| `compose_melody` | Generate a seed-reproducible bounded melody with register, contour, and density controls. |
+| `compose_bassline` | Generate roots, eighths, octaves, or walking bass against Roman harmony. |
+| `compose_drums` | Generate GM-mapped house, hip-hop, trap, pop, or drum-and-bass notes. |
+| `midi_export_type1` | Atomically write a standard Type-1 MIDI file, reopen it, parse it, and verify header, digest, tracks, and note events. Existing files require `overwrite=true`. |
+| `audio_estimate_tempo_and_key` | Estimate periodic tempo with half/double-time candidates and rank global major/minor keys. |
+| `audio_transcribe_melody` | Extract a reviewable, optionally beat-quantized note sequence from one isolated monophonic source. |
+
+Composition returns a deterministic SHA-256 note digest and does not touch FL.
+Tempo/key and transcription results include confidence and limitations; they
+are estimates, not project metadata.
+
+### Piano Roll bridge
+
+| Tool | Purpose |
+| --- | --- |
+| `piano_roll_bridge` | Inspect setup, atomically prepare the bootstrap script, or confirm the user's one manual run for this process. |
+| `piano_roll_write_notes` | Prepare append/replace note content and optionally target FL plus dispatch the run-last-script shortcut. |
+| `piano_roll_transform` | Quantize, transpose, humanize, duplicate, delete, or clear selected/all live score notes. |
+
+Automatic Piano Roll use requires the one-time prepare/manual-run/confirm
+handshake. The normal bridge proves channel selection, pattern selection, and
+Piano Roll visibility before dispatch. FL exposes no controller-side note
+readback, so `application_verified=false` even when
+`hotkey_dispatched=true`. `auto_trigger=false` writes the generated script for
+manual execution without touching the live project.
+
+### Arrangement and automation
+
+| Tool | Purpose and evidence boundary |
+| --- | --- |
+| `arrangement_prepare_pattern` | Find an FL-reported empty pattern, then select, name/color, and size it through ordered direct verified writes. The workflow is non-atomic and returns `selection`, optional `identity`/`length`, plus an exact outcome if it stops after an unverified step. |
+| `arrangement_add_section_markers` | Convert one-based bars/beat offsets through live PPQ and add up to 32 markers. Names are later-tick observed; times remain unverified because FL has no getter. |
+| `automation_record_value` | Dispatch one public REC controller value while playing and recording. The controlled value and capture conditions are checked; automation-point existence remains unknown. |
+
+The last two receipts deliberately keep aggregate `verified=false` where FL
+cannot expose the fact needed to prove the whole requested outcome.
+
 ### Refusals before dispatch
 
 | Refusal | Meaning |
@@ -288,20 +417,26 @@ The MCP server maps its tools to these local protocol commands.
 | `ping` | none | Protocol, FL Studio and MIDI API versions, bridge mode, runtime-control support, write availability and origin, source hash, session fingerprint, and program title. |
 | `session.set_write_mode` | absolute `enabled`, literal user-present confirmation, and current session fingerprint | Session-only before/after capability state; no project value is changed. |
 | `project.info` | none | Project metadata, counts, transport, dirty state, and undo tokens. |
+| `project.history` | none | Absolute undo/redo bounds, position, hint, and dirty state. |
 | `arrangement.selection` | none | Raw endpoints read twice with PPQ and time hints. |
 | `mixer.list` | `only_used`, `include_peaks`, optional `max_tracks` | Mixer tracks with levels, routes, and effect slots. |
+| `mixer.peaks` | bounded track selection | One lightweight instantaneous peak frame. |
 | `mixer.track` | `track` | One track's complete inspection. |
 | `plugin.params` | track, slot, page and filter arguments | One bounded parameter page. |
 | `plugin.scan_params` | track, slot, and bounded scan arguments | De-padded controls and scan progress. |
+| `plugin.preset_count` | explicit effect/generator target | FL's reported preset count. |
 | `channels.list` | none | Channel Rack contents. |
+| `patterns.list`, `patterns.find_empty` | optional bounded starting pattern | Pattern inventory or first FL-reported empty pattern. |
+| `playlist.list` | none | One-based Playlist track identity and state. |
 | `sequencer.get` | explicit current pattern and global channel | Absolute bounded cells and canonical digest. |
 
 ### Verified writes
 
-The verified state commands use the same names shown in the write-tool tables.
+The direct state commands use the same names shown in the write-tool tables.
 Mixer sources and mixer-effect targets refuse Master unless `allow_master` is
-true. Every state command reports an undo observation, later-tick readback, and
-`project_saved: false`. `channel.trigger_note` is the sole dispatch-only
-mutation and reports its note-off receipt without an undo or verified-state
-claim. A command disabled by the active mode is absent from `available`; it is
-not merely rejected inside its handler.
+true. Every direct state command reports an undo observation, later-tick
+readback, and `project_saved: false`. `channel.trigger_note` is dispatch-only.
+`creative.prepare_piano_roll`, `arrangement.add_markers`, and
+`automation.record_value` publish their narrower evidence rather than
+borrowing the direct-write guarantee. A command disabled by the active mode is
+absent from `available`; it is not merely rejected inside its handler.

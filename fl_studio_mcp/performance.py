@@ -24,6 +24,10 @@ from .readonly_inspector import IncompatibleFLStudio, connection_from_ping
 from .track_b_contracts import (
     FL_COLOR_WORD_MAX,
     MAX_CHANNEL_NAME_LENGTH,
+    MAX_PATTERN_LENGTH_BEATS,
+    MAX_PATTERN_NAME_LENGTH,
+    MAX_PATTERN_NUMBER,
+    MAX_PLAYLIST_TRACK_NAME_LENGTH,
     MAX_STEP_COUNT,
     MAX_VERIFIED_STEP_COUNT,
     PLAYBACK_SPEED_OMISSION_REASON,
@@ -31,13 +35,29 @@ from .track_b_contracts import (
     ChannelIdentitySnapshot,
     ChannelList,
     ChannelMixSnapshot,
+    ChannelPitchSnapshot,
     ChannelRouteSnapshot,
+    ChannelSoloSnapshot,
     ChannelSummary,
     ExpectedChannelIdentityState,
     ExpectedChannelMixState,
+    ExpectedChannelPitchState,
     ExpectedChannelRouteState,
+    ExpectedChannelSelectionState,
+    ExpectedChannelSoloState,
     ExpectedChannelTargetState,
     ExpectedLoopModeState,
+    ExpectedMetronomeState,
+    ExpectedPrecountState,
+    ExpectedProjectHistoryState,
+    ExpectedRecordingState,
+    ExpectedTimeSignatureState,
+    EmptyPatternSearch,
+    ExpectedPatternIdentityState,
+    ExpectedPatternLengthState,
+    ExpectedPatternSelectionState,
+    ExpectedPlaylistTrackIdentityState,
+    ExpectedPlaylistTrackState,
     ExpectedPlayingState,
     ExpectedPluginParameterState,
     ExpectedSongPositionState,
@@ -48,6 +68,10 @@ from .track_b_contracts import (
     MixerEffectTarget,
     NormalizedPluginTarget,
     PluginParameterSnapshot,
+    PatternIdentitySnapshot,
+    PatternList,
+    PatternSummary,
+    PluginPresetCount,
     PluginTarget,
     ChannelGeneratorTarget,
     StepCellUpdate,
@@ -60,11 +84,30 @@ from .track_b_contracts import (
     TargetedPluginParameterScan,
     TargetedPluginSummary,
     TrackBContract,
+    PlaylistTrackIdentitySnapshot,
+    PlaylistTrackList,
+    PlaylistTrackStateSnapshot,
+    PlaylistTrackSummary,
+    ProjectHistoryObservation,
+    ProjectHistorySnapshot,
+    TimeSignatureSnapshot,
     VerifiedChannelIdentityWrite,
     VerifiedChannelMixWrite,
+    VerifiedChannelPitchWrite,
     VerifiedChannelRouteWrite,
+    VerifiedChannelSelectionWrite,
+    VerifiedChannelSoloWrite,
     VerifiedLoopModeWrite,
+    VerifiedMetronomeWrite,
+    VerifiedPatternIdentityWrite,
+    VerifiedPatternLengthWrite,
+    VerifiedPatternSelectionWrite,
+    VerifiedPlaylistTrackIdentityWrite,
+    VerifiedPlaylistTrackStateWrite,
     VerifiedPlayingWrite,
+    VerifiedPrecountWrite,
+    VerifiedProjectHistoryMove,
+    VerifiedRecordingWrite,
     VerifiedTargetedPluginDisplayWrite,
     VerifiedTargetedPluginOptionWrite,
     VerifiedTargetedPluginParameterWrite,
@@ -72,6 +115,7 @@ from .track_b_contracts import (
     VerifiedStepSequenceWrite,
     VerifiedStopWrite,
     VerifiedTempoWrite,
+    VerifiedTimeSignatureNumeratorWrite,
     _compute_channel_fingerprint_raw,
     compute_channel_fingerprint,
     compute_step_sequence_digest,
@@ -88,7 +132,12 @@ TRACK_B_READ_COMMANDS = frozenset(
         "plugin.params",
         "plugin.scan_params",
         "project.info",
+        "project.history",
+        "plugin.preset_count",
         "sequencer.get",
+        "patterns.list",
+        "patterns.find_empty",
+        "playlist.list",
     }
 )
 TRACK_B_MUTATION_COMMANDS = frozenset(
@@ -98,7 +147,21 @@ TRACK_B_MUTATION_COMMANDS = frozenset(
         "transport.set_song_position",
         "transport.set_loop_mode",
         "transport.set_tempo",
+        "transport.set_recording",
+        "transport.set_metronome",
+        "transport.set_precount",
+        "project.set_time_signature_numerator",
+        "project.undo",
+        "project.redo",
         "channel.set_mix",
+        "channel.set_solo",
+        "channel.set_pitch",
+        "channel.select",
+        "pattern.select",
+        "pattern.set_identity",
+        "pattern.set_length",
+        "playlist.set_identity",
+        "playlist.set_state",
         "channel.set_identity",
         "channel.route_to_mixer",
         "plugin.set_param",
@@ -115,13 +178,32 @@ TRACK_B_MCP_TOOL_NAMES = frozenset(
         "fl_set_song_position",
         "fl_set_loop_mode",
         "fl_set_tempo",
+        "fl_set_recording",
+        "fl_set_metronome",
+        "fl_set_precount",
+        "fl_set_time_signature_numerator",
+        "fl_get_project_history",
+        "fl_undo",
+        "fl_redo",
+        "fl_get_plugin_preset_count",
         "fl_list_channels",
         "fl_set_channel_mix",
+        "fl_set_channel_solo",
+        "fl_set_channel_pitch",
+        "fl_select_channel",
         "fl_set_channel_identity",
         "fl_route_channel_to_mixer",
         "fl_get_step_sequence",
         "fl_set_step_sequence",
         "fl_trigger_note",
+        "fl_list_patterns",
+        "fl_find_empty_pattern",
+        "fl_select_pattern",
+        "fl_set_pattern_identity",
+        "fl_set_pattern_length",
+        "fl_list_playlist_tracks",
+        "fl_set_playlist_track_identity",
+        "fl_set_playlist_track_state",
     }
 )
 TARGET_AWARE_EXISTING_PLUGIN_TOOLS = frozenset(
@@ -667,6 +749,9 @@ class TrackBInspector(_ConnectionController):
                     color=color,
                     volume_normalized=_optional_float(row.get("volume")),
                     pan=_optional_float(row.get("pan")),
+                    pitch_normalized=_optional_float(row.get("pitch")),
+                    pitch_semitones=_optional_float(row.get("pitch_semitones")),
+                    pitch_range_semitones=_optional_float(row.get("pitch_range")),
                     muted=_optional_bool(row.get("muted")),
                     soloed=_optional_bool(row.get("solo")),
                     selected=_optional_bool(row.get("selected")),
@@ -694,6 +779,204 @@ class TrackBInspector(_ConnectionController):
                     "Channel identity is observation-scoped because FL exposes no "
                     "durable Channel Rack UUID; use the fingerprint only as a "
                     "same-session mutation guard."
+                ],
+            ),
+        )
+
+    def list_patterns(self) -> PatternList:
+        connection = self._require_compatible()
+        raw = self.gateway.call("patterns.list")
+        if raw.get("command") not in (None, "patterns.list"):
+            raise ValueError("FL bridge returned the wrong pattern-list command")
+        current = _strict_int(
+            raw.get("current_pattern"),
+            "current_pattern",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        count = _strict_int(
+            raw.get("pattern_count"),
+            "pattern_count",
+            low=0,
+            high=MAX_PATTERN_NUMBER,
+        )
+        maximum = _strict_int(
+            raw.get("pattern_max"),
+            "pattern_max",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        rows = raw.get("patterns")
+        if not isinstance(rows, list) or len(rows) != count:
+            raise ValueError("FL bridge returned malformed pattern rows")
+        parsed: list[PatternSummary] = []
+        for expected_number, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                raise ValueError("FL bridge returned a malformed pattern row")
+            number = _strict_int(
+                row.get("pattern"),
+                "pattern number",
+                low=1,
+                high=MAX_PATTERN_NUMBER,
+            )
+            if number != expected_number:
+                raise ValueError("FL bridge returned non-canonical pattern ordering")
+            name = row.get("name")
+            if not isinstance(name, str) or len(name) > MAX_PATTERN_NAME_LENGTH:
+                raise ValueError("FL bridge returned a malformed pattern name")
+            length = _optional_int(row.get("length"))
+            parsed.append(
+                PatternSummary(
+                    pattern_number=number,
+                    name=name,
+                    color=_bridge_color(row.get("color"), "pattern"),
+                    length_beats=length,
+                    current=_strict_bool(row, "current"),
+                    selected_in_picker=_optional_bool(row.get("selected")),
+                    default_empty=_optional_bool(row.get("default")),
+                )
+            )
+        return PatternList(
+            observed_at=_now(),
+            current_pattern_number=current,
+            reported_pattern_count=count,
+            maximum_pattern_number=maximum,
+            patterns=parsed,
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    def find_empty_pattern(self, *, start_pattern_number: int = 1) -> EmptyPatternSearch:
+        start = _strict_int(
+            start_pattern_number,
+            "start_pattern_number",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        connection = self._require_compatible()
+        raw = self.gateway.call("patterns.find_empty", start=start)
+        if raw.get("command") not in (None, "patterns.find_empty"):
+            raise ValueError("FL bridge returned the wrong empty-pattern command")
+        echoed = _strict_int(
+            raw.get("start"), "start", low=1, high=MAX_PATTERN_NUMBER
+        )
+        if echoed != start:
+            raise ValueError("FL bridge searched from a different pattern number")
+        found_raw = raw.get("empty_pattern")
+        found = (
+            None
+            if found_raw is None
+            else _strict_int(
+                found_raw,
+                "empty_pattern",
+                low=start,
+                high=MAX_PATTERN_NUMBER,
+            )
+        )
+        scanned = _strict_int(
+            raw.get("scanned"), "scanned", low=0, high=MAX_PATTERN_NUMBER
+        )
+        unchanged = _strict_bool(raw, "current_pattern_unchanged")
+        return EmptyPatternSearch(
+            observed_at=_now(),
+            start_pattern_number=start,
+            empty_pattern_number=found,
+            scanned_pattern_count=scanned,
+            current_pattern_unchanged=unchanged,
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    def list_playlist_tracks(self) -> PlaylistTrackList:
+        connection = self._require_compatible()
+        raw = self.gateway.call("playlist.list")
+        if raw.get("command") not in (None, "playlist.list"):
+            raise ValueError("FL bridge returned the wrong Playlist-list command")
+        count = _strict_int(raw.get("track_count"), "track_count", low=0)
+        rows = raw.get("tracks")
+        if not isinstance(rows, list) or len(rows) != count:
+            raise ValueError("FL bridge returned malformed Playlist rows")
+        parsed: list[PlaylistTrackSummary] = []
+        for expected_index, row in enumerate(rows, start=1):
+            if not isinstance(row, dict):
+                raise ValueError("FL bridge returned a malformed Playlist row")
+            index = _strict_int(row.get("track"), "track", low=1)
+            if index != expected_index:
+                raise ValueError("FL bridge returned non-canonical Playlist ordering")
+            name = row.get("name")
+            if not isinstance(name, str) or len(name) > MAX_PLAYLIST_TRACK_NAME_LENGTH:
+                raise ValueError("FL bridge returned a malformed Playlist track name")
+            parsed.append(
+                PlaylistTrackSummary(
+                    track_index=index,
+                    name=name,
+                    color=_bridge_color(row.get("color"), "Playlist track"),
+                    muted=_optional_bool(row.get("muted")),
+                    soloed=_optional_bool(row.get("solo")),
+                    selected=_optional_bool(row.get("selected")),
+                    activity_level=_optional_float(row.get("activity")),
+                )
+            )
+        return PlaylistTrackList(
+            observed_at=_now(),
+            total_track_count=count,
+            tracks=parsed,
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    def project_history(self) -> ProjectHistoryObservation:
+        connection = self._require_compatible()
+        raw = self.gateway.call("project.history")
+        _command_matches(raw, "project.history")
+        return ProjectHistoryObservation(
+            observed_at=_now(),
+            history=_project_history_snapshot(raw),
+            warnings=_warnings(
+                raw,
+                list(connection.warnings)
+                + [
+                    "Undo-history positions are live project-session coordinates, "
+                    "not durable identifiers; re-read before moving history."
+                ],
+            ),
+        )
+
+    def plugin_preset_count(
+        self,
+        *,
+        target: PluginTarget | dict[str, Any] | None = None,
+        track_index: int | None = None,
+        slot_index: int | None = None,
+        allow_master: bool = False,
+    ) -> PluginPresetCount:
+        resolved = normalize_plugin_target(
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            allow_master=allow_master,
+        )
+        connection = self._require_compatible()
+        raw = self.gateway.call(
+            "plugin.preset_count", **_plugin_bridge_arguments(resolved)
+        )
+        _command_matches(raw, "plugin.preset_count")
+        _echoed_plugin_target(raw, resolved)
+        count = _strict_int(raw.get("preset_count"), "preset_count", low=0)
+        parameter_count = _strict_int(
+            raw.get("param_count"), "reported parameter count", low=0
+        )
+        return PluginPresetCount(
+            observed_at=_now(),
+            plugin=_targeted_plugin_summary(raw, resolved, parameter_count),
+            preset_count=count,
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(
+                raw,
+                list(connection.warnings)
+                + [
+                    "FL exposes a preset count but no authoritative current-preset "
+                    "index/name getter, so stable next/previous mutations are omitted."
                 ],
             ),
         )
@@ -1231,6 +1514,238 @@ class TrackBController(_ConnectionController):
             **_precondition_fields(raw),
         )
 
+    def set_recording(
+        self,
+        *,
+        recording: bool,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedRecordingState | None = None,
+    ) -> VerifiedRecordingWrite:
+        if type(recording) is not bool:
+            raise ValueError("recording must be true or false")
+        raw = self._call(
+            "transport.set_recording",
+            {"recording": recording},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_bool(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=after is recording,
+            label="recording state",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL read recording={after!r} on a later idle tick.",
+            f"FL read recording={after!r}, not {recording!r}.",
+        )
+        return VerifiedRecordingWrite(
+            applied_at=_now(),
+            requested_recording=recording,
+            before_recording=_optional_bool(raw.get("before")),
+            after_recording=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def _set_transport_option(
+        self,
+        *,
+        command: str,
+        enabled: bool,
+        session_fingerprint: str | None,
+        expected_before: TrackBContract | None,
+    ) -> tuple[dict[str, Any], bool, bool | None, str, list[str]]:
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be true or false")
+        raw = self._call(
+            command,
+            {"enabled": enabled},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        verified = _strict_bool(raw, "verified")
+        after = _optional_bool(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=after is enabled,
+            label=command,
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL read enabled={after!r} for {command} on a later idle tick.",
+            f"FL read enabled={after!r} for {command}, not {enabled!r}.",
+        )
+        return raw, verified, after, summary, warnings
+
+    def set_metronome(
+        self,
+        *,
+        enabled: bool,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedMetronomeState | None = None,
+    ) -> VerifiedMetronomeWrite:
+        raw, verified, after, summary, warnings = self._set_transport_option(
+            command="transport.set_metronome",
+            enabled=enabled,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        return VerifiedMetronomeWrite(
+            applied_at=_now(),
+            requested_enabled=enabled,
+            before_enabled=_optional_bool(raw.get("before")),
+            after_enabled=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_precount(
+        self,
+        *,
+        enabled: bool,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPrecountState | None = None,
+    ) -> VerifiedPrecountWrite:
+        raw, verified, after, summary, warnings = self._set_transport_option(
+            command="transport.set_precount",
+            enabled=enabled,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        return VerifiedPrecountWrite(
+            applied_at=_now(),
+            requested_enabled=enabled,
+            before_enabled=_optional_bool(raw.get("before")),
+            after_enabled=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_time_signature_numerator(
+        self,
+        *,
+        numerator: int,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedTimeSignatureState | None = None,
+    ) -> VerifiedTimeSignatureNumeratorWrite:
+        wanted = _strict_int(numerator, "numerator", low=1, high=32)
+        raw = self._call(
+            "project.set_time_signature_numerator",
+            {"numerator": wanted},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        before = _time_signature_snapshot(raw.get("before"))
+        after = _time_signature_snapshot(raw.get("after"))
+        verified = _strict_bool(raw, "verified")
+        _require_verified_value(
+            reported=verified,
+            matches=after.numerator == wanted,
+            label="time-signature numerator",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL read a {wanted}-beat bar from getRecPPB/getRecPPQ on a later tick.",
+            "FL did not read back the requested time-signature numerator.",
+        )
+        warnings.append(
+            "FL exposes no denominator getter; this stable tool changes and proves "
+            "the numerator only."
+        )
+        return VerifiedTimeSignatureNumeratorWrite(
+            applied_at=_now(),
+            requested_numerator=wanted,
+            before=before,
+            after=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def _move_project_history(
+        self,
+        *,
+        direction: str,
+        session_fingerprint: str | None,
+        expected_before: ExpectedProjectHistoryState | None,
+    ) -> VerifiedProjectHistoryMove:
+        if direction not in {"undo", "redo"}:
+            raise ValueError("history direction must be undo or redo")
+        command = "project." + direction
+        raw = self._call(
+            command,
+            {},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        before = _project_history_snapshot(raw.get("before"))
+        after = _project_history_snapshot(raw.get("after"))
+        requested = _strict_int(
+            raw.get("requested_position"), "requested_position", low=0
+        )
+        verified = _strict_bool(raw, "verified")
+        _require_verified_value(
+            reported=verified,
+            matches=after.position == requested,
+            label="undo-history position",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL moved {direction} to absolute history position {requested}.",
+            f"FL did not read back history position {requested} after {direction}.",
+        )
+        return VerifiedProjectHistoryMove(
+            bridge_command=cast(Any, command),
+            applied_at=_now(),
+            direction=cast(Any, direction),
+            requested_position=requested,
+            before=before,
+            after=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def undo(
+        self,
+        *,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedProjectHistoryState | None = None,
+    ) -> VerifiedProjectHistoryMove:
+        return self._move_project_history(
+            direction="undo",
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+
+    def redo(
+        self,
+        *,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedProjectHistoryState | None = None,
+    ) -> VerifiedProjectHistoryMove:
+        return self._move_project_history(
+            direction="redo",
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+
     def set_channel_mix(
         self,
         *,
@@ -1330,6 +1845,143 @@ class TrackBController(_ConnectionController):
             volume_verified=volume_verified,
             pan_verified=pan_verified,
             mute_verified=mute_verified,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_channel_solo(
+        self,
+        *,
+        channel_index: int,
+        soloed: bool,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedChannelSoloState | None = None,
+    ) -> VerifiedChannelSoloWrite:
+        channel = _strict_int(channel_index, "channel_index", low=0)
+        if type(soloed) is not bool:
+            raise ValueError("soloed must be true or false")
+        raw = self._call(
+            "channel.set_solo",
+            {"channel": channel, "soloed": soloed, "index_scope": "global"},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "channel", channel)
+        _require_global_index_scope(raw, "channel solo mutation")
+        verified = _strict_bool(raw, "verified")
+        before = _channel_solo_snapshot(raw.get("before"))
+        after = _channel_solo_snapshot(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=after.soloed is soloed,
+            label="channel solo",
+        )
+        summary, warnings = _summary(
+            verified,
+            "FL read the requested channel solo state back on a later idle tick.",
+            "FL did not read the requested channel solo state back.",
+        )
+        return VerifiedChannelSoloWrite(
+            applied_at=_now(),
+            channel_index=channel,
+            requested_soloed=soloed,
+            before=before,
+            after=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_channel_pitch(
+        self,
+        *,
+        channel_index: int,
+        pitch_normalized: float,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedChannelPitchState | None = None,
+    ) -> VerifiedChannelPitchWrite:
+        channel = _strict_int(channel_index, "channel_index", low=0)
+        pitch = _number(
+            pitch_normalized, "pitch_normalized", low=-1.0, high=1.0
+        )
+        raw = self._call(
+            "channel.set_pitch",
+            {"channel": channel, "pitch": pitch, "index_scope": "global"},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "channel", channel)
+        _require_global_index_scope(raw, "channel pitch mutation")
+        verified = _strict_bool(raw, "verified")
+        before = _channel_pitch_snapshot(raw.get("before"))
+        after = _channel_pitch_snapshot(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=(
+                after.pitch_normalized is not None
+                and abs(after.pitch_normalized - pitch) <= 1e-4
+            ),
+            label="channel pitch",
+        )
+        summary, warnings = _summary(
+            verified,
+            "FL read channel pitch back on a later idle tick at the requested value.",
+            "FL did not read channel pitch back at the requested value.",
+        )
+        return VerifiedChannelPitchWrite(
+            applied_at=_now(),
+            channel_index=channel,
+            requested_pitch_normalized=pitch,
+            before=before,
+            after=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def select_channel(
+        self,
+        *,
+        channel_index: int,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedChannelSelectionState | None = None,
+    ) -> VerifiedChannelSelectionWrite:
+        channel = _strict_int(channel_index, "channel_index", low=0)
+        raw = self._call(
+            "channel.select",
+            {"channel": channel, "index_scope": "global", "exclusive": True},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "channel", channel)
+        _require_global_index_scope(raw, "channel selection mutation")
+        if raw.get("exclusive") is not True:
+            raise ValueError("FL bridge did not report exclusive channel selection")
+        before = _selected_channel_indices(raw.get("before"), "before selection")
+        after = _selected_channel_indices(raw.get("after"), "after selection")
+        verified = _strict_bool(raw, "verified")
+        _require_verified_value(
+            reported=verified,
+            matches=after == [channel],
+            label="exclusive channel selection",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL reported channel {channel} as the sole selected channel.",
+            f"FL did not report channel {channel} as the sole selected channel.",
+        )
+        return VerifiedChannelSelectionWrite(
+            applied_at=_now(),
+            channel_index=channel,
+            before_selected_channel_indices=before,
+            after_selected_channel_indices=after,
+            verified=verified,
+            verification_summary=summary,
             undo_point_created=_optional_bool(raw.get("undo_point_created")),
             warnings=_warnings(raw, warnings),
             **_precondition_fields(raw),
@@ -1472,6 +2124,373 @@ class TrackBController(_ConnectionController):
             requested_mixer_destination=destination,
             before=before,
             after=after,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def select_pattern(
+        self,
+        *,
+        pattern_number: int,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPatternSelectionState | None = None,
+    ) -> VerifiedPatternSelectionWrite:
+        pattern = _strict_int(
+            pattern_number,
+            "pattern_number",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        raw = self._call(
+            "pattern.select",
+            {"pattern": pattern},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        requested = _strict_int(
+            raw.get("requested"), "requested pattern", low=1, high=MAX_PATTERN_NUMBER
+        )
+        if requested != pattern:
+            raise ValueError("FL bridge selected a different pattern than requested")
+        verified = _strict_bool(raw, "verified")
+        before = _optional_int(raw.get("before"))
+        after = _optional_int(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=after == pattern,
+            label="pattern selection",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL reported pattern {pattern} current on a later idle tick.",
+            f"FL did not report pattern {pattern} current after selection.",
+        )
+        return VerifiedPatternSelectionWrite(
+            applied_at=_now(),
+            requested_pattern_number=pattern,
+            before_pattern_number=before,
+            after_pattern_number=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_pattern_identity(
+        self,
+        *,
+        pattern_number: int,
+        name: str | None = None,
+        color: int | None = None,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPatternIdentityState | None = None,
+    ) -> VerifiedPatternIdentityWrite:
+        pattern = _strict_int(
+            pattern_number,
+            "pattern_number",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        if name is not None:
+            if not isinstance(name, str):
+                raise ValueError("name must be text")
+            if len(name) > MAX_PATTERN_NAME_LENGTH:
+                raise ValueError(
+                    f"name must be at most {MAX_PATTERN_NAME_LENGTH} characters"
+                )
+        color_value = (
+            None
+            if color is None
+            else _strict_int(color, "color", low=0, high=FL_COLOR_WORD_MAX)
+        )
+        if name is None and color_value is None:
+            raise ValueError("name, color, or both is required")
+        arguments: dict[str, Any] = {"pattern": pattern}
+        if name is not None:
+            arguments["name"] = name
+        if color_value is not None:
+            arguments["color"] = color_value
+        raw = self._call(
+            "pattern.set_identity",
+            arguments,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "pattern", pattern, low=1)
+        fields = _verified_fields(raw)
+        name_verified = None if name is None else _strict_field_bool(fields, "name")
+        color_verified = (
+            None if color_value is None else _strict_field_bool(fields, "color")
+        )
+        verified = _strict_bool(raw, "verified")
+        before = _pattern_identity_snapshot(raw.get("before"))
+        after = _pattern_identity_snapshot(raw.get("after"))
+        proofs = [
+            proof
+            for requested, proof in (
+                (name, name_verified),
+                (color_value, color_verified),
+            )
+            if requested is not None
+        ]
+        _require_aggregate_verified(
+            reported=verified,
+            expected=all(proof is True for proof in proofs),
+            label="pattern identity aggregate",
+        )
+        if name is not None:
+            _require_verified_value(
+                reported=name_verified is True,
+                matches=after.name == name,
+                label="pattern name",
+            )
+        if color_value is not None:
+            _require_verified_value(
+                reported=color_verified is True,
+                matches=fl_colors_equivalent(after.color, color_value),
+                label="pattern color",
+            )
+        summary, warnings = _summary(
+            verified,
+            "FL read every requested pattern identity field back on a later tick.",
+            "At least one requested pattern identity field did not read back.",
+        )
+        return VerifiedPatternIdentityWrite(
+            applied_at=_now(),
+            pattern_number=pattern,
+            requested_name=name,
+            requested_color=color_value,
+            before=before,
+            after=after,
+            name_verified=name_verified,
+            color_verified=color_verified,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_pattern_length(
+        self,
+        *,
+        pattern_number: int,
+        length_beats: int,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPatternLengthState | None = None,
+    ) -> VerifiedPatternLengthWrite:
+        pattern = _strict_int(
+            pattern_number,
+            "pattern_number",
+            low=1,
+            high=MAX_PATTERN_NUMBER,
+        )
+        length = _strict_int(
+            length_beats,
+            "length_beats",
+            low=1,
+            high=MAX_PATTERN_LENGTH_BEATS,
+        )
+        raw = self._call(
+            "pattern.set_length",
+            {"pattern": pattern, "length": length},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "pattern", pattern, low=1)
+        verified = _strict_bool(raw, "verified")
+        before = _optional_int(raw.get("before"))
+        after = _optional_int(raw.get("after"))
+        _require_verified_value(
+            reported=verified,
+            matches=after == length,
+            label="pattern length",
+        )
+        summary, warnings = _summary(
+            verified,
+            f"FL read pattern {pattern} back at {length} beats.",
+            f"FL did not read pattern {pattern} back at {length} beats.",
+        )
+        return VerifiedPatternLengthWrite(
+            applied_at=_now(),
+            pattern_number=pattern,
+            requested_length_beats=length,
+            before_length_beats=before,
+            after_length_beats=after,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_playlist_track_identity(
+        self,
+        *,
+        track_index: int,
+        name: str | None = None,
+        color: int | None = None,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPlaylistTrackIdentityState | None = None,
+    ) -> VerifiedPlaylistTrackIdentityWrite:
+        track = _strict_int(track_index, "track_index", low=1)
+        if name is not None:
+            if not isinstance(name, str):
+                raise ValueError("name must be text")
+            if len(name) > MAX_PLAYLIST_TRACK_NAME_LENGTH:
+                raise ValueError(
+                    f"name must be at most {MAX_PLAYLIST_TRACK_NAME_LENGTH} characters"
+                )
+        color_value = (
+            None
+            if color is None
+            else _strict_int(color, "color", low=0, high=FL_COLOR_WORD_MAX)
+        )
+        if name is None and color_value is None:
+            raise ValueError("name, color, or both is required")
+        arguments: dict[str, Any] = {"track": track}
+        if name is not None:
+            arguments["name"] = name
+        if color_value is not None:
+            arguments["color"] = color_value
+        raw = self._call(
+            "playlist.set_identity",
+            arguments,
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "track", track, low=1)
+        fields = _verified_fields(raw)
+        name_verified = None if name is None else _strict_field_bool(fields, "name")
+        color_verified = (
+            None if color_value is None else _strict_field_bool(fields, "color")
+        )
+        verified = _strict_bool(raw, "verified")
+        before = _playlist_identity_snapshot(raw.get("before"))
+        after = _playlist_identity_snapshot(raw.get("after"))
+        proofs = [proof for proof in (name_verified, color_verified) if proof is not None]
+        _require_aggregate_verified(
+            reported=verified,
+            expected=all(proof is True for proof in proofs),
+            label="Playlist identity aggregate",
+        )
+        if name is not None:
+            _require_verified_value(
+                reported=name_verified is True,
+                matches=after.name == name,
+                label="Playlist track name",
+            )
+        if color_value is not None:
+            _require_verified_value(
+                reported=color_verified is True,
+                matches=fl_colors_equivalent(after.color, color_value),
+                label="Playlist track color",
+            )
+        summary, warnings = _summary(
+            verified,
+            "FL read every requested Playlist identity field back on a later tick.",
+            "At least one requested Playlist identity field did not read back.",
+        )
+        return VerifiedPlaylistTrackIdentityWrite(
+            applied_at=_now(),
+            track_index=track,
+            requested_name=name,
+            requested_color=color_value,
+            before=before,
+            after=after,
+            name_verified=name_verified,
+            color_verified=color_verified,
+            verified=verified,
+            verification_summary=summary,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(raw, warnings),
+            **_precondition_fields(raw),
+        )
+
+    def set_playlist_track_state(
+        self,
+        *,
+        track_index: int,
+        muted: bool | None = None,
+        soloed: bool | None = None,
+        selected: bool | None = None,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedPlaylistTrackState | None = None,
+    ) -> VerifiedPlaylistTrackStateWrite:
+        track = _strict_int(track_index, "track_index", low=1)
+        requested: dict[str, bool] = {}
+        for field, value in (
+            ("muted", muted),
+            ("soloed", soloed),
+            ("selected", selected),
+        ):
+            if value is not None:
+                if type(value) is not bool:
+                    raise ValueError(f"{field} must be true or false")
+                requested[field] = value
+        if not requested:
+            raise ValueError("muted, soloed, selected, or a combination is required")
+        raw = self._call(
+            "playlist.set_state",
+            {"track": track, **requested},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "track", track, low=1)
+        fields = _verified_fields(raw)
+        mute_verified = (
+            None if muted is None else _strict_field_bool(fields, "muted")
+        )
+        solo_verified = (
+            None if soloed is None else _strict_field_bool(fields, "soloed")
+        )
+        selection_verified = (
+            None if selected is None else _strict_field_bool(fields, "selected")
+        )
+        verified = _strict_bool(raw, "verified")
+        before = _playlist_state_snapshot(raw.get("before"))
+        after = _playlist_state_snapshot(raw.get("after"))
+        proofs = [
+            proof
+            for proof in (mute_verified, solo_verified, selection_verified)
+            if proof is not None
+        ]
+        _require_aggregate_verified(
+            reported=verified,
+            expected=all(proof is True for proof in proofs),
+            label="Playlist state aggregate",
+        )
+        for wanted, observed, proof, label in (
+            (muted, after.muted, mute_verified, "Playlist mute"),
+            (soloed, after.soloed, solo_verified, "Playlist solo"),
+            (selected, after.selected, selection_verified, "Playlist selection"),
+        ):
+            if wanted is not None:
+                _require_verified_value(
+                    reported=proof is True,
+                    matches=observed is wanted,
+                    label=label,
+                )
+        summary, warnings = _summary(
+            verified,
+            "FL read every requested Playlist state back on a later idle tick.",
+            "At least one requested Playlist state did not read back.",
+        )
+        return VerifiedPlaylistTrackStateWrite(
+            applied_at=_now(),
+            track_index=track,
+            requested_muted=muted,
+            requested_soloed=soloed,
+            requested_selected=selected,
+            before=before,
+            after=after,
+            mute_verified=mute_verified,
+            solo_verified=solo_verified,
+            selection_verified=selection_verified,
+            verified=verified,
+            verification_summary=summary,
             undo_point_created=_optional_bool(raw.get("undo_point_created")),
             warnings=_warnings(raw, warnings),
             **_precondition_fields(raw),
@@ -2026,6 +3045,43 @@ def _project_observation_warnings(
     return warnings
 
 
+def _project_history_snapshot(raw: Any) -> ProjectHistorySnapshot:
+    payload = _snapshot_payload(raw, "project-history snapshot")
+    position = _strict_int(payload.get("position"), "history position", low=0)
+    count = _strict_int(payload.get("count"), "history count", low=0)
+    last = _strict_int(
+        payload.get("last_position"), "last history position", low=0
+    )
+    hint = payload.get("level_hint")
+    if not isinstance(hint, str) or len(hint) > 512:
+        raise ValueError("FL bridge returned a malformed undo-level hint")
+    return ProjectHistorySnapshot(
+        position=position,
+        count=count,
+        last_position=last,
+        level_hint=hint,
+        project_dirty_flag=_dirty(payload.get("project_dirty_flag")),
+        can_undo=_strict_bool(payload, "can_undo"),
+        can_redo=_strict_bool(payload, "can_redo"),
+    )
+
+
+def _time_signature_snapshot(raw: Any) -> TimeSignatureSnapshot:
+    payload = _snapshot_payload(raw, "time-signature snapshot")
+    numerator = _strict_int(payload.get("numerator"), "numerator", low=1, high=32)
+    ppq = _strict_int(payload.get("ppq"), "PPQ", low=1)
+    pulses = _strict_int(payload.get("pulses_per_bar"), "pulses_per_bar", low=1)
+    if pulses != ppq * numerator:
+        raise ValueError("FL bridge returned contradictory time-signature evidence")
+    if payload.get("denominator_available") is not False:
+        raise ValueError("FL bridge claimed an unavailable denominator readback")
+    return TimeSignatureSnapshot(
+        numerator=numerator,
+        ppq=ppq,
+        pulses_per_bar=pulses,
+    )
+
+
 def _targeted_parameters(
     raw: Any, *, padding_candidates: bool
 ) -> list[TargetedPluginParameter]:
@@ -2172,6 +3228,72 @@ def _channel_route_snapshot(raw: Any) -> ChannelRouteSnapshot:
     return ChannelRouteSnapshot(
         mixer_destination=_optional_int(value.get("mixer_destination")),
         channel_fingerprint=value.get("channel_fingerprint"),
+    )
+
+
+def _channel_solo_snapshot(raw: Any) -> ChannelSoloSnapshot:
+    value = _snapshot_payload(raw, "channel solo snapshot")
+    return ChannelSoloSnapshot(
+        soloed=_optional_bool(value.get("soloed")),
+        channel_fingerprint=value.get("channel_fingerprint"),
+    )
+
+
+def _channel_pitch_snapshot(raw: Any) -> ChannelPitchSnapshot:
+    value = _snapshot_payload(raw, "channel pitch snapshot")
+    return ChannelPitchSnapshot(
+        pitch_normalized=_optional_float(value.get("pitch")),
+        pitch_semitones=_optional_float(value.get("pitch_semitones")),
+        pitch_range_semitones=_optional_float(value.get("pitch_range")),
+        channel_fingerprint=value.get("channel_fingerprint"),
+    )
+
+
+def _selected_channel_indices(raw: Any, label: str) -> list[int]:
+    if not isinstance(raw, list):
+        raise ValueError(f"FL bridge returned malformed {label}")
+    values: list[int] = []
+    for value in raw:
+        if type(value) is not int or value < 0:
+            raise ValueError(f"FL bridge returned malformed {label}")
+        values.append(value)
+    if values != sorted(set(values)):
+        raise ValueError(f"FL bridge returned non-canonical {label}")
+    return values
+
+
+def _pattern_identity_snapshot(raw: Any) -> PatternIdentitySnapshot:
+    value = _snapshot_payload(raw, "pattern identity snapshot")
+    name = value.get("name")
+    if name is not None and (
+        not isinstance(name, str) or len(name) > MAX_PATTERN_NAME_LENGTH
+    ):
+        raise ValueError("FL bridge returned a malformed pattern name")
+    return PatternIdentitySnapshot(
+        name=name,
+        color=_bridge_color(value.get("color"), "pattern"),
+    )
+
+
+def _playlist_identity_snapshot(raw: Any) -> PlaylistTrackIdentitySnapshot:
+    value = _snapshot_payload(raw, "Playlist identity snapshot")
+    name = value.get("name")
+    if name is not None and (
+        not isinstance(name, str) or len(name) > MAX_PLAYLIST_TRACK_NAME_LENGTH
+    ):
+        raise ValueError("FL bridge returned a malformed Playlist track name")
+    return PlaylistTrackIdentitySnapshot(
+        name=name,
+        color=_bridge_color(value.get("color"), "Playlist track"),
+    )
+
+
+def _playlist_state_snapshot(raw: Any) -> PlaylistTrackStateSnapshot:
+    value = _snapshot_payload(raw, "Playlist state snapshot")
+    return PlaylistTrackStateSnapshot(
+        muted=_optional_bool(value.get("muted")),
+        soloed=_optional_bool(value.get("soloed")),
+        selected=_optional_bool(value.get("selected")),
     )
 
 

@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.synopsys0/postfader-fl-studio-mcp",
   "title": "Postfader",
-  "description": "Readback-verified FL Studio transport, mixer, channel, sequencer, and plug-in control.",
-  "version": "0.13.0",
+  "description": "Verified FL Studio control, mix diagnosis, composition, and arrangement.",
+  "version": "0.20.0",
   "repository": {
     "url": "https://github.com/synopsys0/postfader-fl-studio-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "postfader-fl-studio-mcp",
-      "version": "0.13.0",
+      "version": "0.20.0",
       "transport": {
         "type": "stdio"
       },

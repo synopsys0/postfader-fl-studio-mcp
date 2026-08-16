@@ -227,11 +227,21 @@ def getCurrentTempo(asInt=False):
 
 
 def trackNumber():
-    return 0
+    return _state.ACTIVE_MIXER_TRACK
 
 
 def setTrackNumber(trackNumber, flags=0):
-    pass
+    _state.ACTIVE_MIXER_TRACK = trackNumber
+
+
+def setActiveTrack(trackNumber):
+    _state.ACTIVE_MIXER_TRACK = trackNumber
+    for index, track in enumerate(_state.TRACKS):
+        track.selected = index == trackNumber
+
+
+def getTrackPluginId(index, plugIndex):
+    return int(index) * 1024 + int(plugIndex) * 64
 
 
 def getTrackInfo(mode):
