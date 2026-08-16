@@ -36,6 +36,7 @@ from .contracts import (
     SelectedRangeObservation,
     TransportState,
 )
+from .track_b_contracts import normalize_fl_color
 
 
 MIDI_SCRIPTING_DOC = (
@@ -419,7 +420,7 @@ def _track(raw: dict[str, Any]) -> MixerTrackSummary:
         effect_slots_enabled=_bool(raw.get("slots_enabled")),
         polarity_reversed=_bool(raw.get("polarity_reversed")),
         channels_swapped=_bool(raw.get("channels_swapped")),
-        color_rgba=_int(raw.get("color")),
+        color_rgba=normalize_fl_color(_int(raw.get("color"))),
         peak_left=_float(raw.get("peak_l")),
         peak_right=_float(raw.get("peak_r")),
         plugins=[_plugin(index, item) for item in raw.get("plugins") or []],

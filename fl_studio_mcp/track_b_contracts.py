@@ -352,12 +352,12 @@ class ProjectHistorySnapshot(TrackBContract):
 
     @model_validator(mode="after")
     def validate_bounds(self) -> "ProjectHistorySnapshot":
-        if self.position > self.last_position or self.last_position > self.count:
+        if self.position > self.count or self.last_position > self.count:
             raise ValueError("undo-history position/last/count bounds are inconsistent")
-        if self.can_undo != (self.position > 0):
+        if self.can_undo != (self.position > 1):
             raise ValueError("can_undo contradicts the history position")
-        if self.can_redo != (self.position < self.last_position):
-            raise ValueError("can_redo contradicts the last history position")
+        if self.can_redo != (self.position < self.count):
+            raise ValueError("can_redo contradicts the history count")
         return self
 
 

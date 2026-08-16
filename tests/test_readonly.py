@@ -324,6 +324,34 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.gateway = ReadOnlyGateway(DirectFakeClient())
         self.inspector = ReadOnlyInspector(self.gateway)
 
+    def test_one_based_history_does_not_order_position_against_last(self):
+        with (
+            mock.patch.object(bridge.general, "getUndoHistoryPos", return_value=1),
+            mock.patch.object(bridge.general, "getUndoHistoryCount", return_value=1),
+            mock.patch.object(bridge.general, "getUndoHistoryLast", return_value=0),
+            mock.patch.object(bridge.general, "getUndoLevelHint", return_value="1 / 1"),
+            mock.patch.object(bridge.general, "getChangedFlag", return_value=0),
+        ):
+            history = bridge.cmd_project_history({})
+
+        self.assertEqual(history["position"], 1)
+        self.assertEqual(history["count"], 1)
+        self.assertEqual(history["last_position"], 0)
+        self.assertFalse(history["can_undo"])
+        self.assertFalse(history["can_redo"])
+
+    def test_integer_playlist_states_are_published_as_booleans(self):
+        with (
+            mock.patch.object(bridge.playlist, "isTrackMuted", return_value=0),
+            mock.patch.object(bridge.playlist, "isTrackSolo", return_value=1),
+            mock.patch.object(bridge.playlist, "isTrackSelected", return_value=0),
+        ):
+            track = bridge._playlist_track_summary(1)
+
+        self.assertIs(track["muted"], False)
+        self.assertIs(track["solo"], True)
+        self.assertIs(track["selected"], False)
+
     def test_gateway_rejects_every_non_allowlisted_operation(self):
         for command in (
             "mixer.set_volume",
@@ -770,6 +798,15 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertTrue(result.track.track_enabled)
         self.assertEqual(result.track.plugins[0].mix_level_normalized, 1.0)
         self.assertNotIn("enabled", result.track.plugins[0].model_dump())
+
+    def test_signed_mixer_color_is_published_as_an_unsigned_word(self):
+        _state.TRACKS[1].color = -0x8000
+
+        detail = self.inspector.inspect_mixer_track(1)
+        listing = self.inspector.list_mixer_tracks(only_used=False)
+
+        self.assertEqual(detail.track.color_rgba, 0xFFFF8000)
+        self.assertEqual(listing.tracks[1].color_rgba, 0xFFFF8000)
 
     def test_track_indices_are_validated_against_live_count(self):
         for index in (-1, len(_state.TRACKS), 999999):
@@ -2026,6 +2063,21 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assert_write_report(result, "mixer.set_stereo_separation", 3)
         self.assertEqual(result.before_stereo_separation, 0.0)
         self.assertEqual(result.after_stereo_separation, 0.35)
+
+    def test_stereo_separation_accepts_fl_control_quantization(self):
+        def quantized_setter(index, value, pickupMode=-1):
+            _state.TRACKS[index].stereo_sep = round(value * 64.0) / 64.0
+
+        with mock.patch.object(
+            bridge.mixer, "setTrackStereoSep", quantized_setter
+        ):
+            result = self.writer.set_mixer_stereo_separation(
+                track_index=3, stereo_separation=0.1
+            )
+
+        self.assertIs(result.verified, True)
+        self.assertEqual(result.after_stereo_separation, 0.09375)
+        self.assertIn("control resolution", result.verification_summary)
 
     def test_active_track_selection_has_explicit_non_undoable_proof(self):
         result = self.writer.select_mixer_track(track_index=3)

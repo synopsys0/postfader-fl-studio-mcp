@@ -378,6 +378,13 @@ def _safe(fn, default=None):
         return default
 
 
+def _fl_bool(value):
+    """Normalize FL's integer boolean values at the wire boundary."""
+    if value in (0, 1):
+        return bool(value)
+    return None
+
+
 def _bpm():
     """Current tempo in BPM.
 
@@ -760,7 +767,11 @@ def _history_snapshot():
     last = _strict_integer(
         general.getUndoHistoryLast(), "last undo history position"
     )
-    if position < 0 or count < 0 or last < 0 or position > last or last > count:
+    # FL's public history position is one-based while getUndoHistoryLast() is
+    # an independent cursor value.  In particular, a fresh real project may
+    # report position=1, count=1, last=0.  Do not invent an ordering between
+    # position and last that Image-Line's API does not provide.
+    if position < 0 or count < 0 or last < 0 or position > count or last > count:
         raise ValueError("FL reported inconsistent undo-history bounds")
     hint = _safe(lambda: general.getUndoLevelHint(), "") or ""
     if not isinstance(hint, str):
@@ -771,8 +782,8 @@ def _history_snapshot():
         "last_position": last,
         "level_hint": hint[:512],
         "project_dirty_flag": _safe(lambda: general.getChangedFlag(), None),
-        "can_undo": position > 0,
-        "can_redo": position < last,
+        "can_undo": position > 1,
+        "can_redo": position < count,
     }
 
 
@@ -1529,9 +1540,11 @@ def _playlist_track_summary(index):
         "color": _fl_color_word(
             _safe(lambda: playlist.getTrackColor(index), None)
         ),
-        "muted": _safe(lambda: playlist.isTrackMuted(index), None),
-        "solo": _safe(lambda: playlist.isTrackSolo(index), None),
-        "selected": _safe(lambda: playlist.isTrackSelected(index), None),
+        "muted": _fl_bool(_safe(lambda: playlist.isTrackMuted(index), None)),
+        "solo": _fl_bool(_safe(lambda: playlist.isTrackSolo(index), None)),
+        "selected": _fl_bool(
+            _safe(lambda: playlist.isTrackSelected(index), None)
+        ),
         "activity": _safe(lambda: playlist.getTrackActivityLevel(index), None),
     }
 
@@ -1575,9 +1588,14 @@ def cmd_playlist_list(a):
 #   undo history demonstrably changed. The project is never saved.
 # ---------------------------------------------------------------------------
 
-# The mixer setters store the float they are handed, so this only has to absorb
+# Most mixer setters store the float they are handed, so this only has to absorb
 # float round-tripping - it is not slack for a curve.
 MIXER_READBACK_TOLERANCE = 1e-4
+# FL Studio quantizes the mixer stereo-separation knob to 1/64-unit
+# increments even though the scripting API accepts a float.  Half a step
+# therefore distinguishes the nearest representable setting from a missed
+# write while still rejecting a neighbouring control position.
+STEREO_SEPARATION_READBACK_TOLERANCE = (1.0 / 128.0) + 1e-6
 # How close a plug-in parameter's readback has to be to count as sitting on the
 # requested value when its display text never changed.
 PARAM_NOOP_TOLERANCE = 1e-4
@@ -2106,7 +2124,7 @@ def cmd_mixer_set_stereo_separation(a):
     after, verified = yield from _write_and_read_back(
         lambda: mixer.setTrackStereoSep(i, want),
         lambda: _safe(lambda: mixer.getTrackStereoSep(i), None),
-        lambda got: _near(got, want, MIXER_READBACK_TOLERANCE),
+        lambda got: _near(got, want, STEREO_SEPARATION_READBACK_TOLERANCE),
     )
     return {
         "command": "mixer.set_stereo_separation",
@@ -3232,7 +3250,12 @@ def _set_transport_toggle(a, command, argument, getter, transport_command):
     if before != wanted:
         # These are button commands, not setters. One edge is safe only after
         # reading the absolute state and must never be replayed.
-        transport.globalTransport(transport_command, 1, midi.GT_Global)
+        # Image-Line's third argument is pmeflags, not the global-transport
+        # routing flags.  Pass both explicitly: PME_System authorizes ordinary
+        # transport buttons and GT_Global sends the command to FL itself.
+        transport.globalTransport(
+            transport_command, 1, midi.PME_System, midi.GT_Global
+        )
     yield
     after = getter()
     return {
