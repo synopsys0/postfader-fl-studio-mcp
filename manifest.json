@@ -1,7 +1,7 @@
 {
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
-  "display_name": "Postfader for FL Studio",
+  "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "All-around FL Studio MCP for verified control, mixing, composition, and arrangement.",
   "long_description": "A local 90-tool MCP server and MIDI bridge for inspecting and controlling FL Studio, diagnosing real bounces, building and applying reviewable mix plans, composing deterministic parts, exporting verified MIDI, and driving FL's optional Piano Roll script runtime. Direct setters keep later-tick readback and mutations remain disabled until the present user enables write mode for that bridge session. Before opening this extension, install the matching Python package and run postfader-install-bridge; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
@@ -37,7 +37,7 @@
     "midi_port": {
       "type": "string",
       "title": "Virtual MIDI endpoint",
-      "description": "Exact endpoint name shared with FL Studio. Postfader does not install or configure a virtual MIDI provider.",
+      "description": "Exact endpoint name shared with FL Studio. PostFader does not install or configure a virtual MIDI provider.",
       "required": true
     },
     "fl_studio_user_data_dir": {

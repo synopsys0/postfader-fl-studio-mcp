@@ -130,8 +130,11 @@ plausible-looking result.
 testing, then local MIDI SysEx for the production FL Studio connection. On the
 validated macOS host, FL Studio's embedded interpreter can use neither sockets
 nor files, so CoreMIDI/IAC is the retained operational path. Windows uses the
-same SysEx protocol over a user-configured virtual endpoint; live Windows
-validation remains a supervised release-candidate gate.
+same SysEx protocol over a user-configured virtual endpoint. The v0.20 surface
+at revision `3f63d43` was live-qualified on both the documented macOS arm64/IAC
+host and Windows 11 x64 host; those results qualify that revision and the tested
+systems rather than every possible host, virtual MIDI provider, FL Studio
+build, or plug-in.
 
 The client takes an exclusive per-user process lock for the resolved endpoint
 pair and reports the owning PID when a second client tries to connect. POSIX

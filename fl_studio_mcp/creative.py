@@ -55,6 +55,18 @@ PIANO_ROLL_SCRIPT_NAME = "Postfader_Apply.pyscript"
 PIANO_ROLL_SCRIPTS_DIR_ENV = "POSTFADER_PIANO_ROLL_SCRIPTS_DIR"
 CREATIVE_ENGINE_VERSION = "postfader-creative-1"
 
+# A single MCP process can serve concurrent creative requests. Keep the
+# destination check, atomic commit, and verification together so two
+# create-only exports cannot both observe an absent path and then replace one
+# another's file. The lock is intentionally process-local: the MCP server's
+# export calls share this module, and the atomic temporary-file commit remains
+# safe for readers on every supported platform.
+_MIDI_EXPORT_LOCK = threading.Lock()
+# Serialize the focus-sensitive target/script/hotkey sequence with setup calls
+# that replace the fixed script or mutate its armed state. Status-only reads
+# retain their own short-lived registry lock.
+_PIANO_ROLL_DISPATCH_LOCK = threading.Lock()
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -802,10 +814,10 @@ def export_type1_midi(
         raise ValueError("MIDI output path must end in .mid or .midi")
     if not target.parent.is_dir():
         raise ValueError("MIDI output parent directory does not exist")
-    existed = target.exists()
-    if existed and not overwrite:
+    initially_existed = target.exists()
+    if initially_existed and not overwrite:
         raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
-    if target.exists() and not target.is_file():
+    if initially_existed and not target.is_file():
         raise ValueError("MIDI output target exists but is not a regular file")
     data, expected_notes = _midi_bytes(
         tracks,
@@ -815,24 +827,51 @@ def export_type1_midi(
         denominator=denominator,
     )
     digest = hashlib.sha256(data).hexdigest()
-    temporary_name: str | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="wb", prefix=".postfader-midi-", suffix=".tmp", dir=target.parent, delete=False
-        ) as handle:
-            temporary_name = handle.name
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_name, target)
-        temporary_name = None
-    finally:
-        if temporary_name is not None:
-            try:
+    with _MIDI_EXPORT_LOCK:
+        # Re-check after rendering: another request may have created the
+        # destination while this request was building its bytes.
+        existed = target.exists()
+        if existed and not overwrite:
+            raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
+        if existed and not target.is_file():
+            raise ValueError("MIDI output target exists but is not a regular file")
+
+        temporary_name: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb", prefix=".postfader-midi-", suffix=".tmp", dir=target.parent, delete=False
+            ) as handle:
+                temporary_name = handle.name
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            if overwrite:
+                os.replace(temporary_name, target)
+            else:
+                # A hard-link creation is an atomic no-replace commit on both
+                # POSIX and Windows filesystems supported by Python. Unlike a
+                # check followed by os.replace, it cannot clobber a target
+                # created by another process after the re-check above.
+                try:
+                    os.link(temporary_name, target)
+                except FileExistsError as exc:
+                    raise FileExistsError(
+                        "MIDI output already exists; pass overwrite=true explicitly"
+                    ) from exc
+                except OSError as exc:
+                    raise OSError(
+                        "could not atomically create the MIDI output; the target "
+                        "filesystem must support same-directory hard links"
+                    ) from exc
                 os.unlink(temporary_name)
-            except OSError:
-                pass
-    readback = target.read_bytes()
+            temporary_name = None
+        finally:
+            if temporary_name is not None:
+                try:
+                    os.unlink(temporary_name)
+                except OSError:
+                    pass
+        readback = target.read_bytes()
     readback_digest = hashlib.sha256(readback).hexdigest()
     midi_format, track_count, observed_ppq, observed_notes = _inspect_midi(readback)
     header_verified = (
@@ -1201,22 +1240,32 @@ class _PianoRollRegistry:
     ) -> PianoRollBridgeStatus:
         if action not in {"status", "prepare", "confirm"}:
             raise ValueError("action must be status, prepare, or confirm")
-        with self._lock:
-            if action == "prepare":
-                path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-                _atomic_text(path, _BOOTSTRAP_SCRIPT)
-                self._prepared = True
-                self._armed = False
-            elif action == "confirm":
-                if not confirm_user_ran_script:
-                    raise ValueError("confirm requires confirm_user_ran_script=true")
-                path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-                if not self._prepared or not path.is_file():
-                    raise ValueError("prepare the Postfader Piano Roll script before confirming it")
-                self._armed = True
-            elif confirm_user_ran_script:
-                raise ValueError("confirm_user_ran_script is valid only for action='confirm'")
-        return self.status()
+        if action == "status":
+            if confirm_user_ran_script:
+                raise ValueError(
+                    "confirm_user_ran_script is valid only for action='confirm'"
+                )
+            return self.status()
+        # Setup mutates the same fixed script/armed state used by dispatch.
+        # Always acquire the dispatch lock first, matching note/transform lock
+        # order, so prepare cannot replace a committed script before its hotkey.
+        with _PIANO_ROLL_DISPATCH_LOCK:
+            with self._lock:
+                if action == "prepare":
+                    path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+                    _atomic_text(path, _BOOTSTRAP_SCRIPT)
+                    self._prepared = True
+                    self._armed = False
+                else:
+                    if not confirm_user_ran_script:
+                        raise ValueError("confirm requires confirm_user_ran_script=true")
+                    path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+                    if not self._prepared or not path.is_file():
+                        raise ValueError(
+                            "prepare the Postfader Piano Roll script before confirming it"
+                        )
+                    self._armed = True
+            return self.status()
 
     def require_armed(self) -> None:
         with self._lock:
@@ -1406,21 +1455,42 @@ def write_piano_roll_notes(
     request_id = os.urandom(16).hex()
     digest = note_digest(notes)
     script = _notes_script(notes, mode, request_id)
-    path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-    target = None
-    if auto_trigger:
-        # Refuse before touching the generated integration file or FL whenever
-        # the one-time setup handshake or live write preflight is incomplete.
-        PIANO_ROLL.require_armed()
-        target = _target_piano_roll(channel_index, pattern_number)
-    script_digest = _atomic_text(path, script)
-    PIANO_ROLL.record(
-        request_id=request_id,
-        operation="write_notes",
-        count=len(notes),
-        digest=digest,
-    )
-    if not auto_trigger:
+    with _PIANO_ROLL_DISPATCH_LOCK:
+        path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+        target = None
+        if auto_trigger:
+            # Refuse before touching the generated integration file or FL
+            # whenever the one-time setup handshake or live write preflight is
+            # incomplete. Keep the target, script, registry, and hotkey as one
+            # serialized operation so a later request cannot retarget FL while
+            # this request's fixed script is being written or dispatched.
+            PIANO_ROLL.require_armed()
+            target = _target_piano_roll(channel_index, pattern_number)
+        script_digest = _atomic_text(path, script)
+        PIANO_ROLL.record(
+            request_id=request_id,
+            operation="write_notes",
+            count=len(notes),
+            digest=digest,
+        )
+        if not auto_trigger:
+            return PianoRollDispatch(
+                requested_at=_now(),
+                request_id=request_id,
+                operation="write_notes",
+                mode=mode,
+                script_path=str(path),
+                script_sha256=script_digest,
+                requested_note_count=len(notes),
+                requested_note_digest=digest,
+                status="prepared_for_manual_run",
+                warnings=[
+                    "The generated script has not run. Open the intended Piano Roll and run Postfader Apply manually.",
+                    "FL exposes no controller-API note readback; successful script application cannot be asserted here.",
+                ],
+            )
+        trigger = _trigger_piano_roll_shortcut()
+        status = "hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched"
         return PianoRollDispatch(
             requested_at=_now(),
             request_id=request_id,
@@ -1430,31 +1500,14 @@ def write_piano_roll_notes(
             script_sha256=script_digest,
             requested_note_count=len(notes),
             requested_note_digest=digest,
-            status="prepared_for_manual_run",
+            target=target,
+            trigger=trigger,
+            status=status,
             warnings=[
-                "The generated script has not run. Open the intended Piano Roll and run Postfader Apply manually.",
-                "FL exposes no controller-API note readback; successful script application cannot be asserted here.",
+                "A dispatched shortcut proves only focus and key delivery, not note application.",
+                "Do not issue another Piano Roll mutation until the user or FL UI confirms this one landed.",
             ],
         )
-    trigger = _trigger_piano_roll_shortcut()
-    status = "hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched"
-    return PianoRollDispatch(
-        requested_at=_now(),
-        request_id=request_id,
-        operation="write_notes",
-        mode=mode,
-        script_path=str(path),
-        script_sha256=script_digest,
-        requested_note_count=len(notes),
-        requested_note_digest=digest,
-        target=target,
-        trigger=trigger,
-        status=status,
-        warnings=[
-            "A dispatched shortcut proves only focus and key delivery, not note application.",
-            "Do not issue another Piano Roll mutation until the user or FL UI confirms this one landed.",
-        ],
-    )
 
 
 def transform_piano_roll(
@@ -1466,21 +1519,38 @@ def transform_piano_roll(
 ) -> PianoRollDispatch:
     request_id = os.urandom(16).hex()
     script = _transform_script(request, request_id)
-    path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-    target = None
-    if auto_trigger:
-        # Keep a rejected live write side-effect free. Manual preparation is
-        # intentionally file-mutating and is separately reported as such.
-        PIANO_ROLL.require_armed()
-        target = _target_piano_roll(channel_index, pattern_number)
-    script_digest = _atomic_text(path, script)
-    PIANO_ROLL.record(
-        request_id=request_id,
-        operation=request.operation,
-        count=None,
-        digest=None,
-    )
-    if not auto_trigger:
+    with _PIANO_ROLL_DISPATCH_LOCK:
+        path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+        target = None
+        if auto_trigger:
+            # Keep a rejected live write side-effect free. Manual preparation is
+            # intentionally file-mutating and is separately reported as such.
+            # The target, fixed script, registry record, and hotkey remain one
+            # serialized operation for the same reason as note writes above.
+            PIANO_ROLL.require_armed()
+            target = _target_piano_roll(channel_index, pattern_number)
+        script_digest = _atomic_text(path, script)
+        PIANO_ROLL.record(
+            request_id=request_id,
+            operation=request.operation,
+            count=None,
+            digest=None,
+        )
+        if not auto_trigger:
+            return PianoRollDispatch(
+                requested_at=_now(),
+                request_id=request_id,
+                operation=request.operation,
+                mode=request.scope,
+                script_path=str(path),
+                script_sha256=script_digest,
+                status="prepared_for_manual_run",
+                warnings=[
+                    "The transform script has not run; execute Postfader Apply in the intended Piano Roll.",
+                    "The host cannot know the transformed note count because the controller API cannot read Piano Roll notes.",
+                ],
+            )
+        trigger = _trigger_piano_roll_shortcut()
         return PianoRollDispatch(
             requested_at=_now(),
             request_id=request_id,
@@ -1488,28 +1558,14 @@ def transform_piano_roll(
             mode=request.scope,
             script_path=str(path),
             script_sha256=script_digest,
-            status="prepared_for_manual_run",
+            target=target,
+            trigger=trigger,
+            status="hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched",
             warnings=[
-                "The transform script has not run; execute Postfader Apply in the intended Piano Roll.",
-                "The host cannot know the transformed note count because the controller API cannot read Piano Roll notes.",
+                "Transform execution is focus-sensitive and has no controller-API score readback.",
+                "The generated script uses FL's live score object; inspect the Piano Roll before another mutation.",
             ],
         )
-    trigger = _trigger_piano_roll_shortcut()
-    return PianoRollDispatch(
-        requested_at=_now(),
-        request_id=request_id,
-        operation=request.operation,
-        mode=request.scope,
-        script_path=str(path),
-        script_sha256=script_digest,
-        target=target,
-        trigger=trigger,
-        status="hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched",
-        warnings=[
-            "Transform execution is focus-sensitive and has no controller-API score readback.",
-            "The generated script uses FL's live score object; inspect the Piano Roll before another mutation.",
-        ],
-    )
 
 
 # ---------------------------------------------------------------------------

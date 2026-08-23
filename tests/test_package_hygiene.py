@@ -65,6 +65,7 @@ class PackageHygieneTests(unittest.TestCase):
     def test_private_working_directory_is_ignored_and_scanner_forbidden(self) -> None:
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
         self.assertIn(".private/", {line.strip() for line in gitignore})
+        self.assertIn("release-bundles/", {line.strip() for line in gitignore})
         scanner = self.load_public_tree_scanner()
         with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
             root = Path(raw)
@@ -347,6 +348,10 @@ with mock.patch.object(
         )
         self.assertIn("Operating System :: MacOS :: MacOS X", project["classifiers"])
         self.assertTrue(any(item.startswith("anyio") for item in project["dependencies"]))
+        self.assertIn("mcp>=2.0.0,<3", project["dependencies"])
+        self.assertFalse(
+            any(item.startswith("mcp[") for item in project["dependencies"])
+        )
         self.assertTrue(
             any(item.startswith("tomli") for item in project["optional-dependencies"]["test"])
         )
@@ -376,10 +381,19 @@ with mock.patch.object(
         self.assertIn("windows-latest", workflow)
         self.assertIn("macos-latest", workflow)
         self.assertIn('FL_BRIDGE_ENABLE_MIDI: "0"', workflow)
+        self.assertIn('FL_BRIDGE_ENABLE_WRITES: "0"', workflow)
         self.assertIn('FL_BRIDGE_SANDBOXED: "1"', workflow)
         self.assertNotIn("test_midi_transport.py", workflow)
         self.assertIn("scripts/verify_distribution.py", workflow)
         self.assertIn("scripts/clean_wheel_smoke.py", workflow)
+        self.assertIn("scripts/build_release_bundles.py", workflow)
+        self.assertIn("mcp==2.0.0", workflow)
+        self.assertIn("mcp>=2.0.0,<3", workflow)
+        self.assertIn("tests/test_sdk_compatibility.py", workflow)
+        self.assertIn("tests/test_readonly_mcp.py", workflow)
+        self.assertIn("POSTFADER_BUNDLE_DRY_RUN", workflow)
+        for line in workflow.splitlines():
+            self.assertNotRegex(line, r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
 
     def test_release_publish_waits_for_both_native_platform_checks(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
@@ -401,12 +415,20 @@ with mock.patch.object(
         self.assertIn("scripts/run_safe_tests.py", platform)
         self.assertIn("scripts/verify_distribution.py", platform)
         self.assertIn("scripts/clean_wheel_smoke.py", platform)
+        self.assertIn("scripts/build_release_bundles.py", platform)
+        self.assertIn("POSTFADER_BUNDLE_DRY_RUN", platform)
         self.assertIn("if: runner.os == 'Windows'", platform)
         self.assertIn("scripts/install.ps1", platform)
         self.assertIn("scripts/launch_fl_studio.ps1", platform)
         self.assertIn("scripts/verify_distribution.py", build)
         self.assertIn("scripts/clean_wheel_smoke.py", build)
+        self.assertIn("scripts/build_release_bundles.py", build)
+        self.assertIn("release-platform-bundles", workflow)
+        self.assertIn("SHA256SUMS.txt", workflow)
         self.assertIn("needs: [build, platform-verify]", publish)
+        self.assertIn("skip-existing: true", publish)
+        for line in workflow.splitlines():
+            self.assertNotRegex(line, r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
 
     def test_distribution_verifier_blocks_a_missing_ownership_marker(self) -> None:
         verifier = load_distribution_verifier()

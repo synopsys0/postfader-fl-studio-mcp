@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest import mock
 
@@ -87,6 +91,10 @@ def target_receipt() -> PianoRollTargetReceipt:
 
 class CreativeTests(unittest.TestCase):
     def setUp(self) -> None:
+        self._bridge_write_state = (
+            bridge.LEAN_WRITES_ENABLED,
+            bridge.WRITE_MODE_ORIGIN,
+        )
         _state.reset()
         bridge.LEAN_WRITES_ENABLED = True
         bridge.WRITE_MODE_ORIGIN = "runtime_request"
@@ -97,6 +105,11 @@ class CreativeTests(unittest.TestCase):
             PIANO_ROLL._last_count = None
             PIANO_ROLL._last_digest = None
             PIANO_ROLL._last_operation = None
+
+    def tearDown(self) -> None:
+        bridge.LEAN_WRITES_ENABLED, bridge.WRITE_MODE_ORIGIN = (
+            self._bridge_write_state
+        )
 
     def test_composition_is_deterministic_and_scale_bounded(self) -> None:
         chords = compose_chord_progression(
@@ -153,6 +166,79 @@ class CreativeTests(unittest.TestCase):
                 export_type1_midi(path, [track])
             replaced = export_type1_midi(path, [track], overwrite=True)
             self.assertTrue(replaced.overwritten_existing_file)
+
+    def test_type1_midi_create_only_export_wins_one_concurrent_race(self) -> None:
+        tracks = [
+            MidiTrackSpec(
+                name="First",
+                channel=1,
+                notes=[CreativeNote(pitch=60, start_beats=0.0, duration_beats=1.0)],
+            ),
+            MidiTrackSpec(
+                name="Second",
+                channel=2,
+                notes=[CreativeNote(pitch=67, start_beats=0.0, duration_beats=1.0)],
+            ),
+        ]
+        barrier = threading.Barrier(2)
+        from fl_studio_mcp import creative as creative_module
+
+        real_midi_bytes = creative_module._midi_bytes
+
+        def synchronized_midi_bytes(*args, **kwargs):
+            barrier.wait(timeout=5)
+            return real_midi_bytes(*args, **kwargs)
+
+        def export(track: MidiTrackSpec, path: str):
+            try:
+                return "ok", export_type1_midi(
+                    path,
+                    [track],
+                    tempo_bpm=111.0 if track.name == "First" else 137.0,
+                    overwrite=False,
+                )
+            except Exception as exc:  # collect the race outcome in the caller
+                return "error", exc
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "concurrent.mid")
+            with mock.patch(
+                "fl_studio_mcp.creative._midi_bytes",
+                side_effect=synchronized_midi_bytes,
+            ):
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(export, track, path) for track in tracks]
+                    outcomes = [future.result(timeout=10) for future in futures]
+
+            successes = [value for kind, value in outcomes if kind == "ok"]
+            failures = [value for kind, value in outcomes if kind == "error"]
+            self.assertEqual(len(successes), 1, outcomes)
+            self.assertEqual(len(failures), 1, outcomes)
+            self.assertIsInstance(failures[0], FileExistsError)
+            winner = successes[0]
+            self.assertFalse(winner.overwritten_existing_file)
+            self.assertEqual(
+                hashlib.sha256(Path(path).read_bytes()).hexdigest(), winner.sha256
+            )
+
+    def test_type1_midi_create_only_reports_unsupported_filesystem(self) -> None:
+        track = MidiTrackSpec(
+            name="Lead",
+            channel=1,
+            notes=[CreativeNote(pitch=60, start_beats=0.0, duration_beats=1.0)],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "unsupported.mid"
+            with mock.patch(
+                "fl_studio_mcp.creative.os.link",
+                side_effect=OSError("hard links unavailable"),
+            ):
+                with self.assertRaisesRegex(
+                    OSError,
+                    "filesystem must support same-directory hard links",
+                ):
+                    export_type1_midi(str(path), [track], overwrite=False)
+            self.assertFalse(path.exists())
 
     def test_piano_roll_script_setup_and_manual_dispatch_are_honest(self) -> None:
         notes = [CreativeNote(pitch=60, start_beats=0, duration_beats=1)]
@@ -275,6 +361,198 @@ class CreativeTests(unittest.TestCase):
         self.assertTrue(receipt.target.selected_target_verified)
         self.assertTrue(receipt.trigger.hotkey_dispatched)
         self.assertFalse(receipt.application_verified)
+
+    def _assert_piano_roll_live_sequence_is_serial(self, operation: str) -> None:
+        events: list[tuple[str, str]] = []
+        event_lock = threading.Lock()
+        local = threading.local()
+        active_steps = 0
+        overlapped = False
+
+        def step(name: str) -> None:
+            nonlocal active_steps, overlapped
+            owner = local.owner
+            with event_lock:
+                overlapped = overlapped or active_steps > 0
+                active_steps += 1
+                events.append((owner, name))
+            try:
+                # Give a competing request a deterministic opportunity to
+                # enter each side-effect boundary when serialization is absent.
+                time.sleep(0.01)
+            finally:
+                with event_lock:
+                    active_steps -= 1
+
+        def target(_channel_index: int, _pattern_number: int) -> PianoRollTargetReceipt:
+            step("target")
+            return target_receipt()
+
+        def atomic(_path: Path, _content: str) -> str:
+            step("script")
+            return "b" * 64
+
+        def record(**kwargs) -> None:
+            step("record")
+            original_record(**kwargs)
+
+        def trigger() -> HotkeyDispatch:
+            step("hotkey")
+            return HotkeyDispatch(
+                platform="macos",
+                shortcut="Cmd+Opt+Y",
+                fl_window_found=True,
+                fl_window_focused=True,
+                hotkey_dispatched=True,
+            )
+
+        original_record = PIANO_ROLL.record
+        with PIANO_ROLL._lock:
+            PIANO_ROLL._armed = True
+
+        def invoke(owner: str, directory: str):
+            local.owner = owner
+            if operation == "notes":
+                return write_piano_roll_notes(
+                    [CreativeNote(pitch=60 if owner == "a" else 67, start_beats=0.0, duration_beats=1.0)],
+                    channel_index=2,
+                    pattern_number=3,
+                    auto_trigger=True,
+                )
+            return transform_piano_roll(
+                PianoRollTransform(
+                    operation="humanize",
+                    scope="selected",
+                    timing_beats=0.03,
+                    velocity_amount=0.08,
+                    seed=91,
+                ),
+                channel_index=2,
+                pattern_number=3,
+                auto_trigger=True,
+            )
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ,
+            {"POSTFADER_PIANO_ROLL_SCRIPTS_DIR": directory},
+            clear=False,
+        ):
+            with (
+                mock.patch("fl_studio_mcp.creative._target_piano_roll", side_effect=target),
+                mock.patch("fl_studio_mcp.creative._atomic_text", side_effect=atomic),
+                mock.patch.object(PIANO_ROLL, "record", side_effect=record),
+                mock.patch("fl_studio_mcp.creative._trigger_piano_roll_shortcut", side_effect=trigger),
+            ):
+                barrier = threading.Barrier(2)
+
+                def run(owner: str):
+                    local.owner = owner
+                    barrier.wait(timeout=5)
+                    return invoke(owner, directory)
+
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(run, owner) for owner in ("a", "b")]
+                    receipts = [future.result(timeout=10) for future in futures]
+
+        self.assertEqual(len(receipts), 2)
+        self.assertFalse(overlapped, events)
+        self.assertEqual(active_steps, 0)
+        by_owner = {
+            owner: [name for event_owner, name in events if event_owner == owner]
+            for owner in ("a", "b")
+        }
+        self.assertEqual(by_owner["a"], ["target", "script", "record", "hotkey"])
+        self.assertEqual(by_owner["b"], ["target", "script", "record", "hotkey"])
+
+    def test_piano_roll_note_target_script_record_hotkey_is_serial(self) -> None:
+        self._assert_piano_roll_live_sequence_is_serial("notes")
+
+    def test_piano_roll_transform_target_script_record_hotkey_is_serial(self) -> None:
+        self._assert_piano_roll_live_sequence_is_serial("transform")
+
+    def test_piano_roll_prepare_cannot_replace_an_in_flight_dispatch(self) -> None:
+        from fl_studio_mcp import creative as creative_module
+
+        trigger_entered = threading.Event()
+        release_trigger = threading.Event()
+        prepare_started = threading.Event()
+        bootstrap_written = threading.Event()
+        errors = []
+
+        with PIANO_ROLL._lock:
+            PIANO_ROLL._prepared = True
+            PIANO_ROLL._armed = True
+
+        def atomic(_path: Path, content: str) -> str:
+            if content == creative_module._BOOTSTRAP_SCRIPT:
+                bootstrap_written.set()
+            return "c" * 64
+
+        def trigger() -> HotkeyDispatch:
+            trigger_entered.set()
+            release_trigger.wait(timeout=2)
+            return HotkeyDispatch(
+                platform="macos",
+                shortcut="Cmd+Opt+Y",
+                fl_window_found=True,
+                fl_window_focused=True,
+                hotkey_dispatched=True,
+            )
+
+        def dispatch() -> None:
+            try:
+                write_piano_roll_notes(
+                    [CreativeNote(pitch=60, start_beats=0.0, duration_beats=1.0)],
+                    channel_index=2,
+                    pattern_number=3,
+                    auto_trigger=True,
+                )
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        def prepare() -> None:
+            prepare_started.set()
+            try:
+                PIANO_ROLL.bridge_action("prepare")
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ,
+            {"POSTFADER_PIANO_ROLL_SCRIPTS_DIR": directory},
+            clear=False,
+        ):
+            with (
+                mock.patch(
+                    "fl_studio_mcp.creative._target_piano_roll",
+                    return_value=target_receipt(),
+                ),
+                mock.patch(
+                    "fl_studio_mcp.creative._atomic_text",
+                    side_effect=atomic,
+                ),
+                mock.patch(
+                    "fl_studio_mcp.creative._trigger_piano_roll_shortcut",
+                    side_effect=trigger,
+                ),
+            ):
+                dispatch_thread = threading.Thread(target=dispatch)
+                dispatch_thread.start()
+                self.assertTrue(trigger_entered.wait(timeout=2))
+
+                prepare_thread = threading.Thread(target=prepare)
+                prepare_thread.start()
+                self.assertTrue(prepare_started.wait(timeout=2))
+                self.assertFalse(bootstrap_written.wait(timeout=0.1))
+
+                release_trigger.set()
+                dispatch_thread.join(timeout=2)
+                prepare_thread.join(timeout=2)
+
+        self.assertFalse(dispatch_thread.is_alive())
+        self.assertFalse(prepare_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertTrue(bootstrap_written.is_set())
 
     def test_native_pattern_marker_and_automation_workflows(self) -> None:
         client = DirectFakeClient()

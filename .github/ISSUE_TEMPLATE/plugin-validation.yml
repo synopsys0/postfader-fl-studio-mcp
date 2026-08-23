@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thank you for expanding Postfader's evidence beyond the maintainer's plug-in folder.
+        Thank you for expanding PostFader's evidence beyond the maintainer's plug-in folder.
 
         The matrix is evidence, not an allowlist. Do not attach a raw scan, log, screenshot, preset, project, or audio file. Review the generated report before posting it.
   - type: input
@@ -49,7 +49,7 @@ body:
   - type: textarea
     id: generated_report
     attributes:
-      label: Generated Postfader report
+      label: Generated PostFader report
       description: Paste only the output of postfader-plugin-report. Do not paste its source JSON or any client transcript.
       render: markdown
     validations:

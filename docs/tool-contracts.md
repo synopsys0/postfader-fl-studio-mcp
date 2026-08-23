@@ -321,7 +321,11 @@ explicit. No automatic replay, rollback, or save occurs.
 
 Peak watches and plans are in-memory process state. IDs cease to exist when
 the MCP process exits. Creating a plan is not approval to apply it; plan
-application is a distinct destructive, non-idempotent tool.
+application is a distinct destructive, non-idempotent tool. Plan state is
+`draft` before an attempt, `applied` only when the complete batch verifies,
+`partial` when a batch receipt reports an incomplete or unverified result, and
+`failed` when no batch receipt can be returned. Both terminal failure states
+require a fresh plan rather than an automatic retry.
 
 ## Creative, MIDI, arrangement, and automation tools
 

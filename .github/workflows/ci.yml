@@ -13,6 +13,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sdk-compatibility:
+    name: MCP SDK ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: minimum-2.0.0
+            mcp-spec: mcp==2.0.0
+          - label: newest-allowed
+            mcp-spec: mcp>=2.0.0,<3
+    env:
+      FL_BRIDGE_ENABLE_MIDI: "0"
+      FL_BRIDGE_ENABLE_WRITES: "0"
+      FL_BRIDGE_SANDBOXED: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install the selected SDK boundary
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable ".[test]" "${{ matrix.mcp-spec }}"
+          python -m pip check
+      - name: Exercise registration, schemas, resources, and fail-closed input
+        run: |
+          python -c "import importlib.metadata; print('resolved mcp:', importlib.metadata.version('mcp'))"
+          python tests/test_sdk_compatibility.py
+          python tests/test_readonly_mcp.py
+
   safe-tests:
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -24,13 +60,14 @@ jobs:
         python-version: ["3.10", "3.14"]
     env:
       FL_BRIDGE_ENABLE_MIDI: "0"
+      FL_BRIDGE_ENABLE_WRITES: "0"
       FL_BRIDGE_SANDBOXED: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -81,13 +118,14 @@ jobs:
         os: [windows-latest, macos-latest]
     env:
       FL_BRIDGE_ENABLE_MIDI: "0"
+      FL_BRIDGE_ENABLE_WRITES: "0"
       FL_BRIDGE_SANDBOXED: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -102,8 +140,40 @@ jobs:
       - name: Install and verify wheel in a clean temporary environment
         run: python scripts/clean_wheel_smoke.py --dist-dir dist
 
+      - name: Build the platform setup bundles
+        run: python scripts/build_release_bundles.py --output-dir release-bundles
+
+      - name: Smoke-test the extracted Windows bundle launcher
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Get-ChildItem 'release-bundles\*-Windows.zip' | Select-Object -First 1
+          if (-not $archive) { throw 'Windows setup bundle was not built' }
+          $target = Join-Path $env:RUNNER_TEMP 'postfader-windows-bundle'
+          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $target
+          $launcher = Get-ChildItem $target -Recurse -Filter 'Install PostFader.cmd' |
+            Select-Object -First 1
+          if (-not $launcher) { throw 'Windows setup launcher was not found' }
+          $env:POSTFADER_BUNDLE_DRY_RUN = '1'
+          & cmd.exe /d /c ('"' + $launcher.FullName + '"')
+          if ($LASTEXITCODE -ne 0) { throw 'Windows bundle launcher dry run failed' }
+
+      - name: Smoke-test the extracted macOS bundle launcher
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$(find release-bundles -name '*-macOS.zip' -print -quit)"
+          test -n "$archive"
+          target="$RUNNER_TEMP/postfader-macos-bundle"
+          ditto -x -k "$archive" "$target"
+          launcher="$(find "$target" -name 'Install PostFader.command' -print -quit)"
+          test -n "$launcher"
+          POSTFADER_BUNDLE_DRY_RUN=1 "$launcher"
+
       - name: Upload Python distributions
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: python-distributions-${{ matrix.os }}
           path: |
@@ -112,25 +182,33 @@ jobs:
           if-no-files-found: error
 
   mcpb:
-    name: Validate Claude Desktop extension
+    name: Validate user-facing release bundles
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
       - name: Set up Node for the MCPB packager
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
       - name: Validate and build Claude Desktop extension
         run: python scripts/build_mcpb.py --output-dir mcpb-dist
+      - name: Build deterministic Windows and macOS setup bundles
+        run: python scripts/build_release_bundles.py --output-dir release-bundles
       - name: Upload Claude Desktop extension
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: desktop-extension
           path: mcpb-dist/*.mcpb
+          if-no-files-found: error
+      - name: Upload platform setup bundles
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: platform-setup-bundles
+          path: release-bundles/*.zip
           if-no-files-found: error

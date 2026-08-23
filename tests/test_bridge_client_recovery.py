@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import types
 import unittest
 from unittest import mock
@@ -70,6 +71,112 @@ def client_with(*transports):
 
 
 class BridgeClientRecoveryTests(unittest.TestCase):
+    def test_get_client_initialization_is_singleton_under_concurrent_first_calls(self):
+        original_client = bridge_client._client
+        bridge_client._client = None
+        first_started = threading.Event()
+        second_started = threading.Event()
+        second_ready = threading.Event()
+        release_first = threading.Event()
+        created = []
+        results = [None, None]
+        errors = []
+
+        def factory():
+            client = object()
+            created.append(client)
+            if len(created) == 1:
+                first_started.set()
+                release_first.wait(timeout=2)
+            else:
+                second_started.set()
+            return client
+
+        def worker(index, ready=None):
+            if ready is not None:
+                ready.set()
+            try:
+                results[index] = bridge_client.get_client()
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        try:
+            with mock.patch.object(bridge_client, "BridgeClient", side_effect=factory):
+                first = threading.Thread(target=worker, args=(0,))
+                first.start()
+                self.assertTrue(first_started.wait(timeout=2))
+
+                second = threading.Thread(
+                    target=worker, args=(1, second_ready)
+                )
+                second.start()
+                self.assertTrue(second_ready.wait(timeout=2))
+                concurrent_constructor = second_started.wait(timeout=0.25)
+
+                release_first.set()
+                first.join(timeout=2)
+                second.join(timeout=2)
+
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertFalse(concurrent_constructor)
+            self.assertEqual(len(created), 1)
+            self.assertIs(results[0], results[1])
+        finally:
+            release_first.set()
+            bridge_client._client = original_client
+
+    def test_close_client_releases_old_endpoint_before_reinitialization(self):
+        original_client = bridge_client._client
+        close_started = threading.Event()
+        release_close = threading.Event()
+        get_started = threading.Event()
+        created = []
+        result = []
+
+        old_client = mock.Mock()
+
+        def close_old():
+            close_started.set()
+            release_close.wait(timeout=2)
+
+        old_client.close.side_effect = close_old
+
+        def get_new():
+            get_started.set()
+            result.append(bridge_client.get_client())
+
+        with bridge_client._client_lock:
+            bridge_client._client = old_client
+        try:
+            with mock.patch.object(
+                bridge_client,
+                "BridgeClient",
+                side_effect=lambda: created.append(object()) or created[-1],
+            ):
+                closing = threading.Thread(target=bridge_client.close_client)
+                closing.start()
+                self.assertTrue(close_started.wait(timeout=2))
+
+                opening = threading.Thread(target=get_new)
+                opening.start()
+                self.assertTrue(get_started.wait(timeout=2))
+                self.assertEqual(created, [])
+
+                release_close.set()
+                closing.join(timeout=2)
+                opening.join(timeout=2)
+
+            self.assertFalse(closing.is_alive())
+            self.assertFalse(opening.is_alive())
+            self.assertEqual(len(created), 1)
+            self.assertIs(result[0], created[0])
+        finally:
+            release_close.set()
+            with bridge_client._client_lock:
+                bridge_client._client = original_client
+
     def test_enabled_midi_requires_an_explicit_windows_port_before_any_probe(self):
         with (
             mock.patch.object(bridge_client, "MIDI_ENABLED", True),
