@@ -10,7 +10,7 @@ them.
 
 [![CI](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml) [![Version](https://img.shields.io/badge/version-0.20.0-blue)](#supported-versions) [![FL Studio](https://img.shields.io/badge/FL%20Studio-2026-orange)](#supported-versions) [![Python](https://img.shields.io/badge/python-3.10--3.14-blue)](https://www.python.org/downloads/) [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)](#supported-versions) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-[Download](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest) · [Features](#what-you-can-do) · [Quick start](#quick-start) · [AI clients](#works-with-your-ai-client) · [Safety](#safe-by-default) · [Documentation](#documentation)
+[Install for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip) · [Install for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip) · [All downloads](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest) · [Quick start](#quick-start) · [Features](#what-you-can-do) · [Safety](#safe-by-default)
 
 </div>
 
@@ -28,11 +28,12 @@ claiming success they cannot prove.
 
 PostFader can read the real mixer and loaded plug-ins, measure an exported
 bounce, present a reviewable plan, apply that reviewed plan once, and show the
-resulting readback. It also composes deterministic MIDI parts and supports
-an explicitly limited Piano Roll scripting workflow.
+resulting readback. A typical supported workflow is **inspect → diagnose →
+propose → approve → apply → read back `verified: true`**—or receive an honest
+explanation when that level of verification is unavailable.
 
-It includes **90 supported tools and 8 live resources**, with no catalog entries
-whose only behavior is “unsupported.”
+It also composes deterministic MIDI parts and supports an explicitly limited
+Piano Roll scripting workflow.
 
 ## What you can do
 
@@ -50,7 +51,8 @@ from FL Studio at runtime rather than limited to a fixed list.
 
 ## Tools
 
-PostFader exposes 90 tools in these groups:
+PostFader exposes 90 tools and 8 live resources, with no catalog entries whose
+only behavior is “unsupported.” The tools are grouped into:
 
 - project status, capabilities, transport, and live resources;
 - mixer, routing, Channel Rack, patterns, Playlist, history, and step sequencing;
@@ -85,7 +87,7 @@ reviewable plan for the highest-confidence fixes.”
 then prepare an empty pattern for the result.”
 ~~~
 
-## Why use PostFader?
+## Why PostFader?
 
 - **Stay in the creative flow.** Ask for project information or routine changes
   without hunting through several FL Studio windows.
@@ -125,7 +127,7 @@ command but ignoring the value.
 ## Works with your AI client
 
 PostFader is model- and vendor-independent. It uses the standard local `stdio`
-MCP transport, so it works with any MCP-compatible desktop or coding client
+MCP transport and is designed for MCP-compatible desktop or coding clients
 that can launch a local process.
 
 | Client | How PostFader connects |
@@ -164,7 +166,7 @@ does not provide live audio buffers.
 | Component | Support |
 | --- | --- |
 | PostFader | 0.20.0 |
-| FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer |
+| FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer; live evidence is limited to the tested builds below. |
 | FL MIDI scripting API | Version 44 or newer |
 | Python | 3.10 through 3.14 |
 | macOS | Supported; v0.20 was live-qualified on macOS 27.0 arm64 with FL Studio Producer Edition 26.1.3 build 5336 and the built-in IAC bus. |
@@ -268,6 +270,10 @@ A healthy connection reports:
 - <code>verified_writes_enabled: false</code>; and
 - <code>runtime_write_mode_control: true</code>.
 
+If the check fails, follow its first corrective action and use the
+[setup and troubleshooting guide](docs/setup.md) before connecting your AI
+client.
+
 ### 5. Add PostFader to your AI client
 
 Use the included configuration generator so interpreter paths, repository
@@ -307,10 +313,12 @@ When you want PostFader to make changes, ask your connected AI client:
 “Enable write mode for this session.”
 ~~~
 
-Your client calls <code>fl_set_write_mode</code> and must carry an explicit
-user-present confirmation. PostFader then checks the running controller script,
-changes only that live session, and performs a second handshake before reporting
-that writes are available. FL Studio does not need to restart.
+After your explicit request, the client calls <code>fl_set_write_mode</code>
+with <code>confirm_user_present=true</code>. This is a client-supplied gate, not
+independent out-of-band proof of physical presence. PostFader separately checks
+the running controller script and session, changes only that live session, and
+performs a second handshake before reporting that writes are available. FL
+Studio does not need to restart.
 
 Ask the client to “disable write mode” when you are done. The setting is never
 stored in your project or AI-client configuration, and an ordinary controller
@@ -390,8 +398,9 @@ in bounded FL Studio folders. They return measurements, threshold-driven
 diagnoses, and bounded recommendations—not audio samples or a claim that one
 creative choice is universally correct.
 
-The local virtual MIDI bus is shared and unauthenticated. Use PostFader on a
-trusted, single-user workstation.
+The virtual MIDI bus is local but not isolated: it is shared and unauthenticated,
+so other local software with access to the same endpoint may send traffic to the
+bridge. Use PostFader on a trusted, single-user workstation.
 
 ## Privacy
 
