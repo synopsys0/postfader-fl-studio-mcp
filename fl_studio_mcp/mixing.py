@@ -1036,7 +1036,7 @@ def resolve_processing_intent(
 # ---------------------------------------------------------------------------
 
 
-PlanStatus = Literal["draft", "applied", "partial"]
+PlanStatus = Literal["draft", "applied", "partial", "failed"]
 
 
 class MixPlan(MixingModel):
@@ -1063,6 +1063,11 @@ class MixPlanRegistry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._plans: dict[str, MixPlan] = {}
+        # A plan remains claimed for its entire lifetime after the first apply
+        # attempt.  Keeping this separate from the public status preserves the
+        # draft/applied/partial contract while closing the check-then-dispatch
+        # race between concurrent mix_apply_plan calls.
+        self._attempted: set[str] = set()
 
     def create(
         self,
@@ -1107,8 +1112,20 @@ class MixPlanRegistry:
         )
         with self._lock:
             if len(self._plans) >= 128:
-                oldest = min(self._plans.values(), key=lambda item: item.created_at)
+                evictable = [
+                    item
+                    for item in self._plans.values()
+                    if not (
+                        item.status == "draft" and item.plan_id in self._attempted
+                    )
+                ]
+                if not evictable:
+                    raise ValueError(
+                        "mix plan registry is full while applications are in progress"
+                    )
+                oldest = min(evictable, key=lambda item: item.created_at)
                 del self._plans[oldest.plan_id]
+                self._attempted.discard(oldest.plan_id)
             self._plans[plan.plan_id] = plan
         return plan
 
@@ -1120,19 +1137,52 @@ class MixPlanRegistry:
         return plan
 
     def apply(self, plan_id: str, *, stop_on_unverified: bool = True) -> MixPlanApplication:
-        plan = self.get(plan_id)
-        if plan.status != "draft":
-            raise ValueError("this mix plan has already been attempted; create a fresh plan to reapply")
-        batch = VerifiedBatchExecutor().apply(
-            operations=plan.operations,
-            stop_on_unverified=stop_on_unverified,
-            session_fingerprint=plan.session_fingerprint,
-        )
-        status: PlanStatus = "applied" if batch.verified else "partial"
-        updated = plan.model_copy(update={"status": status})
+        with self._lock:
+            plan = self._plans.get(plan_id)
+            if plan is None:
+                raise ValueError("unknown or expired mix plan ID")
+            if plan.status != "draft" or plan_id in self._attempted:
+                raise ValueError(
+                    "this mix plan has already been attempted; create a fresh plan to reapply"
+                )
+            # Claim before dispatch.  The executor may perform live mutations
+            # before returning an error, so a failed attempt must not become
+            # eligible for a second, potentially duplicating application.
+            self._attempted.add(plan_id)
+
+        try:
+            batch = VerifiedBatchExecutor().apply(
+                operations=plan.operations,
+                stop_on_unverified=stop_on_unverified,
+                session_fingerprint=plan.session_fingerprint,
+            )
+            status: PlanStatus = "applied" if batch.verified else "partial"
+            updated = plan.model_copy(update={"status": status})
+            application = MixPlanApplication(
+                applied_at=_now(), plan=updated, batch=batch
+            )
+        except Exception:
+            # There is no safe way to infer that an exception occurred before
+            # the first live mutation. Keep the public state terminal, but
+            # distinguish a missing batch receipt from a returned partial one.
+            with self._lock:
+                current = self._plans.get(plan_id)
+                if current is not None and current.status == "draft":
+                    self._plans[plan_id] = current.model_copy(
+                        update={
+                            "status": "failed",
+                            "warnings": [
+                                *current.warnings,
+                                "The apply attempt failed without a batch receipt; "
+                                "its outcome may be unknown, so this plan cannot be retried.",
+                            ],
+                        }
+                    )
+            raise
+
         with self._lock:
             self._plans[plan_id] = updated
-        return MixPlanApplication(applied_at=_now(), plan=updated, batch=batch)
+        return application
 
 
 MIX_PLANS = MixPlanRegistry()

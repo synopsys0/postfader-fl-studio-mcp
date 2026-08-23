@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.synopsys0/postfader-fl-studio-mcp",
-  "title": "Postfader",
+  "title": "PostFader",
   "description": "Verified FL Studio control, mix diagnosis, composition, and arrangement.",
   "version": "0.20.0",
   "repository": {
@@ -26,7 +26,7 @@
         },
         {
           "name": "FL_BRIDGE_MIDI_PORT",
-          "description": "Exact virtual MIDI endpoint name shared with FL Studio. Postfader does not install or configure a virtual MIDI provider.",
+          "description": "Exact virtual MIDI endpoint name shared with FL Studio. PostFader does not install or configure a virtual MIDI provider.",
           "isRequired": true
         },
         {

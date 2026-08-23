@@ -37,8 +37,8 @@ three examples are not extrapolated to the whole stock class.
 
 The next stock pass should use a new blank project, load each available mixer
 effect into a slot, and generate a report for each one. The current shareable
-reporter validates mixer effects only. Generator parameters are reachable at
-runtime in 0.12 through an explicit `channel_generator` target, but they have
+reporter validates mixer effects only. Generator parameters are reachable in
+v0.20 through an explicit `channel_generator` target, but they have
 no publishable matrix evidence yet and must not inherit mixer-effect evidence.
 
 ## Third-party mixer effects

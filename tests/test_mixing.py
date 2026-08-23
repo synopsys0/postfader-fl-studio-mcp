@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import threading
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
 from fl_studio_mcp.bridge_install import expected_bridge_deployment
+from fl_studio_mcp.contracts import VerifiedMixerVolumeWrite
 from fl_studio_mcp.mixing import (
+    MixPlan,
+    MixPlanRegistry,
     PeakFrame,
     PeakFrameTrack,
     PeakTrackAggregate,
@@ -26,6 +30,7 @@ from fl_studio_mcp.track_b_contracts import (
     TargetedLoadedPluginInventory,
     TargetedPluginSummary,
 )
+from fl_studio_mcp.workflows import BatchItemResult, VerifiedBatchResult
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,6 +86,155 @@ class FakePeakReader:
 
 
 class MixingWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def _draft_plan() -> MixPlan:
+        return MixPlan(
+            plan_id="c" * 32,
+            created_at=datetime.now(timezone.utc),
+            title="Concurrent apply test",
+            source="agent",
+            session_fingerprint=SESSION,
+            operations=[
+                {
+                    "operation_id": "volume",
+                    "operation": "mixer_volume",
+                    "track_index": 1,
+                    "volume_normalized": 0.5,
+                }
+            ],
+        )
+
+    @staticmethod
+    def _verified_batch() -> VerifiedBatchResult:
+        now = datetime.now(timezone.utc)
+        receipt = VerifiedMixerVolumeWrite(
+            applied_at=now,
+            track_index=1,
+            requested_volume_normalized=0.5,
+            verified=True,
+            verification_summary="verified in test",
+            session_fingerprint=SESSION,
+        )
+        item = BatchItemResult(
+            operation_index=0,
+            operation_id="volume",
+            operation="mixer_volume",
+            status="verified",
+            outcome_known=True,
+            verified=True,
+            receipt=receipt,
+        )
+        return VerifiedBatchResult(
+            applied_at=now,
+            requested_count=1,
+            attempted_count=1,
+            skipped_count=0,
+            completed=True,
+            verified=True,
+            stop_on_unverified=True,
+            session_fingerprint=SESSION,
+            results=[item],
+        )
+
+    def test_mix_plan_claims_before_concurrent_execution(self) -> None:
+        registry = MixPlanRegistry()
+        plan = self._draft_plan()
+        with registry._lock:
+            registry._plans[plan.plan_id] = plan
+
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def execute(**_kwargs):
+            calls.append(True)
+            entered.set()
+            release.wait(timeout=2)
+            return self._verified_batch()
+
+        executor = mock.Mock()
+        executor.apply.side_effect = execute
+        outcomes = {}
+
+        def apply(label):
+            try:
+                outcomes[label] = registry.apply(plan.plan_id)
+            except Exception as exc:  # noqa: BLE001
+                outcomes[label] = exc
+
+        with mock.patch(
+            "fl_studio_mcp.mixing.VerifiedBatchExecutor",
+            return_value=executor,
+        ):
+            first = threading.Thread(target=apply, args=("first",))
+            first.start()
+            self.assertTrue(entered.wait(timeout=2))
+
+            second = threading.Thread(target=apply, args=("second",))
+            second.start()
+            second.join(timeout=2)
+            release.set()
+            first.join(timeout=2)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(len(calls), 1)
+        self.assertIsInstance(outcomes["second"], ValueError)
+        self.assertEqual(outcomes["first"].plan.status, "applied")
+        self.assertEqual(registry.get(plan.plan_id).status, "applied")
+
+    def test_mix_plan_failed_attempt_is_terminal(self) -> None:
+        registry = MixPlanRegistry()
+        plan = self._draft_plan()
+        with registry._lock:
+            registry._plans[plan.plan_id] = plan
+
+        executor = mock.Mock()
+        executor.apply.side_effect = RuntimeError("ambiguous test failure")
+        with mock.patch(
+            "fl_studio_mcp.mixing.VerifiedBatchExecutor",
+            return_value=executor,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "ambiguous test failure"):
+                registry.apply(plan.plan_id)
+            failed = registry.get(plan.plan_id)
+            self.assertEqual(failed.status, "failed")
+            self.assertIn("outcome may be unknown", failed.warnings[-1])
+            with self.assertRaisesRegex(ValueError, "already been attempted"):
+                registry.apply(plan.plan_id)
+
+        executor.apply.assert_called_once()
+
+    def test_mix_plan_creation_never_evicts_an_in_flight_plan(self) -> None:
+        registry = MixPlanRegistry()
+        base = self._draft_plan()
+        started = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with registry._lock:
+            for index in range(128):
+                plan_id = f"{index:032x}"
+                registry._plans[plan_id] = base.model_copy(
+                    update={
+                        "plan_id": plan_id,
+                        "created_at": started + timedelta(seconds=index),
+                    }
+                )
+            registry._attempted.add("0" * 32)
+
+        with mock.patch(
+            "fl_studio_mcp.mixing.get_client",
+            return_value=CompatibleClient(),
+        ):
+            created = registry.create(
+                title="Plan after capacity",
+                operations=base.operations,
+            )
+
+        with registry._lock:
+            self.assertEqual(len(registry._plans), 128)
+            self.assertIn("0" * 32, registry._plans)
+            self.assertNotIn(f"{1:032x}", registry._plans)
+            self.assertIn(created.plan_id, registry._plans)
+
     def test_mix_doctor_uses_decoded_bounce_measurements(self) -> None:
         report = run_mix_doctor(
             str(AUDIO / "candidate_delayed_minus6db.wav"),

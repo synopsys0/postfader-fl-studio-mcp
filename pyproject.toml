@@ -1,7 +1,7 @@
 [project]
 name = "postfader-fl-studio-mcp"
 version = "0.20.0"
-description = "All-around local FL Studio MCP for verified control, mixing, and composition"
+description = "Verified AI control for FL Studio mixing, composition, arrangement, and audio analysis"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.5,<5",
-    "mcp[cli]>=2.0.0,<3",
+    "mcp>=2.0.0,<3",
     "jsonschema>=4.20,<5",
     "numpy>=1.24,<3",
     "scipy>=1.10,<2",

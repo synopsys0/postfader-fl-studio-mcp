@@ -12,6 +12,7 @@ clbr-*
 build/
 dist/
 mcpb-dist/
+release-bundles/
 artifacts/
 bounces/
 renders/
