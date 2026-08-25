@@ -129,11 +129,32 @@ class PackageHygieneTests(unittest.TestCase):
                 failures = scanner.check_file(Path("docs/new-guide.md"))
         self.assertIn("unreviewed public documentation path", failures)
 
+    def test_reviewed_maintainability_plan_is_the_only_plan_name_exception(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            reviewed = root / "docs" / "maintainability-plan.md"
+            reviewed.parent.mkdir(parents=True)
+            reviewed.write_text("reviewed public guidance", encoding="utf-8")
+            with mock.patch.object(scanner, "ROOT", root):
+                self.assertEqual(
+                    scanner.check_file(Path("docs/maintainability-plan.md")), []
+                )
+
+                lookalike = root / "docs" / "archive" / "maintainability-plan.md"
+                lookalike.parent.mkdir(parents=True)
+                lookalike.write_text("internal working material", encoding="utf-8")
+                failures = scanner.check_file(
+                    Path("docs/archive/maintainability-plan.md")
+                )
+            self.assertIn("internal working-document name: plan", failures)
+            self.assertIn("unreviewed public documentation path", failures)
+
     def test_current_public_documentation_is_exactly_allowlisted(self) -> None:
         scanner = self.load_public_tree_scanner()
         current = {
             path.relative_to(ROOT).as_posix()
-            for path in (ROOT / "docs").iterdir()
+            for path in (ROOT / "docs").rglob("*")
             if path.is_file()
         }
         self.assertEqual(current, scanner.PUBLIC_DOCUMENT_PATHS)
@@ -216,6 +237,36 @@ class PackageHygieneTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["FL_BRIDGE_SANDBOXED"], "1")
         self.assertEqual(kwargs["timeout"], runner.SAFE_TEST_TIMEOUT_SECONDS)
         self.assertGreater(kwargs["timeout"], 0)
+
+    def test_safe_runner_can_instrument_children_for_coverage(self) -> None:
+        runner = load_safe_runner()
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Ran 1 test\n", stderr=""
+        )
+        path = ROOT / "tests" / "test_bridge_stamp.py"
+        with tempfile.TemporaryDirectory(prefix="postfader-coverage-") as raw:
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {runner.COVERAGE_DIRECTORY_ENV: raw},
+                    clear=False,
+                ),
+                mock.patch.object(
+                    runner.subprocess, "run", return_value=completed
+                ) as run,
+            ):
+                self.assertIs(runner.run_safe_test(path), completed)
+
+            command = run.call_args.args[0]
+            self.assertEqual(
+                command[:5],
+                [sys.executable, "-m", "coverage", "run", "--parallel-mode"],
+            )
+            self.assertEqual(command[5], os.fspath(path))
+            self.assertEqual(
+                run.call_args.kwargs["env"]["COVERAGE_FILE"],
+                os.fspath(Path(raw) / ".coverage"),
+            )
 
     def test_safe_runner_environment_blocks_native_midi_probe_subprocess(self) -> None:
         runner = load_safe_runner()
@@ -426,8 +477,11 @@ with mock.patch.object(
         self.assertIn("scripts/clean_wheel_smoke.py", build)
         self.assertIn("scripts/build_release_bundles.py", build)
         self.assertIn("release-platform-bundles", workflow)
+        self.assertIn("release-software-bom", workflow)
         self.assertIn("SHA256SUMS.txt", workflow)
-        self.assertIn("needs: [build, platform-verify]", publish)
+        self.assertIn("needs: [build, platform-verify, attest-release]", publish)
+        self.assertIn("attest-release:", workflow)
+        self.assertIn("actions/attest@", workflow)
         self.assertIn("skip-existing: true", publish)
         for line in workflow.splitlines():
             self.assertNotRegex(line, r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
