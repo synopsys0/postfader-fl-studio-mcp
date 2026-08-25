@@ -15,7 +15,10 @@ concurrency:
 jobs:
   quality:
     name: Static quality and hermetic coverage
-    runs-on: ubuntu-latest
+    # The guided-setup safe tests intentionally support only qualified desktop
+    # hosts. Run coverage on macOS so the complete allowlisted suite executes
+    # without pretending Linux is a supported setup target.
+    runs-on: macos-latest
     timeout-minutes: 35
     permissions:
       contents: read

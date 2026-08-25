@@ -17,7 +17,7 @@ Run the static checks:
 
 ```bash
 python -m ruff check fl_studio_mcp scripts
-python -m pyright --project pyrightconfig.json --pythonpath python
+python -m pyright --project pyrightconfig.json
 ```
 
 Run the hermetic suite with coverage. The optional artifact directory receives
@@ -90,7 +90,10 @@ percentage cannot hide an untested safety boundary:
 | Fake-FL bridge behavior | 45% |
 
 The CI job derives and prints the current totals from the complete allowlist;
-local probes made while the public-documentation allowlist was in flight are
+it runs on macOS because guided setup deliberately rejects Linux as an
+unsupported desktop target. This host choice does not start or emulate FL
+Studio and does not turn hermetic coverage into live qualification. Local
+probes made while the public-documentation allowlist was in flight are
 not release or qualification results. Coverage is evidence about fake
 transports, synthetic audio, setup logic, contracts, and fake-FL behavior only;
 it is not live FL Studio qualification. Live writes, real FL callbacks,
