@@ -280,7 +280,7 @@ with mock.patch.object(
             with self.subTest(name=name):
                 self.assertFalse((package / name).is_file())
 
-    def test_entry_points_are_exactly_the_supported_four(self) -> None:
+    def test_entry_points_are_exactly_the_supported_setup_and_runtime_commands(self) -> None:
         # Pinned as a set, not merely checked for presence: a stray console
         # script is a public surface, and this file is where that gets caught.
         project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
@@ -288,9 +288,11 @@ with mock.patch.object(
             project["project"]["scripts"],
             {
                 "fl-studio-mcp": "fl_studio_mcp.mcp_server:main",
+                "postfader": "fl_studio_mcp.cli:main",
                 "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
                 "postfader-doctor": "fl_studio_mcp.diagnostics:main",
                 "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+                "postfader-setup": "fl_studio_mcp.setup_wizard:main",
             },
         )
 
@@ -340,7 +342,7 @@ with mock.patch.object(
         project = metadata["project"]
         self.assertEqual(project["name"], "postfader-fl-studio-mcp")
         self.assertEqual(project["readme"], "README.md")
-        self.assertEqual(project["requires-python"], ">=3.10")
+        self.assertEqual(project["requires-python"], ">=3.10,<3.15")
         self.assertIn("Programming Language :: Python :: 3.14", project["classifiers"])
         self.assertIn(
             "Operating System :: Microsoft :: Windows :: Windows 11",

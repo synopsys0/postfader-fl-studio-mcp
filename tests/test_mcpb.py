@@ -69,7 +69,7 @@ class MCPBPackagingTests(unittest.TestCase):
     def test_manifest_explains_the_required_host_installation(self) -> None:
         guidance = self.manifest["long_description"].lower()
         self.assertIn("matching python package", guidance)
-        self.assertIn("postfader-install-bridge", guidance)
+        self.assertIn("postfader setup", guidance)
         self.assertIn(".mcpb does not deploy", guidance)
         self.assertIn("virtual midi endpoint", guidance)
 
@@ -77,6 +77,10 @@ class MCPBPackagingTests(unittest.TestCase):
         self.assertEqual(
             self.manifest["compatibility"]["platforms"],
             ["darwin", "win32"],
+        )
+        self.assertEqual(
+            self.manifest["compatibility"]["runtimes"]["python"],
+            ">=3.10,<3.15",
         )
 
     def test_manifest_version_matches_python_package(self) -> None:

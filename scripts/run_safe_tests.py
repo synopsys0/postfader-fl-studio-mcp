@@ -38,6 +38,7 @@ SAFE_TESTS = (
     "tests/test_bridge_stamp.py",
     "tests/test_bridge_install.py",
     "tests/test_windows_bootstrap.py",
+    "tests/test_setup_wizard.py",
     "tests/test_diagnostics.py",
     "tests/test_live_acceptance.py",
     "tests/test_bridge.py",

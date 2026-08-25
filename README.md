@@ -203,7 +203,9 @@ folders, then quit FL Studio.
 
 For the easiest install, download the latest release and choose
 `PostFader-v0.20.0-macOS.zip` or `PostFader-v0.20.0-Windows.zip`. Extract the
-whole ZIP, open its **START HERE** guide, and run the top-level installer.
+whole ZIP to a stable, writable folder and keep it there—the installed
+environment and generated client configuration point into that folder. Open
+its **START HERE** guide, then run the top-level installer.
 
 To install from source instead:
 
@@ -225,17 +227,46 @@ Set-Location postfader-fl-studio-mcp
 ~~~
 
 The installers create a local <code>.venv</code>, install PostFader, and copy
-<code>Universal Bridge</code> into FL Studio's controller-script folder. They
-do not change your AI client's configuration.
+<code>Universal Bridge</code> into FL Studio's controller-script folder. The
+release installers then start the guided first-time setup. An incomplete setup
+does not undo the installation; complete the named action and rerun it.
 
 You can also install the published Python package:
 
 ~~~text
 pip install postfader-fl-studio-mcp
-postfader-install-bridge
+postfader setup
 ~~~
 
-### 3. Connect FL Studio
+### 3. Run guided setup
+
+Source installations can start the same guided flow directly:
+
+**macOS**
+
+~~~bash
+./.venv/bin/postfader setup
+~~~
+
+**Windows PowerShell**
+
+~~~powershell
+.\.venv\Scripts\postfader.exe setup
+~~~
+
+Setup detects the standard FL Studio user-data folder, lists only unique
+endpoint names present for both MIDI input and output, previews bridge
+deployment, generates your selected Codex or `mcpServers` configuration, and
+runs the connection doctor. It is safe to rerun.
+
+PostFader never installs a MIDI driver, clicks through FL Studio, enables
+write mode, changes a project, saves a project, or overwrites a different
+client-configuration file during setup. An identical setup-generated file is
+accepted as already current so an incomplete setup can resume. Use
+`postfader setup --help` for
+non-interactive, dry-run, JSON, and create-only output options.
+
+### 4. Complete the FL Studio action
 
 Open **Options → MIDI settings** in FL Studio:
 
@@ -244,24 +275,18 @@ Open **Options → MIDI settings** in FL Studio:
 3. Give the input an FL Studio Port number.
 4. Enable the same endpoint under **Output** and give it the same Port number.
 5. Open **View → Script output** and reload the script.
+6. Return to the waiting setup prompt and press Enter.
 
 The script should report <code>ready: MIDI SysEx</code>.
 
-### 4. Check the connection
+### 5. Connect your AI client
 
-**macOS**
+Guided setup prints the selected Codex command/TOML or standard `mcpServers`
+JSON. Add that exact configuration to your client, restart or reconnect it,
+and begin with a read-only inspection. A healthy doctor result reports:
 
-~~~bash
-./.venv/bin/postfader-doctor --midi-port "IAC Driver Bus 1" --json
-~~~
-
-**Windows PowerShell**
-
-~~~powershell
-.\.venv\Scripts\postfader-doctor.exe --midi-port "Exact Virtual MIDI Endpoint Name" --json
-~~~
-
-A healthy connection reports:
+On Windows, the `codex-command` format is PowerShell syntax; run it in
+PowerShell, not in the Command Prompt installer window.
 
 - <code>overall: "pass"</code>;
 - a live FL Studio connection;
@@ -270,31 +295,13 @@ A healthy connection reports:
 - <code>verified_writes_enabled: false</code>; and
 - <code>runtime_write_mode_control: true</code>.
 
-If the check fails, follow its first corrective action and use the
+If setup stops or the doctor fails, follow its first corrective action and use the
 [setup and troubleshooting guide](docs/setup.md) before connecting your AI
 client.
 
-### 5. Add PostFader to your AI client
-
-Use the included configuration generator so interpreter paths, repository
-paths, and endpoint names are explicit:
-
-~~~bash
-./.venv/bin/python scripts/generate_mcp_config.py --help
-~~~
-
-~~~powershell
-.\.venv\Scripts\python.exe scripts\generate_mcp_config.py --help
-~~~
-
-It can produce a Codex command, Codex TOML, or standard `mcpServers` JSON used
-by Claude-compatible clients, Cursor, and many other MCP clients. See the
-[client configuration guide](docs/setup.md#4-generate-client-configuration)
-for complete macOS and Windows examples.
-
 Claude Desktop users can open the release <code>.mcpb</code>, but the extension
 does not install the FL Studio controller script or create the virtual MIDI
-endpoint. Complete steps 1–4 first.
+endpoint. Complete guided setup first.
 
 ## Safe by default
 

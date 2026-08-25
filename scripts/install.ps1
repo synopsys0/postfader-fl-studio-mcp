@@ -3,6 +3,7 @@ param(
     [string]$UserDataDir,
     [string]$Python,
     [switch]$DryRun,
+    [switch]$SkipBridgeDeployment,
     [switch]$AllowBridgeReplacementWhileFLStudioRunning,
     [int[]]$TestRunningFLStudioProcessId
 )
@@ -13,12 +14,27 @@ Set-StrictMode -Version 2.0
 $RepositoryRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 $VenvRoot = Join-Path $RepositoryRoot ".venv"
 $VenvPython = Join-Path $VenvRoot "Scripts\python.exe"
+$SupportedPythonCode = "import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)"
 
 if ($UserDataDir -and -not [IO.Path]::IsPathRooted($UserDataDir)) {
     throw "-UserDataDir must be an absolute FL Studio user-data path."
 }
 if ($TestRunningFLStudioProcessId -and -not $DryRun) {
     throw "-TestRunningFLStudioProcessId is test-only and requires -DryRun."
+}
+
+function Test-PythonCandidate {
+    param(
+        [string]$Command,
+        [string[]]$Prefix
+    )
+    try {
+        & $Command @Prefix -c $SupportedPythonCode *> $null
+        return ($LASTEXITCODE -eq 0)
+    }
+    catch {
+        return $false
+    }
 }
 
 function Resolve-BootstrapPython {
@@ -36,13 +52,17 @@ function Resolve-BootstrapPython {
     }
     $Launcher = Get-Command py.exe -ErrorAction SilentlyContinue
     if ($Launcher) {
-        return @($Launcher.Source, "-3")
+        foreach ($Version in @("-3.14", "-3.13", "-3.12", "-3.11", "-3.10")) {
+            if (Test-PythonCandidate $Launcher.Source @($Version)) {
+                return @($Launcher.Source, $Version)
+            }
+        }
     }
     $NativePython = Get-Command python.exe -ErrorAction SilentlyContinue
-    if ($NativePython) {
+    if ($NativePython -and (Test-PythonCandidate $NativePython.Source @())) {
         return @($NativePython.Source)
     }
-    throw "No native Windows Python was found. Install Python 3.10+ or pass -Python with an absolute path."
+    throw "No compatible native Windows Python was found. Install Python 3.10 through 3.14 or pass -Python with an absolute path."
 }
 
 function Invoke-CheckedPython {
@@ -65,10 +85,16 @@ function ConvertTo-PowerShellSingleQuotedLiteral {
 $Bootstrap = @(Resolve-BootstrapPython)
 $BootstrapCommand = $Bootstrap[0]
 $BootstrapPrefix = @($Bootstrap | Select-Object -Skip 1)
-$GenerateConfigScript = Join-Path $RepositoryRoot "scripts\generate_mcp_config.py"
-$GenerateConfigCommand = "& {0} {1} --help" -f @(
-    (ConvertTo-PowerShellSingleQuotedLiteral $VenvPython),
-    (ConvertTo-PowerShellSingleQuotedLiteral $GenerateConfigScript)
+& $BootstrapCommand @BootstrapPrefix -c $SupportedPythonCode
+if ($LASTEXITCODE -ne 0) {
+    if ([IO.Path]::GetFullPath($BootstrapCommand) -eq [IO.Path]::GetFullPath($VenvPython)) {
+        throw "The existing $VenvRoot uses an unsupported Python. Remove that .venv, install Python 3.10 through 3.14, and rerun this installer."
+    }
+    throw "Python 3.10 through 3.14 is required."
+}
+$PostFaderCommand = Join-Path $VenvRoot "Scripts\postfader.exe"
+$GuidedSetupCommand = "& {0} setup" -f (
+    ConvertTo-PowerShellSingleQuotedLiteral $PostFaderCommand
 )
 $SelectionCode = @'
 import sys
@@ -79,17 +105,23 @@ print(fl_studio_user_data_dir(value))
 
 Push-Location $RepositoryRoot
 try {
-    $SelectionArguments = @("-c", $SelectionCode)
-    if ($UserDataDir) {
-        $SelectionArguments += $UserDataDir
+    $ResolvedUserData = $null
+    if (-not $SkipBridgeDeployment) {
+        $SelectionArguments = @("-c", $SelectionCode)
+        if ($UserDataDir) {
+            $SelectionArguments += $UserDataDir
+        }
+        $ResolvedUserData = (& $BootstrapCommand @BootstrapPrefix @SelectionArguments)
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not resolve the FL Studio user-data folder."
+        }
+        $ResolvedUserData = [string]$ResolvedUserData
     }
-    $ResolvedUserData = (& $BootstrapCommand @BootstrapPrefix @SelectionArguments)
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not resolve the FL Studio user-data folder."
-    }
-    $ResolvedUserData = [string]$ResolvedUserData
 
-    if ($DryRun) {
+    if ($SkipBridgeDeployment) {
+        $RunningFLStudioProcessIds = @()
+    }
+    elseif ($DryRun) {
         if ($null -eq $TestRunningFLStudioProcessId) {
             $RunningFLStudioProcessIds = @()
         }
@@ -105,6 +137,7 @@ try {
         )
     }
     $ReplacementRefused = (
+        -not $SkipBridgeDeployment -and
         $RunningFLStudioProcessIds.Count -gt 0 -and
         -not $AllowBridgeReplacementWhileFLStudioRunning
     )
@@ -118,13 +151,13 @@ try {
             user_data_dir = $ResolvedUserData
             would_create_venv = -not (Test-Path -LiteralPath $VenvPython -PathType Leaf)
             would_install_project = $true
-            would_deploy_packaged_bridge = $true
+            would_deploy_packaged_bridge = -not [bool]$SkipBridgeDeployment
             detected_fl_studio_process_ids = $RunningFLStudioProcessIds
             would_refuse_bridge_replacement = $ReplacementRefused
             running_fl_studio_override = [bool]$AllowBridgeReplacementWhileFLStudioRunning
             would_write_client_configuration = $false
             persistent_environment_changes = $false
-            configuration_help_command = $GenerateConfigCommand
+            guided_setup_command = $GuidedSetupCommand
         } | ConvertTo-Json -Depth 3
         if ($ReplacementRefused) {
             exit 2
@@ -155,17 +188,22 @@ try {
     Invoke-CheckedPython $VenvPython @() @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-CheckedPython $VenvPython @() @("-m", "pip", "install", "--editable", $RepositoryRoot)
 
-    Write-Host "Deploying the packaged, stamped bridge"
-    $DeployArguments = @("-m", "fl_studio_mcp.bridge_install")
-    if ($UserDataDir) {
-        $DeployArguments += @("--user-data-dir", $ResolvedUserData)
+    if ($SkipBridgeDeployment) {
+        Write-Host "Bridge deployment deferred to guided setup."
     }
-    Invoke-CheckedPython $VenvPython @() $DeployArguments
+    else {
+        Write-Host "Deploying the packaged, stamped bridge"
+        $DeployArguments = @("-m", "fl_studio_mcp.bridge_install")
+        if ($UserDataDir) {
+            $DeployArguments += @("--user-data-dir", $ResolvedUserData)
+        }
+        Invoke-CheckedPython $VenvPython @() $DeployArguments
+    }
 
     Write-Host ""
     Write-Host "Installation complete. No MCP client configuration was changed."
-    Write-Host "Generate a Codex or Claude example explicitly with:"
-    Write-Host "  $GenerateConfigCommand"
+    Write-Host "Continue with the guided first-time setup:"
+    Write-Host "  $GuidedSetupCommand"
     Write-Host "Postfader never installs or configures a MIDI driver."
 }
 finally {

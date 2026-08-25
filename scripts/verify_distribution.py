@@ -30,9 +30,11 @@ RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
 } | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"}
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
+    "postfader = fl_studio_mcp.cli:main",
     "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
     "postfader-doctor = fl_studio_mcp.diagnostics:main",
     "postfader-plugin-report = fl_studio_mcp.plugin_report:main",
+    "postfader-setup = fl_studio_mcp.setup_wizard:main",
 }
 WHEEL_FORBIDDEN_PARTS = {
     ".private",
