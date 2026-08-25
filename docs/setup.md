@@ -63,6 +63,17 @@ From an installed Python distribution, run the same complete setup flow:
 postfader setup
 ```
 
+For Codex, the release also provides dedicated
+`PostFader-v0.20.0-Codex-Windows.zip` and
+`PostFader-v0.20.0-Codex-macOS.zip` packages. Their launchers run the same base
+installation, preselect `codex-toml`, and request a separate confirmation
+before registering the resolved server through the Codex CLI. The equivalent
+command for a source or Python installation is:
+
+```text
+postfader setup --client codex-toml --register-codex
+```
+
 It detects the platform and standard user-data location, requires an exact
 bidirectional endpoint, previews and confirmation-gates bridge deployment,
 prints or create-only writes the selected client configuration, pauses for the
@@ -74,6 +85,20 @@ different file.
 
 `postfader-install-bridge` remains available as the lower-level bridge-only
 command. FL Studio cannot list `Universal Bridge` until deployment succeeds.
+
+### Codex-specific installer and upgrades
+
+The Codex installer checks the existing `fl-studio` MCP registration before it
+changes anything. An identical entry is already current. A different entry is
+preserved and reported as a conflict; remove or rename it yourself only after
+reviewing which server it launches. Setup never uses bridge approval as
+permission to replace Codex configuration.
+
+If `codex` is unavailable on `PATH`, PostFader and Universal Bridge remain
+installed and the exact `codex-toml` block is printed for manual setup. The
+Codex package does not bundle Codex, Python, a virtual MIDI driver, or FL
+Studio. Restart or reconnect Codex after registration, then begin with a
+read-only inspection.
 
 ### Claude Desktop extension and upgrades
 
@@ -179,6 +204,18 @@ Available formats:
 - `codex-command` emits a PowerShell-safe `codex mcp add` command;
 - `claude-json` emits the `mcpServers` JSON shape.
 
+These formats all configure the same local `stdio` server. The dedicated Codex
+Windows/macOS ZIPs add guided `codex mcp add` registration; the `.mcpb` is a
+Claude Desktop-only convenience. v0.20 does not ship separate Cursor, T3 Code,
+OpenCode, or Grok packages. Cursor, OpenCode, Grok Build, and other hosts must
+place the generated executable, arguments, and environment values into their
+own schemas. Include `cwd` only when that host documents it; Cursor and Grok
+Build do not need it because the interpreter path is absolute. T3 Code users
+configure whichever MCP-capable provider T3 launches. Grok on the web and Grok
+Bot require a remote HTTP MCP server and cannot use PostFader's current local
+packages directly. See the README's
+[client/package matrix](../README.md#works-with-your-ai-client).
+
 Automatic mode emits only `FL_STUDIO_USER_DATA_DIR`. It is an offline,
 fail-closed configuration with no native MIDI transport, not the ordinary live
 FL setup. Live mode requires:
@@ -195,9 +232,11 @@ therefore includes both MIDI environment variables; replace its endpoint and
 absolute-path placeholders before use.
 
 Codex CLI uses the supported `codex mcp add NAME --env KEY=VALUE -- COMMAND`
-shape; inspect registered servers with `codex mcp list`. Codex CLI and the
-Codex desktop/IDE surfaces share the user MCP configuration. Client-specific
-approval and trust prompts still apply.
+shape; inspect registered servers with `codex mcp list`. The dedicated Codex
+installer constructs this call as an argument array, never shell-evaluates
+paths or endpoint names, verifies the saved entry afterward, and refuses a
+different existing registration. Client-specific approval and trust prompts
+still apply.
 
 Only one MCP process may own a selected endpoint pair. Disable duplicate
 project/user registrations before testing.

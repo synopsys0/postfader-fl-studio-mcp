@@ -140,37 +140,66 @@ jobs:
       - name: Install and verify wheel in a clean temporary environment
         run: python scripts/clean_wheel_smoke.py --dist-dir dist
 
-      - name: Build the platform setup bundles
+      - name: Build the generic and Codex platform setup bundles
         run: python scripts/build_release_bundles.py --output-dir release-bundles
 
-      - name: Smoke-test the extracted Windows bundle launcher
+      - name: Smoke-test the extracted Windows bundle launchers
         if: runner.os == 'Windows'
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $archive = Get-ChildItem 'release-bundles\*-Windows.zip' | Select-Object -First 1
-          if (-not $archive) { throw 'Windows setup bundle was not built' }
-          $target = Join-Path $env:RUNNER_TEMP 'postfader-windows-bundle'
-          Expand-Archive -LiteralPath $archive.FullName -DestinationPath $target
-          $launcher = Get-ChildItem $target -Recurse -Filter 'Install PostFader.cmd' |
-            Select-Object -First 1
-          if (-not $launcher) { throw 'Windows setup launcher was not found' }
+          $version = (& python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+          $bundles = @(
+            @{
+              Label = 'generic'
+              Archive = "release-bundles\PostFader-v$version-Windows.zip"
+              Launcher = 'Install PostFader.cmd'
+            },
+            @{
+              Label = 'Codex'
+              Archive = "release-bundles\PostFader-v$version-Codex-Windows.zip"
+              Launcher = 'Install PostFader for Codex.cmd'
+            }
+          )
           $env:POSTFADER_BUNDLE_DRY_RUN = '1'
-          & cmd.exe /d /c ('"' + $launcher.FullName + '"')
-          if ($LASTEXITCODE -ne 0) { throw 'Windows bundle launcher dry run failed' }
+          foreach ($bundle in $bundles) {
+            if (-not (Test-Path -LiteralPath $bundle.Archive -PathType Leaf)) {
+              throw "$($bundle.Label) Windows setup bundle was not built: $($bundle.Archive)"
+            }
+            $target = Join-Path $env:RUNNER_TEMP "postfader-windows-$($bundle.Label.ToLower())-bundle"
+            Expand-Archive -LiteralPath $bundle.Archive -DestinationPath $target
+            $launcher = Get-ChildItem $target -Recurse -File -Filter $bundle.Launcher |
+              Select-Object -First 1
+            if (-not $launcher) {
+              throw "$($bundle.Label) Windows setup launcher was not found"
+            }
+            & cmd.exe /d /c ('"' + $launcher.FullName + '"')
+            if ($LASTEXITCODE -ne 0) {
+              throw "$($bundle.Label) Windows bundle launcher dry run failed"
+            }
+          }
 
-      - name: Smoke-test the extracted macOS bundle launcher
+      - name: Smoke-test the extracted macOS bundle launchers
         if: runner.os == 'macOS'
         shell: bash
         run: |
           set -euo pipefail
-          archive="$(find release-bundles -name '*-macOS.zip' -print -quit)"
-          test -n "$archive"
-          target="$RUNNER_TEMP/postfader-macos-bundle"
-          ditto -x -k "$archive" "$target"
-          launcher="$(find "$target" -name 'Install PostFader.command' -print -quit)"
-          test -n "$launcher"
-          POSTFADER_BUNDLE_DRY_RUN=1 "$launcher"
+          version="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
+          for kind in generic codex; do
+            if [ "$kind" = generic ]; then
+              archive="release-bundles/PostFader-v${version}-macOS.zip"
+              launcher_name='Install PostFader.command'
+            else
+              archive="release-bundles/PostFader-v${version}-Codex-macOS.zip"
+              launcher_name='Install PostFader for Codex.command'
+            fi
+            test -f "$archive"
+            target="$RUNNER_TEMP/postfader-macos-${kind}-bundle"
+            ditto -x -k "$archive" "$target"
+            launcher="$(find "$target" -type f -name "$launcher_name" -print -quit)"
+            test -n "$launcher"
+            POSTFADER_BUNDLE_DRY_RUN=1 "$launcher"
+          done
 
       - name: Upload Python distributions
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -198,7 +227,7 @@ jobs:
           node-version: "24"
       - name: Validate and build Claude Desktop extension
         run: python scripts/build_mcpb.py --output-dir mcpb-dist
-      - name: Build deterministic Windows and macOS setup bundles
+      - name: Build deterministic generic and Codex setup bundles
         run: python scripts/build_release_bundles.py --output-dir release-bundles
       - name: Upload Claude Desktop extension
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
@@ -206,7 +235,7 @@ jobs:
           name: desktop-extension
           path: mcpb-dist/*.mcpb
           if-no-files-found: error
-      - name: Upload platform setup bundles
+      - name: Upload generic and Codex platform setup bundles
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: platform-setup-bundles
