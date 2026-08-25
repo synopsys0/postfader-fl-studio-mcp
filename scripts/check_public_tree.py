@@ -77,6 +77,7 @@ PUBLIC_DOCUMENT_PATHS = {
     "docs/supply-chain.md",
     "docs/tool-contracts.md",
     "docs/tool-surface-evaluation.md",
+    "docs/website-copy.md",
 }
 # This reviewed public document intentionally contains "plan" in its
 # filename. Keep this exception exact; similarly named working documents must
