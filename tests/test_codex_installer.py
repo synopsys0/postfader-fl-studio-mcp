@@ -332,11 +332,18 @@ class CodexInstallerTests(unittest.TestCase):
             for message, snapshot in prompt_snapshots
             if message.startswith("Register this resolved")
         )
-        self.assertIn("Codex registration plan:", registration_prompt)
-        self.assertIn('"server_name": "fl-studio"', registration_prompt)
-        self.assertIn('"args": [', registration_prompt)
-        self.assertNotIn('"cwd"', registration_prompt)
-        self.assertIn(os.fspath(user_data), registration_prompt)
+        plan = json.loads(
+            registration_prompt.split("Codex registration plan:\n", 1)[1]
+        )
+        self.assertEqual(plan["server_name"], "fl-studio")
+        self.assertEqual(
+            plan["transport"]["args"], ["-m", "fl_studio_mcp.mcp_server"]
+        )
+        self.assertNotIn("cwd", plan["transport"])
+        self.assertEqual(
+            plan["transport"]["env"]["FL_STUDIO_USER_DATA_DIR"],
+            os.fspath(user_data),
+        )
 
 
 if __name__ == "__main__":
