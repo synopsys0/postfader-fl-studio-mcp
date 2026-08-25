@@ -82,7 +82,7 @@ def midi_setup_epilog(platform_name: str | None = None) -> str:
             else "Set FL_BRIDGE_MIDI_PORT to its exact endpoint name first."
         )
         return (
-            "After this, configure a virtual MIDI endpoint yourself; Postfader "
+            "After this, configure a virtual MIDI endpoint yourself; PostFader "
             "does not install or configure a MIDI driver. %s In FL Studio: "
             "Options > MIDI settings > Input, select that endpoint, enable it, "
             "set Controller type to 'Universal Bridge', and note its Port "
@@ -154,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="postfader-install-bridge",
         description=(
-            "Install the Postfader MIDI bridge into FL Studio so the MCP "
+            "Install the PostFader MIDI bridge into FL Studio so the MCP "
             "server can reach a running project."
         ),
         epilog=midi_setup_epilog(),

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform, evidence-first setup doctor for Postfader."""
+"""Cross-platform, evidence-first setup doctor for PostFader."""
 
 from __future__ import annotations
 
@@ -161,7 +161,7 @@ def _endpoint_action(family: str) -> str:
             "bus, then give FL Studio input and output the same Port number."
         )
     return (
-        "Configure a virtual MIDI endpoint outside Postfader, set "
+        "Configure a virtual MIDI endpoint outside PostFader, set "
         "FL_BRIDGE_MIDI_PORT to its unique exact name, and retry."
     )
 
@@ -301,7 +301,7 @@ def collect_evidence(
         _failure(
             result,
             "missing_bridge",
-            "The Postfader bridge is not installed at %s" % script,
+            "The PostFader bridge is not installed at %s" % script,
             "Run postfader-install-bridge with the same absolute user-data root.",
         )
     elif stamped_bytes is not None:
@@ -338,7 +338,7 @@ def collect_evidence(
             result,
             "missing_midi_configuration",
             "No virtual MIDI endpoint is configured for this host.",
-            "Set FL_BRIDGE_MIDI_PORT to the unique exact endpoint name; Postfader does not install MIDI drivers.",
+            "Set FL_BRIDGE_MIDI_PORT to the unique exact endpoint name; PostFader does not install MIDI drivers.",
         )
         result["overall"] = "fail"
         return result
@@ -440,7 +440,7 @@ def collect_evidence(
         _failure(
             result,
             "live_bridge_unavailable",
-            "No live Postfader bridge handshake was available: %s" % exc,
+            "No live PostFader bridge handshake was available: %s" % exc,
             "Start FL Studio with the bridge attached, then rerun the doctor.",
         )
         result["overall"] = "fail"
@@ -482,7 +482,7 @@ def collect_evidence(
         _failure(
             result,
             "stale_running_bridge",
-            "The running bridge hash does not match this Postfader package.",
+            "The running bridge hash does not match this PostFader package.",
             "Reinstall the bridge and reload its script inside FL Studio.",
         )
     result["overall"] = "fail" if result["failures"] else "pass"
@@ -500,7 +500,7 @@ def render_human(evidence: Evidence) -> str:
     live = evidence["live"]
     assert all(isinstance(value, dict) for value in (host, fl, paths, deployment, midi, live))
     lines = [
-        "Postfader setup doctor",
+        "PostFader setup doctor",
         "Host: {platform} / {architecture}; Python {python_version}; package {package_version}".format(**host),
         "FL Studio candidates: %d" % len(fl["installation_candidates"]),
         "User data: %s (%s)" % (paths["user_data_root"], paths["user_data_source"]),
@@ -633,7 +633,7 @@ def check_midi_ports() -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Inspect Postfader host setup evidence.")
+    parser = argparse.ArgumentParser(description="Inspect PostFader host setup evidence.")
     parser.add_argument(
         "--json",
         action="store_true",

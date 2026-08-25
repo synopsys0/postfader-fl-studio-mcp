@@ -1,4 +1,4 @@
-"""Shared host paths and transport configuration for Postfader entry points.
+"""Shared host paths and transport configuration for PostFader entry points.
 
 This module performs no MIDI or FL Studio I/O.  It only resolves local process
 configuration so the installer, server, diagnostics, and offline discovery
@@ -320,7 +320,7 @@ def require_midi_port_query(
     if query is None:
         raise HostConfigurationError(
             "FL_BRIDGE_MIDI_PORT must name the user-configured virtual MIDI "
-            "endpoint on Windows; Postfader does not install or select a MIDI "
+            "endpoint on Windows; PostFader does not install or select a MIDI "
             "driver automatically"
         )
     return query

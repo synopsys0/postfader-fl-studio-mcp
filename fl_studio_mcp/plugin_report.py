@@ -290,7 +290,7 @@ def _environment(report: PublicPluginReport) -> str:
         pieces.append(f"FL Studio {report.fl_studio_version}")
     if report.fl_studio_edition != "unknown":
         pieces.append(report.fl_studio_edition)
-    pieces.append(f"Postfader {report.postfader_version}")
+    pieces.append(f"PostFader {report.postfader_version}")
     if report.platform != "unknown":
         pieces.append(report.platform)
     return "; ".join(pieces)
@@ -346,12 +346,12 @@ def render_public_markdown(report: PublicPluginReport) -> str:
     ] or ["- None reported."]
     structure = report.as_public_dict()["structure"]
     lines = [
-        "## Postfader plug-in validation report",
+        "## PostFader plug-in validation report",
         "",
         f"Report schema: `{report.schema_version}`",
         "",
         "Submission status: **community candidate** — contributor-generated "
-        "evidence that has not yet been reviewed or merged into Postfader's "
+        "evidence that has not yet been reviewed or merged into PostFader's "
         "maintained compatibility matrix.",
         "",
         "### Matrix candidate",
