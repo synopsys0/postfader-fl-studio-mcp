@@ -24,7 +24,7 @@ jobs:
           - label: minimum-2.0.0
             mcp-spec: mcp==2.0.0
           - label: newest-allowed
-            mcp-spec: mcp>=2.0.0,<3
+            mcp-spec: mcp>=2.0.0,<2.1
     env:
       FL_BRIDGE_ENABLE_MIDI: "0"
       FL_BRIDGE_ENABLE_WRITES: "0"

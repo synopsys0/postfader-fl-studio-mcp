@@ -13,10 +13,10 @@ from fl_studio_mcp.mcp_server import mcp
 
 
 class MCPCompatibilityTests(unittest.TestCase):
-    def test_installed_sdk_is_inside_the_declared_major_range(self) -> None:
+    def test_installed_sdk_is_inside_the_declared_minor_range(self) -> None:
         version = importlib.metadata.version("mcp")
-        major = int(version.split(".", 1)[0])
-        self.assertEqual(major, 2, version)
+        major, minor = (int(part) for part in version.split(".", 2)[:2])
+        self.assertEqual((major, minor), (2, 0), version)
 
     def test_lower_level_imports_used_by_the_server_remain_available(self) -> None:
         self.assertIsInstance(mcp, MCPServer)
