@@ -128,9 +128,9 @@ call shape; supplying them makes stale decisions fail closed.
 | `fl_set_mixer_name` | `track_index`; `name`; optional `allow_master` | `mixer.set_name` |
 | `fl_set_mixer_send` | source and destination track indices; absolute `enabled` state; optional `allow_master` for a Master source | `mixer.set_send` |
 | `fl_set_mixer_send_level` | source and destination track indices; level normalized 0–1; optional `allow_master` for a Master source | `mixer.set_send_level` |
-| `fl_set_plugin_param` | track and slot; parameter index; normalized value 0–1; optional `allow_master` | `plugin.set_param` |
-| `fl_set_plugin_param_display` | track and slot; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` | `plugin.set_param_display` |
-| `fl_set_plugin_param_option` | track and slot; parameter index or text; option text; optional sweep resolution and `allow_master` | `plugin.set_param_option` |
+| `fl_set_plugin_param` | explicit mixer-effect or channel-generator target, or legacy mixer track/slot; parameter index; normalized value 0–1; optional `allow_master` for Master effects | `plugin.set_param` |
+| `fl_set_plugin_param_display` | same target forms; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` for Master effects | `plugin.set_param_display` |
+| `fl_set_plugin_param_option` | same target forms; parameter index or text; option text; optional sweep resolution and `allow_master` for Master effects | `plugin.set_param_option` |
 
 The three plug-in reads and three plug-in setters also accept an explicit
 discriminated target. `mixer_effect` names `track_index`, slot 0–9, and optional
