@@ -25,7 +25,7 @@ Consequences:
 FL Studio's embedded Python cannot change its own process environment. The
 bridge therefore reads mode flags once at module import.
 
-Postfader does not need to change that environment to enable writes. Protocol
+PostFader does not need to change that environment to enable writes. Protocol
 2 exposes one bounded `session.set_write_mode` control that changes the
 bridge's in-memory allowlist after it verifies the current session fingerprint
 and literal user-present confirmation. The MCP host then proves the result with
@@ -86,14 +86,14 @@ does not roll anything back.
 ## Playback speed has a setter but no authoritative getter
 
 The public transport module exposes `setPlaybackSpeed`, but no matching getter
-that can prove the actual speed on a later FL idle tick. Postfader therefore
+that can prove the actual speed on a later FL idle tick. PostFader therefore
 does not expose playback-speed control. This is a verification-boundary choice,
 not a claim that FL Studio itself cannot change playback speed.
 
 ## Channel and step APIs require explicit index scope
 
 Channel APIs can interpret an index relative to a selected group unless the
-global-index flag is supplied. Postfader lists and mutates Channel Rack targets
+global-index flag is supplied. PostFader lists and mutates Channel Rack targets
 only with global indexing, echoes that scope in every contract, and uses an
 observation-scoped channel fingerprint to catch a changed or reordered target.
 FL exposes no durable channel UUID, so that fingerprint must not be treated as
@@ -102,7 +102,7 @@ project identity.
 FL's channel-color getter can return a signed Python integer even though the
 public contract uses the equivalent unsigned 32-bit `0x--BBGGRR` word. The
 high byte is FL-owned: a low-24-bit setter request can read back with a
-different high byte. Postfader preserves the exact observed 32-bit word in
+different high byte. PostFader preserves the exact observed 32-bit word in
 reads and fingerprints, but expected-before guards and later-tick write proof
 compare the controllable low 24 color bits.
 
@@ -180,7 +180,7 @@ audio-analysis tools can measure it.
 
 FL's controller scripting API can select a global channel and pattern and show
 the Piano Roll, but it cannot enumerate or edit the score. FL exposes those
-notes to a separate `.pyscript` runtime instead. Postfader therefore installs a
+notes to a separate `.pyscript` runtime instead. PostFader therefore installs a
 small user-run bootstrap and atomically replaces one generated **Postfader
 Apply** script for each requested write or transform.
 
@@ -197,7 +197,7 @@ getter for each marker's timeline position. Section-marker receipts can prove
 names on a later tick while leaving `times_verified=false`.
 
 The public REC-event path can record one controller value while playback and
-recording are active. Postfader verifies those capture conditions and reads the
+recording are active. PostFader verifies those capture conditions and reads the
 controlled mixer/channel value back, but FL exposes no public getter for the
 new automation point. `automation_event_recorded` therefore remains null and
 the aggregate receipt remains unverified. These helpers do not provide
@@ -223,7 +223,7 @@ they are not safely reversible through a script:
 - the slot mix-level setter can accept values while its getter remains
   unchanged.
 
-Postfader therefore exposes neither operation. Use a plug-in's own
+PostFader therefore exposes neither operation. Use a plug-in's own
 documented bypass or mix parameter when it provides one, or make the change
 manually in FL Studio.
 

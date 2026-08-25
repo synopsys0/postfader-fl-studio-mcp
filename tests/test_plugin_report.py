@@ -272,7 +272,7 @@ class PublicReportTests(unittest.TestCase):
             if line.startswith("| Example Effect")
         )
         self.assertNotIn("FL Studio unknown", matrix_row)
-        self.assertIn(f"Postfader {report.postfader_version}", matrix_row)
+        self.assertIn(f"PostFader {report.postfader_version}", matrix_row)
 
     def test_one_nameless_control_uses_singular_grammar(self):
         parameters = [dict(item) for item in COMPLETE_SCAN["parameters"]]

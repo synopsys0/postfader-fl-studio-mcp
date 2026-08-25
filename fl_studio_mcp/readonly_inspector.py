@@ -286,7 +286,7 @@ def connection_from_ping(
         elif reported_digest_value != expected_digest:
             bridge_provenance = "mismatched"
             warnings.append(
-                "The running bridge is stale or belongs to another Postfader build. "
+                "The running bridge is stale or belongs to another PostFader build. "
                 "Reads may continue, but every write will refuse until the packaged "
                 "bridge is installed and reloaded."
             )
@@ -484,7 +484,7 @@ class ReadOnlyInspector:
                     f"Current mixer probe failed: {exc}"
                 )
             try:
-                selection = self.selected_range()
+                self.selected_range()
                 selection_probe = True
             except (BridgeError, IncompatibleFLStudio, ValueError) as exc:
                 selection_probe_limitations.append(

@@ -50,7 +50,7 @@ $FlExecutable = Resolve-FlStudioExecutable $Executable
 $Running = @(Get-RunningFlStudio)
 if ($Running.Count -gt 0 -and -not $DryRun) {
     $Ids = ($Running | ForEach-Object { $_.Id }) -join ", "
-    throw "FL Studio is already running (PID $Ids). Quit it manually first: FL_BRIDGE_ENABLE_WRITES is read at process and script startup. Postfader will not kill or restart it."
+    throw "FL Studio is already running (PID $Ids). Quit it manually first: FL_BRIDGE_ENABLE_WRITES is read at process and script startup. PostFader will not kill or restart it."
 }
 
 $WriteMode = if ($EnableWrites) { "1" } else { $null }

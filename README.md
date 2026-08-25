@@ -46,8 +46,9 @@ Piano Roll scripting workflow.
 | Use one-session write mode, closed-union verified batches, compact aggregate receipts, and plan/apply separation. | Append, replace, quantize, transpose, humanize, duplicate, delete, or clear notes through FL's separate Piano Roll script runtime. |
 
 PostFader can also inspect and control parameters exposed by native FL effects,
-VST/VST3/AU effects, and Channel Rack generators. Plug-in support is discovered
-from FL Studio at runtime rather than limited to a fixed list.
+VST/VST3/AU effects, and Channel Rack generators. Generic plug-in discovery is
+performed from FL Studio at runtime; optional processing-intent profiles add
+parameter-role hints without gating discovery or claiming universal support.
 
 ## Tools
 
@@ -416,6 +417,11 @@ Compatibility is intentionally honest:
 See [Plug-in support](docs/plugin-support.md) for parameter discovery, option
 searches, scan limits, troubleshooting, and the community evidence format.
 
+> **Help expand the evidence:** see the [validated plug-in matrix](docs/plugin-matrix.md)
+> for contributor definitions and prioritized targets, then submit a
+> privacy-safe report through the [plug-in validation issue form](https://github.com/synopsys0/postfader-fl-studio-mcp/issues/new?template=plugin-validation.yml).
+> A report is an observation for maintainer review, not a support guarantee.
+
 ## Important limitations
 
 PostFader cannot currently:
@@ -462,6 +468,9 @@ projects.
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, and trust boundaries |
 | [Security](SECURITY.md) | Threat model, privacy boundaries, and vulnerability reporting |
 | [Contributing](CONTRIBUTING.md) | Development workflow and contribution guidelines |
+| [Early-user activation](docs/early-access-testing.md) | A privacy-safe checklist for first external users and maintainers |
+| [Distribution metadata](docs/distribution.md) | Canonical directory copy, package boundaries, safe claims, and listing ledger |
+| [GitHub Discussions](https://github.com/synopsys0/postfader-fl-studio-mcp/discussions) | Community setup help, workflow notes, ideas, and compatibility conversations |
 
 ## Development
 

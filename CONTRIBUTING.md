@@ -1,6 +1,6 @@
 # Contributing
 
-Contributions to Postfader should keep the public repository
+Contributions to PostFader should keep the public repository
 reproducible, content-neutral, and safe to clone on a machine that has never
 seen the maintainer's projects.
 
@@ -68,10 +68,37 @@ Before submitting a change, run the public-tree check when present:
 
 That checker is a release boundary, not a substitute for reviewing the diff.
 
+## Maintainer and release references
+
+Keep release and review work aligned with the maintained source-of-truth
+documents:
+
+- [Release checklist](RELEASING.md) covers version sync, qualification, package
+  publication, checksums, retries, and future signed tags.
+- [Discussions checklist](docs/discussions.md) records the enabled Discussions
+  state, proposed categories, and welcome-post drafts without claiming that
+  pending categories or posts are live.
+- [Distribution metadata](docs/distribution.md) contains canonical copy,
+  package boundaries, safe claims, and the directory-maintenance ledger.
+- [Early-user activation](docs/early-access-testing.md) defines the privacy-
+  safe first-session path and reporting boundaries.
+- [Code quality](docs/code-quality.md) documents the Ruff, Pyright, and
+  hermetic coverage baseline and its live-FL exclusions.
+- [Supply-chain checks](docs/supply-chain.md) covers dependency scanning,
+  SBOMs, release attestations, and finding triage.
+- [External review scope](docs/external-review-scope.md) lists trust
+  boundaries, critical review areas, and reviewer deliverables.
+- [Tool-surface evaluation](docs/tool-surface-evaluation.md) records evidence
+  needed before considering profiles or other surface changes.
+- [Maintainability plan](docs/maintainability-plan.md) sequences future
+  extractions without combining them with feature work.
+- [Future hardening options](docs/future-security-hardening-options.md) keeps
+  optional security controls in design review until separately approved.
+
 ## Plug-in validation reports
 
 The compatibility matrix is evidence, not a runtime allowlist. A report can
-add confidence and document an exception; it never teaches Postfader a product
+add confidence and document an exception; it never teaches PostFader a product
 identity or enables that product in code.
 
 Generate a read-only report with the installed command:

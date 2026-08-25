@@ -17,7 +17,6 @@ import math
 import multiprocessing
 import os
 import platform
-import sys
 import time
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
