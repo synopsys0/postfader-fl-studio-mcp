@@ -78,14 +78,15 @@ project description pasted into chat.
 Mix Doctor turns an exported bounce into producer-readable technical findings
 about level, dynamics, tonal balance, stereo behavior, and export readiness.
 Reference analysis compares loudness and tonal balance across aligned audio.
-Masking analysis uses synchronized vocal and instrumental renders to identify
-frequency regions that may be competing.
+Masking analysis uses synchronized vocal and instrumental renders to report
+possible spectral-overlap regions.
 
-During playback, a peak watch samples the mixer inserts included in the watch
-and remembers the highest level it observed for each. Play the song through,
-then use those results to build a gain-staging plan based on the track rather
-than a single instant. Your AI can use other reported findings to create a
-separate, reviewable mix plan and apply only the operations you choose.
+During a chosen observation window, a peak watch samples the mixer inserts
+included in the watch and remembers the highest level it observed for each.
+Use those results to build a gain-staging plan from a playback section or full
+pass that fits the window rather than a single instant. These are sampled
+observations, so they do not prove that every transient was captured. Your AI
+can use other reported findings to create a separate, reviewable mix plan.
 
 ### Control the session and the plug-ins you already use
 
@@ -115,7 +116,8 @@ a rhythmic echo” into matching parameter roles. Intent resolution is read-only
 choosing values and applying a change remain separate steps.
 
 PostFader works with the chain already in the session. It does not currently
-insert, remove, or reorder plug-ins.
+insert, remove, or reorder plug-ins, and FL Studio does not expose reliable
+effect-slot bypass or wet/dry control here.
 
 ### Compose, transform, and organize musical ideas
 
@@ -152,11 +154,13 @@ instead of claiming controller-side note readback.
 
 1. Reads the mixer, routing, and relevant loaded plug-ins.
 2. Analyzes the bounce or synchronized renders you provide.
-3. Identifies likely level, tonal, dynamics, or masking problems.
+3. Reports possible level, tonal, dynamics, or synchronized-input masking
+   findings.
 4. Your AI prioritizes the reported evidence and builds a reviewable plan from
    supported operations.
 5. Keeps the plan separate until you choose to proceed with the apply call.
-6. Applies the selected supported operation.
+6. After you explicitly confirm that you are present and enable session writes,
+   sends the separate apply request.
 7. Reports the observed result and any evidence limitation.
 
 **Read the project → analyze the bounce → identify the problem → propose a plan
@@ -170,10 +174,13 @@ commands into a production workflow.
 ### Mix and finish
 
 - Run Mix Doctor on an exported bounce.
-- Compare loudness and tonal balance with a reference.
-- Examine synchronized vocal and instrumental renders for likely masking.
+- Compare loudness and tonal balance when candidate and reference inputs align
+  and pass readiness checks.
+- Examine synchronized vocal and instrumental renders for possible spectral
+  overlap.
 - Measure peaks, loudness, dynamics, tonal balance, and stereo behavior.
-- Watch mixer peaks across playback and build gain-staging plans.
+- Watch sampled mixer peaks during a chosen observation window and build
+  gain-staging plans.
 - Run a finish assessment and use your AI to turn selected recommendations into
   reviewable one-shot plans.
 
@@ -222,7 +229,7 @@ every other project.
 | Play, stop, and change individual controls | Transport and individual controls | Yes, plus wider session workflows |
 | Read the open project | Selected state only | Mixer, channels, loaded plug-ins, patterns, Playlist tracks, undo/redo history, steps, and transport |
 | Diagnose exported audio | Not part of the baseline | Mix Doctor, peaks, loudness, tonal balance, stereo analysis, masking, and references |
-| Monitor levels through playback | Point-in-time meter reads | Persistent per-insert peak watches sample across a playback pass |
+| Monitor levels through playback | Point-in-time meter reads | Process-local per-insert peak watches sample across a chosen observation window |
 | Move from diagnosis to a separate apply request | Not part of the baseline | Diagnose → propose → review → apply → report |
 | Work with loaded plug-ins | Predefined controls | Runtime parameter discovery, exact controls, named options, and selected stock-effect profiles |
 | Generate musical parts | Individual note dispatch | Chords, melody, bass, drums, transcription, and Type-1 MIDI export |
@@ -235,8 +242,8 @@ every other project.
 ## Quick installation
 
 Download the Windows or macOS package, extract it to a stable writable folder,
-run the guided installer, select your virtual MIDI endpoint, complete one FL
-Studio MIDI Settings step, and connect your AI client.
+run the guided installer, select your virtual MIDI endpoint, complete the
+documented FL Studio MIDI Settings stage, and connect your AI client.
 
 - [Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
 - [Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
