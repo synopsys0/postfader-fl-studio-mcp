@@ -22,6 +22,7 @@ from pathlib import Path
 UNITTEST_TOTAL = re.compile(r"^Ran (\d+) tests?\b", re.MULTILINE)
 CHECK_TOTAL = re.compile(r"^(\d+) passed, (\d+) failed$", re.MULTILINE)
 SAFE_TEST_TIMEOUT_SECONDS = 180
+COVERAGE_DIRECTORY_ENV = "POSTFADER_COVERAGE_DIR"
 
 
 def count_checks(relative: str, output: str) -> int:
@@ -58,6 +59,7 @@ SAFE_TESTS = (
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
     "tests/test_release_bundles.py",
+    "tests/test_sbom.py",
     "tests/test_mcpb.py",
     "tests/test_performance.py",
     "tests/test_workflows.py",
@@ -86,13 +88,32 @@ def safe_child_environment() -> dict[str, str]:
 def run_safe_test(path: Path) -> subprocess.CompletedProcess[str]:
     """Run one allowlisted file with isolation and a bounded wall clock."""
 
+    environment = safe_child_environment()
+    coverage_directory = os.environ.get(COVERAGE_DIRECTORY_ENV)
+    if coverage_directory:
+        # Each child writes a parallel data file. The coverage wrapper combines
+        # them after the suite, so no test process shares mutable coverage state.
+        environment["COVERAGE_FILE"] = os.fspath(
+            Path(coverage_directory) / ".coverage"
+        )
+        command = [
+            sys.executable,
+            "-m",
+            "coverage",
+            "run",
+            "--parallel-mode",
+            str(path),
+        ]
+    else:
+        command = [sys.executable, "-B", str(path)]
+
     return subprocess.run(
-        [sys.executable, "-B", str(path)],
+        command,
         cwd=ROOT,
         check=False,
         capture_output=True,
         text=True,
-        env=safe_child_environment(),
+        env=environment,
         timeout=SAFE_TEST_TIMEOUT_SECONDS,
     )
 
