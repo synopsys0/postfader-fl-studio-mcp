@@ -350,7 +350,7 @@ with mock.patch.object(
         )
         self.assertIn("Operating System :: MacOS :: MacOS X", project["classifiers"])
         self.assertTrue(any(item.startswith("anyio") for item in project["dependencies"]))
-        self.assertIn("mcp>=2.0.0,<3", project["dependencies"])
+        self.assertIn("mcp>=2.0.0,<2.1", project["dependencies"])
         self.assertFalse(
             any(item.startswith("mcp[") for item in project["dependencies"])
         )
@@ -390,7 +390,7 @@ with mock.patch.object(
         self.assertIn("scripts/clean_wheel_smoke.py", workflow)
         self.assertIn("scripts/build_release_bundles.py", workflow)
         self.assertIn("mcp==2.0.0", workflow)
-        self.assertIn("mcp>=2.0.0,<3", workflow)
+        self.assertIn("mcp>=2.0.0,<2.1", workflow)
         self.assertIn("tests/test_sdk_compatibility.py", workflow)
         self.assertIn("tests/test_readonly_mcp.py", workflow)
         self.assertIn("POSTFADER_BUNDLE_DRY_RUN", workflow)
