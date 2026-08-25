@@ -36,11 +36,16 @@ from fl_studio_mcp.track_b_contracts import (
     ChannelGeneratorTarget,
     ChannelIdentitySnapshot,
     ChannelMixSnapshot,
+    ChannelPitchSnapshot,
     ChannelRouteSnapshot,
+    ChannelSoloSnapshot,
     ChannelSummary,
     ExpectedChannelIdentityState,
     ExpectedChannelMixState,
+    ExpectedChannelPitchState,
     ExpectedChannelRouteState,
+    ExpectedChannelSelectionState,
+    ExpectedChannelSoloState,
     ExpectedChannelTargetState,
     ExpectedLoopModeState,
     ExpectedPlayingState,
@@ -58,7 +63,10 @@ from fl_studio_mcp.track_b_contracts import (
     TrackBResult,
     VerifiedChannelIdentityWrite,
     VerifiedChannelMixWrite,
+    VerifiedChannelPitchWrite,
     VerifiedChannelRouteWrite,
+    VerifiedChannelSelectionWrite,
+    VerifiedChannelSoloWrite,
     VerifiedLoopModeWrite,
     VerifiedPlayingWrite,
     VerifiedSongPositionWrite,
@@ -229,6 +237,45 @@ def channel_handler(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
             verified_fields={key: True for key in requested},
             verified=True,
         )
+    elif command == "channel.set_solo":
+        response.update(
+            channel=arguments["channel"],
+            before={
+                "soloed": False,
+                "channel_fingerprint": CHANNEL_FINGERPRINT,
+            },
+            after={
+                "soloed": arguments["soloed"],
+                "channel_fingerprint": CHANNEL_FINGERPRINT,
+            },
+            verified=True,
+        )
+    elif command == "channel.set_pitch":
+        response.update(
+            channel=arguments["channel"],
+            before={
+                "pitch": 0.0,
+                "pitch_semitones": 0.0,
+                "pitch_range": 2.0,
+                "channel_fingerprint": CHANNEL_FINGERPRINT,
+            },
+            after={
+                "pitch": arguments["pitch"],
+                "pitch_semitones": arguments["pitch"] * 2.0,
+                "pitch_range": 2.0,
+                "channel_fingerprint": CHANNEL_FINGERPRINT,
+            },
+            verified=True,
+        )
+    elif command == "channel.select":
+        response.update(
+            channel=arguments["channel"],
+            exclusive=True,
+            before=[0],
+            after=[arguments["channel"]],
+            verified=True,
+            undo_point_created=None,
+        )
     elif command == "channel.route_to_mixer":
         response.update(
             channel=arguments["channel"],
@@ -312,11 +359,16 @@ class GatewayBoundaryTests(unittest.TestCase):
             TRACK_B_READ_COMMANDS,
             {
                 "project.info",
+                "project.history",
                 "channels.list",
                 "mixer.list",
                 "plugin.params",
                 "plugin.scan_params",
+                "plugin.preset_count",
                 "sequencer.get",
+                "patterns.list",
+                "patterns.find_empty",
+                "playlist.list",
             },
         )
         self.assertEqual(
@@ -327,9 +379,23 @@ class GatewayBoundaryTests(unittest.TestCase):
                 "transport.set_song_position",
                 "transport.set_loop_mode",
                 "transport.set_tempo",
+                "transport.set_recording",
+                "transport.set_metronome",
+                "transport.set_precount",
+                "project.set_time_signature_numerator",
+                "project.undo",
+                "project.redo",
                 "channel.set_mix",
+                "channel.set_solo",
+                "channel.set_pitch",
+                "channel.select",
                 "channel.set_identity",
                 "channel.route_to_mixer",
+                "pattern.select",
+                "pattern.set_identity",
+                "pattern.set_length",
+                "playlist.set_identity",
+                "playlist.set_state",
                 "plugin.set_param",
                 "plugin.set_param_display",
                 "plugin.set_param_option",
@@ -447,6 +513,31 @@ class MutationGateTests(unittest.TestCase):
 
 
 class TransportControllerTests(unittest.TestCase):
+    def test_one_based_project_history_accepts_independent_last_cursor(self) -> None:
+        inspector, client = inspector_for(
+            {
+                "project.history": {
+                    "command": "project.history",
+                    "position": 1,
+                    "count": 1,
+                    "last_position": 0,
+                    "level_hint": "1 / 1",
+                    "project_dirty_flag": 0,
+                    "can_undo": False,
+                    "can_redo": False,
+                }
+            }
+        )
+
+        observed = inspector.project_history()
+
+        self.assertEqual(observed.history.position, 1)
+        self.assertEqual(observed.history.count, 1)
+        self.assertEqual(observed.history.last_position, 0)
+        self.assertFalse(observed.history.can_undo)
+        self.assertFalse(observed.history.can_redo)
+        self.assertEqual(client.calls, [("project.history", {})])
+
     def test_set_playing_returns_typed_absolute_result(self) -> None:
         controller, client = controller_for(transport_handler)
         result = controller.set_playing(
@@ -799,7 +890,7 @@ def verified_contract_fields(*, verified: bool = True) -> dict[str, Any]:
 
 
 class ChannelMutationTests(unittest.TestCase):
-    def test_exactly_three_channel_mutation_contracts_are_public_results(self) -> None:
+    def test_all_channel_mutation_contracts_are_public_results(self) -> None:
         mutation_types = {
             value
             for value in get_args(TrackBResult)
@@ -811,6 +902,9 @@ class ChannelMutationTests(unittest.TestCase):
                 VerifiedChannelMixWrite,
                 VerifiedChannelIdentityWrite,
                 VerifiedChannelRouteWrite,
+                VerifiedChannelSoloWrite,
+                VerifiedChannelPitchWrite,
+                VerifiedChannelSelectionWrite,
             },
         )
 
@@ -835,6 +929,38 @@ class ChannelMutationTests(unittest.TestCase):
         self.assertEqual(command, "channel.set_mix")
         self.assertEqual(arguments["index_scope"], "global")
         self.assertNotIn("pan", arguments)
+
+    def test_solo_pitch_and_exclusive_selection_are_typed_and_verified(self) -> None:
+        controller, client = controller_for(channel_handler)
+        solo = controller.set_channel_solo(
+            channel_index=3,
+            soloed=True,
+            expected_before=ExpectedChannelSoloState(soloed=False),
+        )
+        pitch = controller.set_channel_pitch(
+            channel_index=3,
+            pitch_normalized=0.5,
+            expected_before=ExpectedChannelPitchState(pitch_normalized=0.0),
+        )
+        selection = controller.select_channel(
+            channel_index=3,
+            expected_before=ExpectedChannelSelectionState(
+                selected_channel_indices=[0]
+            ),
+        )
+        self.assertIsInstance(solo, VerifiedChannelSoloWrite)
+        self.assertIsInstance(solo.before, ChannelSoloSnapshot)
+        self.assertTrue(solo.after.soloed)
+        self.assertIsInstance(pitch, VerifiedChannelPitchWrite)
+        self.assertIsInstance(pitch.after, ChannelPitchSnapshot)
+        self.assertEqual(pitch.after.pitch_semitones, 1.0)
+        self.assertIsInstance(selection, VerifiedChannelSelectionWrite)
+        self.assertEqual(selection.after_selected_channel_indices, [3])
+        self.assertIsNone(selection.undo_point_created)
+        self.assertEqual(
+            [command for command, _arguments in client.calls],
+            ["channel.set_solo", "channel.set_pitch", "channel.select"],
+        )
 
     def test_identity_result_has_nullable_flags_and_aggregate_and(self) -> None:
         controller, _client = controller_for(channel_handler)
@@ -1579,7 +1705,7 @@ class TargetAwarePluginTests(unittest.TestCase):
                 "fl_set_plugin_param_option",
             },
         )
-        self.assertEqual(len(TRACK_B_MCP_TOOL_NAMES), 12)
+        self.assertEqual(len(TRACK_B_MCP_TOOL_NAMES), 31)
         self.assertTrue(TRACK_B_MCP_TOOL_NAMES.isdisjoint(TARGET_AWARE_EXISTING_PLUGIN_TOOLS))
 
     def test_inventory_combines_effects_and_global_generators(self) -> None:

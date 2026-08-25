@@ -373,7 +373,8 @@ print(json.dumps({
         self.assertIn("fl_studio_user_data_dir", source)
         self.assertNotIn("$HOME/Documents/Image-Line/FL Studio", source)
         self.assertNotIn(".mcp.json", source)
-        self.assertIn("generate_mcp_config.py", source)
+        self.assertIn('"$VENV/bin/postfader"', source)
+        self.assertIn("--skip-bridge-deployment", source)
 
 
 class DeployTests(unittest.TestCase):

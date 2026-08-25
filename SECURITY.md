@@ -187,6 +187,21 @@ Treat the connected MCP client as having read access to audio files that its
 tool calls name. Do not connect an untrusted client or place sensitive audio
 paths in prompts.
 
+Creative file tools can also write caller-selected Type-1 MIDI paths. Existing
+files are refused unless the request explicitly sets `overwrite=true`; the
+result is reopened and parsed before success is reported. Piano Roll tools
+atomically replace one generated `Postfader_Apply.pyscript` beneath the FL
+Studio user-data tree, or beneath the absolute
+`POSTFADER_PIANO_ROLL_SCRIPTS_DIR` override. Treat both locations as writable
+capabilities granted to the MCP client.
+
+Automatic Piano Roll application focuses the local FL Studio window and sends
+the platform run-last-script shortcut. It is disabled until a user manually
+runs the prepared bootstrap and confirms that fact for the current MCP
+process. Focus and key dispatch are reported separately and do not prove that
+FL applied any note change. Do not use automatic dispatch on an untrusted or
+shared desktop session.
+
 ## Security invariants
 
 The safe test suite checks important boundaries, including:

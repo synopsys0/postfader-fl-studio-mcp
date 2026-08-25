@@ -1,0 +1,75 @@
+name: Bug report
+description: Report reproducible behavior that differs from PostFader's documented contract
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities belong in a private security advisory, not this form. Never upload a project, audio, preset, private path, raw log, or unredacted client transcript.
+  - type: input
+    id: version
+    attributes:
+      label: PostFader version or commit
+      placeholder: 0.20.0 or a commit SHA
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS/architecture, Python, FL Studio edition/version/build, and AI client.
+    validations:
+      required: true
+  - type: dropdown
+    id: capability_state
+    attributes:
+      label: Bridge capability state
+      options:
+        - Read-only
+        - Write-enabled in a blank disposable project
+        - Audio-only without a live FL connection
+        - Unknown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a blank project and synthetic names or values. List the smallest repeatable sequence.
+      placeholder: |
+        1. Start from ...
+        2. Call ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and evidence
+      description: Include the verification basis and refusal/error text when relevant, after redaction.
+    validations:
+      required: true
+  - type: checkboxes
+    id: regression
+    attributes:
+      label: Regression
+      options:
+        - label: This worked in an earlier PostFader version.
+          required: false
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety and privacy confirmation
+      options:
+        - label: I reproduced write behavior only in a blank disposable project and did not save it.
+          required: false
+        - label: I removed project, artist, path, endpoint, account, and machine-identifying information.
+          required: true
+        - label: I did not attach projects, audio, presets, raw logs, or unredacted screenshots/transcripts.
+          required: true

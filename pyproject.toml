@@ -1,12 +1,12 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "0.13.0"
-description = "Unofficial local MCP bridge for readback-verified FL Studio control"
+version = "0.20.0"
+description = "Verified AI control for FL Studio mixing, composition, arrangement, and audio analysis"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-requires-python = ">=3.10"
-keywords = ["fl-studio", "mcp", "model-context-protocol", "midi", "music-production"]
+requires-python = ">=3.10,<3.15"
+keywords = ["fl-studio", "mcp", "model-context-protocol", "midi", "music-production", "mixing", "composition"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",
@@ -24,7 +24,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.5,<5",
-    "mcp[cli]>=2.0.0,<3",
+    "mcp>=2.0.0,<2.1",
     "jsonschema>=4.20,<5",
     "numpy>=1.24,<3",
     "scipy>=1.10,<2",
@@ -36,9 +36,11 @@ dependencies = [
 
 [project.scripts]
 fl-studio-mcp = "fl_studio_mcp.mcp_server:main"
+postfader = "fl_studio_mcp.cli:main"
 postfader-install-bridge = "fl_studio_mcp.bridge_install:main"
 postfader-doctor = "fl_studio_mcp.diagnostics:main"
 postfader-plugin-report = "fl_studio_mcp.plugin_report:main"
+postfader-setup = "fl_studio_mcp.setup_wizard:main"
 
 [project.optional-dependencies]
 test = [

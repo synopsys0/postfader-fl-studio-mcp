@@ -44,6 +44,7 @@ FORBIDDEN_DIRECTORY_NAMES = {
     "build",
     "dist",
     "renders",
+    "release-bundles",
 }
 # Private working documents whose names have carried project-identifying
 # content. docs/plugin-support.md is the public, contributor-maintained

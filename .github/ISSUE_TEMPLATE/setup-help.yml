@@ -1,0 +1,79 @@
+name: Setup help
+description: Get help when installation, the doctor, MIDI, or client connection does not pass
+title: "[setup] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach projects, audio, presets, screenshots with project names, or unredacted logs. PostFader diagnostics can contain local paths and endpoint names; remove anything private before posting.
+  - type: input
+    id: postfader_version
+    attributes:
+      label: PostFader version
+      placeholder: 0.20.0
+    validations:
+      required: true
+  - type: dropdown
+    id: operating_system
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11 x64
+        - Windows 11 ARM64
+        - macOS Apple silicon
+        - macOS Intel
+        - Other supported configuration
+    validations:
+      required: true
+  - type: input
+    id: host_versions
+    attributes:
+      label: Python and FL Studio versions
+      description: Include the FL Studio edition, version, and build.
+      placeholder: Python 3.12.8; FL Studio Producer Edition 26.1.4 build 5589
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: AI client and version
+      placeholder: Codex desktop app, Claude Desktop, Cursor, or another local MCP client
+    validations:
+      required: true
+  - type: dropdown
+    id: failing_stage
+    attributes:
+      label: Where setup stops
+      options:
+        - Platform installer
+        - Universal Bridge deployment
+        - FL Studio MIDI configuration
+        - postfader-doctor
+        - AI client configuration
+        - First live read
+        - Write-mode enablement
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: What happened
+      description: Include the exact error and the steps immediately before it. Redact private paths, names, and project details.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted doctor evidence
+      description: Paste only the relevant fields or messages after removing paths, endpoint names, and other identifying data.
+      render: text
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety and privacy confirmation
+      options:
+        - label: I removed project, artist, file-path, endpoint, account, and machine-identifying information.
+          required: true
+        - label: I did not attach an FLP, audio file, preset, raw log, or unredacted screenshot.
+          required: true

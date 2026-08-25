@@ -74,6 +74,15 @@ MIXER_SLOTS = 10
 MAX_ADDRESSABLE_MIXER_TRACKS = 126
 PARAMS_PER_TICK = 64
 CHANNELS_PER_TICK = 8
+PATTERNS_PER_TICK = 64
+PLAYLIST_TRACKS_PER_TICK = 32
+MAX_PATTERN_NUMBER = 999
+MAX_PATTERN_NAME_LENGTH = 64
+MAX_PATTERN_LENGTH_BEATS = 4096
+MAX_PLAYLIST_TRACK_NAME_LENGTH = 64
+MAX_ARRANGEMENT_MARKER_NAME_LENGTH = 64
+MAX_ARRANGEMENT_MARKERS_PER_WRITE = 32
+MAX_ARRANGEMENT_MARKERS_SCANNED = 512
 # Every plug-in parameter write passes this. FL's default pickup behaviour can
 # put a control into "waiting for pickup", after which it silently refuses
 # further scripted writes. Disabling pickup makes repeated write/readback
@@ -226,23 +235,35 @@ WRITE_MODE_ORIGIN = (
 READ_ONLY_COMMANDS = frozenset({
     "ping",
     "project.info",
+    "project.history",
     "arrangement.selection",
     "mixer.list",
+    "mixer.peaks",
     "mixer.track",
     "plugin.params",
+    "plugin.preset_count",
     # A read, like plugin.params: it walks the same indices with the same
     # padding rule and writes nothing.
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
+    "patterns.list",
+    "patterns.find_empty",
+    "playlist.list",
 })
 SESSION_CONTROL_COMMANDS = frozenset({
     "session.set_write_mode",
 })
 LEAN_WRITE_COMMANDS = frozenset({
     "mixer.set_volume",
+    "mixer.set_volume_db",
     "mixer.set_pan",
     "mixer.set_mute",
+    "mixer.set_solo",
+    "mixer.set_arm",
+    "mixer.set_color",
+    "mixer.set_stereo_separation",
+    "mixer.select_track",
     "mixer.set_eq",
     "mixer.set_name",
     "mixer.set_send",
@@ -255,7 +276,24 @@ LEAN_WRITE_COMMANDS = frozenset({
     "transport.set_song_position",
     "transport.set_loop_mode",
     "transport.set_tempo",
+    "transport.set_recording",
+    "transport.set_metronome",
+    "transport.set_precount",
+    "project.set_time_signature_numerator",
+    "project.undo",
+    "project.redo",
     "channel.set_mix",
+    "channel.set_solo",
+    "channel.set_pitch",
+    "channel.select",
+    "pattern.select",
+    "pattern.set_identity",
+    "pattern.set_length",
+    "playlist.set_identity",
+    "playlist.set_state",
+    "creative.prepare_piano_roll",
+    "arrangement.add_markers",
+    "automation.record_value",
     "channel.set_identity",
     "channel.route_to_mixer",
     "sequencer.set",
@@ -338,6 +376,13 @@ def _safe(fn, default=None):
         return fn()
     except Exception:
         return default
+
+
+def _fl_bool(value):
+    """Normalize FL's integer boolean values at the wire boundary."""
+    if value in (0, 1):
+        return bool(value)
+    return None
 
 
 def _bpm():
@@ -685,6 +730,63 @@ def cmd_session_set_write_mode(a):
     }
 
 
+def _metronome_state():
+    value = _safe(lambda: ui.isMetronomeEnabled(), None)
+    return None if value is None else bool(value)
+
+
+def _precount_state():
+    value = _safe(lambda: ui.isPrecountEnabled(), None)
+    return None if value is None else bool(value)
+
+
+def _time_signature_snapshot():
+    ppq = _strict_integer(general.getRecPPQ(), "project PPQ")
+    pulses_per_bar = _strict_integer(general.getRecPPB(), "pulses per bar")
+    if ppq < 1 or pulses_per_bar < 1 or pulses_per_bar % ppq:
+        raise ValueError(
+            "FL reported a time-signature numerator that cannot be proven from "
+            "getRecPPB/getRecPPQ"
+        )
+    numerator = pulses_per_bar // ppq
+    if numerator < 1 or numerator > 32:
+        raise ValueError("FL reported a time-signature numerator outside 1..32")
+    return {
+        "numerator": numerator,
+        "ppq": ppq,
+        "pulses_per_bar": pulses_per_bar,
+        "denominator_available": False,
+    }
+
+
+def _history_snapshot():
+    position = _strict_integer(
+        general.getUndoHistoryPos(), "undo history position"
+    )
+    count = _strict_integer(general.getUndoHistoryCount(), "undo history count")
+    last = _strict_integer(
+        general.getUndoHistoryLast(), "last undo history position"
+    )
+    # FL's public history position is one-based while getUndoHistoryLast() is
+    # an independent cursor value.  In particular, a fresh real project may
+    # report position=1, count=1, last=0.  Do not invent an ordering between
+    # position and last that Image-Line's API does not provide.
+    if position < 0 or count < 0 or last < 0 or position > count or last > count:
+        raise ValueError("FL reported inconsistent undo-history bounds")
+    hint = _safe(lambda: general.getUndoLevelHint(), "") or ""
+    if not isinstance(hint, str):
+        hint = str(hint)
+    return {
+        "position": position,
+        "count": count,
+        "last_position": last,
+        "level_hint": hint[:512],
+        "project_dirty_flag": _safe(lambda: general.getChangedFlag(), None),
+        "can_undo": position > 1,
+        "can_redo": position < count,
+    }
+
+
 def cmd_project_info(a):
     return {
         "project_title": _safe(lambda: general.getProjectTitle(), ""),
@@ -699,6 +801,10 @@ def cmd_project_info(a):
         "song_length_ms": _safe(lambda: transport.getSongLength(midi.SONGLENGTH_MS), None),
         "loop_mode": _safe(lambda: transport.getLoopMode(), None),
         "ppq": _safe(lambda: general.getRecPPQ(), None),
+        "pulses_per_bar": _safe(lambda: general.getRecPPB(), None),
+        "time_signature_numerator": _safe(
+            lambda: _time_signature_snapshot()["numerator"], None
+        ),
         "mixer_track_count": _safe(lambda: _mixer_track_count(), None),
         "channel_count": _safe(lambda: channels.channelCount(), None),
         "pattern_count": _safe(lambda: patterns.patternCount(), None),
@@ -706,8 +812,15 @@ def cmd_project_info(a):
         "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
         "undo_history_position": _safe(lambda: general.getUndoHistoryPos(), None),
         "undo_history_count": _safe(lambda: general.getUndoHistoryCount(), None),
-        "metronome": _safe(lambda: ui.isMetronomeEnabled(), None),
+        "metronome": _metronome_state(),
+        "precount": _precount_state(),
     }
+
+
+def cmd_project_history(a):
+    if a:
+        raise ValueError("project.history accepts no arguments")
+    return {"command": "project.history", **_history_snapshot()}
 
 
 def cmd_arrangement_selection(a):
@@ -793,6 +906,57 @@ def cmd_mixer_list(a):
             yield  # hand FL's thread back before starting the next chunk
 
     return {"track_count": n, "scanned": scanned, "tracks": tracks}
+
+
+def cmd_mixer_peaks(a):
+    """Return a lightweight mixer peak frame for persistent host metering."""
+    unknown = set(a) - {"only_used", "max_tracks"}
+    if unknown:
+        raise ValueError(
+            "mixer.peaks received unsupported arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    only_used = a.get("only_used", True)
+    if type(only_used) is not bool:
+        raise ValueError("only_used must be true or false")
+    total = _mixer_track_count()
+    maximum = _strict_integer(a.get("max_tracks", total), "max_tracks")
+    if maximum < 1 or maximum > total:
+        raise ValueError("max_tracks must be within 1..%d" % total)
+    rows = []
+    for i in range(maximum):
+        name = _safe(lambda: mixer.getTrackName(i), "") or ""
+        left = _safe(lambda: mixer.getTrackPeaks(i, midi.PEAK_L), None)
+        right = _safe(lambda: mixer.getTrackPeaks(i, midi.PEAK_R), None)
+        has_peak = (
+            isinstance(left, (int, float)) and not isinstance(left, bool) and left > 0
+        ) or (
+            isinstance(right, (int, float)) and not isinstance(right, bool) and right > 0
+        )
+        if not only_used or i == 0 or _has_custom_name(name) or has_peak:
+            rows.append({
+                "track": i,
+                "name": name,
+                "volume": _safe(lambda: mixer.getTrackVolume(i), None),
+                "volume_db": _safe(lambda: mixer.getTrackVolume(i, 1), None),
+                "muted": _safe(lambda: mixer.isTrackMuted(i), None),
+                "peak_l": left,
+                "peak_r": right,
+            })
+        if (i + 1) % 16 == 0 and i + 1 < maximum:
+            yield
+    return {
+        "command": "mixer.peaks",
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "observed_idle_tick": _idle_tick,
+        "playing": _safe(lambda: bool(transport.isPlaying()), None),
+        "song_position": _safe(lambda: transport.getSongPos(), None),
+        "track_count": total,
+        "scanned_track_count": maximum,
+        "partial": maximum < total,
+        "only_used": only_used,
+        "tracks": rows,
+    }
 
 
 def cmd_mixer_track(a):
@@ -974,6 +1138,38 @@ def cmd_plugin_params(a):
         "returned": len(params),
         "padding_skipped": padding,
         "params": params,
+    }
+
+
+def cmd_plugin_preset_count(a):
+    target = _plugin_target(a)
+    index = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(index, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    count = _strict_integer(
+        plugins.getPresetCount(index, slot, use_global), "plug-in preset count"
+    )
+    if count < 0 or count > 1000000:
+        raise ValueError("FL reported a plug-in preset count outside 0..1000000")
+    return {
+        "command": "plugin.preset_count",
+        **_plugin_target_report(target),
+        "plugin": _safe(
+            lambda: plugins.getPluginName(index, slot, False, use_global), ""
+        ),
+        "plugin_user_name": _safe(
+            lambda: plugins.getPluginName(index, slot, True, use_global), ""
+        ),
+        "param_count": _safe(
+            lambda: plugins.getParamCount(index, slot, use_global), 0
+        ),
+        "mix_level": None if use_global else _safe(
+            lambda: mixer.getPluginMixLevel(index, slot), None
+        ),
+        "preset_count": count,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
     }
 
 
@@ -1180,6 +1376,11 @@ def _channel_summary(i):
         "name": name,
         "volume": _safe(lambda: channels.getChannelVolume(i, 0, True), None),
         "pan": _safe(lambda: channels.getChannelPan(i, True), None),
+        "pitch": _safe(lambda: channels.getChannelPitch(i, 0, True), None),
+        "pitch_semitones": _safe(
+            lambda: channels.getChannelPitch(i, 1, True), None
+        ),
+        "pitch_range": _safe(lambda: channels.getChannelPitch(i, 2, True), None),
         "muted": None if muted is None else bool(muted),
         "solo": None if solo is None else bool(solo),
         "selected": None if selected is None else bool(selected),
@@ -1215,6 +1416,156 @@ def cmd_channels_list(a):
     }
 
 
+def _pattern_bounds():
+    count = _strict_integer(
+        _safe(lambda: patterns.patternCount(), None), "pattern count"
+    )
+    maximum = _strict_integer(
+        _safe(lambda: patterns.patternMax(), None), "maximum pattern number"
+    )
+    if count < 0 or count > MAX_PATTERN_NUMBER:
+        raise ValueError("FL reported pattern count outside 0..999")
+    if maximum < 1 or maximum > MAX_PATTERN_NUMBER:
+        raise ValueError("FL reported maximum pattern number outside 1..999")
+    return count, maximum
+
+
+def _pattern_index(value):
+    index = _strict_integer(value, "pattern number")
+    _count, maximum = _pattern_bounds()
+    if index < 1 or index > maximum:
+        raise ValueError(
+            "pattern number must be within 1..%d (got %r)" % (maximum, index)
+        )
+    return index
+
+
+def _pattern_summary(index):
+    current = _safe(lambda: patterns.patternNumber(), None)
+    return {
+        "pattern": index,
+        "name": _safe(lambda: patterns.getPatternName(index), "") or "",
+        "color": _fl_color_word(
+            _safe(lambda: patterns.getPatternColor(index), None)
+        ),
+        "length": _safe(lambda: patterns.getPatternLength(index), None),
+        "current": current == index,
+        "selected": _safe(lambda: patterns.isPatternSelected(index), None),
+        "default": _safe(lambda: patterns.isPatternDefault(index), None),
+    }
+
+
+def cmd_patterns_list(a):
+    if a:
+        raise ValueError("patterns.list accepts no arguments")
+    count, maximum = _pattern_bounds()
+    current = _strict_integer(
+        _safe(lambda: patterns.patternNumber(), None), "current pattern number"
+    )
+    rows = []
+    for index in range(1, count + 1):
+        rows.append(_pattern_summary(index))
+        if index % PATTERNS_PER_TICK == 0 and index < count:
+            yield
+    return {
+        "command": "patterns.list",
+        "current_pattern": current,
+        "pattern_count": count,
+        "pattern_max": maximum,
+        "patterns": rows,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+    }
+
+
+def cmd_patterns_find_empty(a):
+    allowed = {"start"}
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "patterns.find_empty received unsupported arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    _count, maximum = _pattern_bounds()
+    start = _strict_integer(a.get("start", 1), "start pattern number")
+    if start < 1 or start > maximum:
+        raise ValueError("start pattern number must be within 1..%d" % maximum)
+    before_current = _strict_integer(
+        _safe(lambda: patterns.patternNumber(), None), "current pattern number"
+    )
+    found = None
+    scanned = 0
+    for index in range(start, maximum + 1):
+        scanned += 1
+        if bool(_safe(lambda index=index: patterns.isPatternDefault(index), False)):
+            found = index
+            break
+        if scanned % PATTERNS_PER_TICK == 0 and index < maximum:
+            yield
+    after_current = _safe(lambda: patterns.patternNumber(), None)
+    return {
+        "command": "patterns.find_empty",
+        "start": start,
+        "empty_pattern": found,
+        "scanned": scanned,
+        "current_pattern_before": before_current,
+        "current_pattern_after": after_current,
+        "current_pattern_unchanged": after_current == before_current,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+    }
+
+
+def _playlist_track_count():
+    count = _strict_integer(
+        _safe(lambda: playlist.trackCount(), None), "Playlist track count"
+    )
+    if count < 0 or count > 10000:
+        raise ValueError("FL reported an invalid Playlist track count")
+    return count
+
+
+def _playlist_track_index(value):
+    index = _strict_integer(value, "Playlist track index")
+    count = _playlist_track_count()
+    if index < 1 or index > count:
+        raise ValueError(
+            "Playlist track index must be within 1..%d (got %r)" % (count, index)
+        )
+    return index
+
+
+def _playlist_track_summary(index):
+    return {
+        "track": index,
+        "name": _safe(lambda: playlist.getTrackName(index), "") or "",
+        "color": _fl_color_word(
+            _safe(lambda: playlist.getTrackColor(index), None)
+        ),
+        "muted": _fl_bool(_safe(lambda: playlist.isTrackMuted(index), None)),
+        "solo": _fl_bool(_safe(lambda: playlist.isTrackSolo(index), None)),
+        "selected": _fl_bool(
+            _safe(lambda: playlist.isTrackSelected(index), None)
+        ),
+        "activity": _safe(lambda: playlist.getTrackActivityLevel(index), None),
+    }
+
+
+def cmd_playlist_list(a):
+    if a:
+        raise ValueError("playlist.list accepts no arguments")
+    count = _playlist_track_count()
+    rows = []
+    for index in range(1, count + 1):
+        rows.append(_playlist_track_summary(index))
+        if index % PLAYLIST_TRACKS_PER_TICK == 0 and index < count:
+            yield
+    return {
+        "command": "playlist.list",
+        "track_count": count,
+        "tracks": rows,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+    }
+
+
 # ---------------------------------------------------------------------------
 # lean verified write surface (current bridge session write gate)
 #
@@ -1237,9 +1588,14 @@ def cmd_channels_list(a):
 #   undo history demonstrably changed. The project is never saved.
 # ---------------------------------------------------------------------------
 
-# The mixer setters store the float they are handed, so this only has to absorb
+# Most mixer setters store the float they are handed, so this only has to absorb
 # float round-tripping - it is not slack for a curve.
 MIXER_READBACK_TOLERANCE = 1e-4
+# FL Studio quantizes the mixer stereo-separation knob to 1/64-unit
+# increments even though the scripting API accepts a float.  Half a step
+# therefore distinguishes the nearest representable setting from a missed
+# write while still rejecting a neighbouring control position.
+STEREO_SEPARATION_READBACK_TOLERANCE = (1.0 / 128.0) + 1e-6
 # How close a plug-in parameter's readback has to be to count as sitting on the
 # requested value when its display text never changed.
 PARAM_NOOP_TOLERANCE = 1e-4
@@ -1374,6 +1730,22 @@ def _expect_text(a, actual, label):
     if not isinstance(expected, str):
         raise ValueError("expected_before for %s must be text" % label)
     if actual != expected:
+        raise ValueError(
+            "expected_before precondition failed for %s: expected %r, found %r; "
+            "nothing was changed" % (label, expected, actual)
+        )
+
+
+def _expect_color(a, actual, label):
+    present, expected = _expected_before(a)
+    if not present:
+        return
+    if _fl_color_word(expected) is None or expected < 0:
+        raise ValueError(
+            "expected_before for %s must be an integer within 0..4294967295"
+            % label
+        )
+    if not _fl_colors_equivalent(actual, expected):
         raise ValueError(
             "expected_before precondition failed for %s: expected %r, found %r; "
             "nothing was changed" % (label, expected, actual)
@@ -1518,6 +1890,90 @@ def cmd_mixer_set_volume(a):
     }
 
 
+def cmd_mixer_set_volume_db(a):
+    """Set a fader by its authoritative dB readback, not a guessed curve."""
+    i = _lean_track(a)
+    wanted = _finite_number(a.get("volume_db"), "volume_db", -60.0, 6.0)
+    tolerance = _finite_number(a.get("tolerance_db", 0.1), "tolerance_db", 0.01, 1.0)
+    _check_session_precondition(a)
+    before = _safe(lambda: mixer.getTrackVolume(i), None)
+    before_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+
+    present, expected = _expected_before(a)
+    if present:
+        if not isinstance(expected, dict):
+            raise ValueError("expected_before for mixer volume dB must be an object")
+        unknown = set(expected) - {"volume_normalized", "volume_db"}
+        supplied = [key for key in expected if expected[key] is not None]
+        if unknown or not supplied:
+            raise ValueError(
+                "expected_before for mixer volume dB accepts volume_normalized "
+                "and/or volume_db"
+            )
+        if expected.get("volume_normalized") is not None:
+            value = _finite_number(
+                expected["volume_normalized"], "expected_before.volume_normalized",
+                0.0, 1.0
+            )
+            if before is None or not _near(float(before), value, MIXER_READBACK_TOLERANCE):
+                _precondition_failure("mixer volume", value, before)
+        if expected.get("volume_db") is not None:
+            value = _finite_number(
+                expected["volume_db"], "expected_before.volume_db", -200.0, 12.0
+            )
+            if before_db is None or not _near(float(before_db), value, tolerance):
+                _precondition_failure("mixer volume dB", value, before_db)
+
+    iterations = 0
+    undone = False
+    after = before
+    after_db = before_db
+    if before_db is None or not _near(float(before_db), wanted, tolerance):
+        undone = _save_undo(
+            "Universal Bridge: volume track %d to %.2f dB" % (i, wanted)
+        )
+        low = 0.0
+        high = 1.0
+        for _step in range(16):
+            candidate = (low + high) / 2.0
+            mixer.setTrackVolume(i, candidate)
+            iterations += 1
+            yield
+            observed_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+            observed = _safe(lambda: mixer.getTrackVolume(i), None)
+            after = observed
+            after_db = observed_db
+            if observed_db is None:
+                break
+            if _near(float(observed_db), wanted, tolerance):
+                break
+            if float(observed_db) < wanted:
+                low = candidate
+            else:
+                high = candidate
+    else:
+        # Preserve the later-idle-tick proof even for a no-op request.
+        yield
+        after = _safe(lambda: mixer.getTrackVolume(i), None)
+        after_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+
+    verified = after_db is not None and _near(float(after_db), wanted, tolerance)
+    return {
+        "command": "mixer.set_volume_db",
+        "undo_point_created": undone,
+        "track": i,
+        "requested_db": wanted,
+        "tolerance_db": tolerance,
+        "before": before,
+        "after": after,
+        "before_db": before_db,
+        "after_db": after_db,
+        "search_iterations": iterations,
+        "verified": verified,
+        **_precondition_report(a),
+    }
+
+
 def cmd_mixer_set_pan(a):
     """Set one mixer pan, -1.0 hard left to 1.0 hard right."""
     i = _lean_track(a)
@@ -1565,6 +2021,142 @@ def cmd_mixer_set_mute(a):
         "requested": want,
         "before": None if before is None else bool(before),
         "after": None if after is None else bool(after),
+        "verified": verified,
+        **_precondition_report(a),
+    }
+
+
+def cmd_mixer_set_solo(a):
+    """Solo or unsolo one track using FL's explicit state argument."""
+    i = _lean_track(a)
+    want = _lean_bool(a, "soloed")
+    _check_session_precondition(a)
+    before = _safe(lambda: mixer.isTrackSolo(i), None)
+    _expect_bool(a, before, "mixer solo state")
+    undone = _save_undo("Universal Bridge: solo track %d" % i)
+    after, verified = yield from _write_and_read_back(
+        lambda: mixer.soloTrack(i, 1 if want else 0),
+        lambda: _safe(lambda: mixer.isTrackSolo(i), None),
+        lambda got: got is not None and bool(got) == want,
+    )
+    return {
+        "command": "mixer.set_solo",
+        "undo_point_created": undone,
+        "track": i,
+        "requested": want,
+        "before": None if before is None else bool(before),
+        "after": None if after is None else bool(after),
+        "verified": verified,
+        **_precondition_report(a),
+    }
+
+
+def cmd_mixer_set_arm(a):
+    """Arm or disarm one track without ever replaying FL's toggle-only call."""
+    i = _lean_track(a)
+    want = _lean_bool(a, "armed")
+    _check_session_precondition(a)
+    before = _safe(lambda: mixer.isTrackArmed(i), None)
+    _expect_bool(a, before, "mixer recording-arm state")
+    if before is None:
+        raise ValueError("FL did not report the mixer recording-arm state")
+    changing = bool(before) != want
+    undone = (
+        _save_undo("Universal Bridge: record arm track %d" % i)
+        if changing
+        else False
+    )
+    if changing:
+        # armTrack has no explicit value argument. One call is the entire
+        # mutation budget: a retry could undo a successful first call.
+        mixer.armTrack(i)
+    yield
+    after = _safe(lambda: mixer.isTrackArmed(i), None)
+    verified = after is not None and bool(after) == want
+    return {
+        "command": "mixer.set_arm",
+        "undo_point_created": undone,
+        "track": i,
+        "requested": want,
+        "before": bool(before),
+        "after": None if after is None else bool(after),
+        "verified": verified,
+        "toggle_dispatched": changing,
+        **_precondition_report(a),
+    }
+
+
+def cmd_mixer_set_color(a):
+    """Set one track color and compare only FL's controllable RGB bits."""
+    i = _lean_track(a)
+    requested = a.get("color")
+    color_arg = _fl_color_argument(requested)
+    want = _fl_color_word(requested)
+    _check_session_precondition(a)
+    before = _fl_color_word(_safe(lambda: mixer.getTrackColor(i), None))
+    _expect_color(a, before, "mixer color")
+    undone = _save_undo("Universal Bridge: color track %d" % i)
+    after, verified = yield from _write_and_read_back(
+        lambda: mixer.setTrackColor(i, color_arg),
+        lambda: _fl_color_word(_safe(lambda: mixer.getTrackColor(i), None)),
+        lambda got: _fl_colors_equivalent(got, want),
+    )
+    return {
+        "command": "mixer.set_color",
+        "undo_point_created": undone,
+        "track": i,
+        "requested": want,
+        "before": before,
+        "after": after,
+        "verified": verified,
+        **_precondition_report(a),
+    }
+
+
+def cmd_mixer_set_stereo_separation(a):
+    """Set one track's stereo-separation control in FL's -1..1 range."""
+    i = _lean_track(a)
+    want = _lean_value(a, "stereo_separation", -1.0, 1.0)
+    _check_session_precondition(a)
+    before = _safe(lambda: mixer.getTrackStereoSep(i), None)
+    _expect_number(a, before, "mixer stereo separation")
+    undone = _save_undo("Universal Bridge: stereo separation track %d" % i)
+    after, verified = yield from _write_and_read_back(
+        lambda: mixer.setTrackStereoSep(i, want),
+        lambda: _safe(lambda: mixer.getTrackStereoSep(i), None),
+        lambda got: _near(got, want, STEREO_SEPARATION_READBACK_TOLERANCE),
+    )
+    return {
+        "command": "mixer.set_stereo_separation",
+        "undo_point_created": undone,
+        "track": i,
+        "requested": want,
+        "before": before,
+        "after": after,
+        "verified": verified,
+        **_precondition_report(a),
+    }
+
+
+def cmd_mixer_select_track(a):
+    """Make one mixer track active and verify the active-track getter."""
+    i = _lean_track(a)
+    _check_session_precondition(a)
+    before = _safe(lambda: mixer.trackNumber(), None)
+    _expect_number(a, before, "active mixer track", tol=0.0)
+    after, verified = yield from _write_and_read_back(
+        lambda: mixer.setActiveTrack(i),
+        lambda: _safe(lambda: mixer.trackNumber(), None),
+        lambda got: got == i and type(got) is int,
+    )
+    return {
+        "command": "mixer.select_track",
+        # Active selection is transient UI state, not an undoable project edit.
+        "undo_point_created": None,
+        "track": i,
+        "requested": i,
+        "before": before,
+        "after": after,
         "verified": verified,
         **_precondition_report(a),
     }
@@ -2434,9 +3026,12 @@ def _expect_track_b_value(expected, key, actual, label, tolerance=None):
     if expected is None or key not in expected:
         return
     wanted = expected[key]
-    if key in ("playing", "muted") and type(wanted) is not bool:
+    if key in ("playing", "recording", "enabled", "muted") and type(wanted) is not bool:
         raise ValueError("expected_before.%s must be true or false" % key)
-    if key in ("color", "mixer_destination") and (
+    if key in (
+        "color", "mixer_destination", "numerator", "position", "count",
+        "project_dirty_flag"
+    ) and (
         isinstance(wanted, bool) or not isinstance(wanted, int)
     ):
         raise ValueError("expected_before.%s must be an integer" % key)
@@ -2623,6 +3218,151 @@ def cmd_transport_set_tempo(a):
     }
 
 
+def cmd_transport_set_recording(a):
+    wanted = _strict_bool_arg(a, "recording")
+    _check_session_precondition(a)
+    before = _safe(lambda: bool(transport.isRecording()), None)
+    expected = _track_b_expected(a, {"recording"}, "transport recording")
+    _expect_track_b_value(expected, "recording", before, "transport recording")
+    if before != wanted:
+        # FL exposes record as a toggle. Dispatch it at most once and never
+        # retry it after an ambiguous transport outcome.
+        transport.record()
+    yield
+    after = _safe(lambda: bool(transport.isRecording()), None)
+    return {
+        "command": "transport.set_recording",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after is wanted,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def _set_transport_toggle(a, command, argument, getter, transport_command):
+    wanted = _strict_bool_arg(a, "enabled")
+    _check_session_precondition(a)
+    before = getter()
+    expected = _track_b_expected(a, {"enabled"}, argument)
+    _expect_track_b_value(expected, "enabled", before, argument)
+    if before != wanted:
+        # These are button commands, not setters. One edge is safe only after
+        # reading the absolute state and must never be replayed.
+        # Image-Line's third argument is pmeflags, not the global-transport
+        # routing flags.  Pass both explicitly: PME_System authorizes ordinary
+        # transport buttons and GT_Global sends the command to FL itself.
+        transport.globalTransport(
+            transport_command, 1, midi.PME_System, midi.GT_Global
+        )
+    yield
+    after = getter()
+    return {
+        "command": command,
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after is wanted,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_transport_set_metronome(a):
+    return (yield from _set_transport_toggle(
+        a,
+        "transport.set_metronome",
+        "transport metronome",
+        _metronome_state,
+        midi.FPT_Metronome,
+    ))
+
+
+def cmd_transport_set_precount(a):
+    return (yield from _set_transport_toggle(
+        a,
+        "transport.set_precount",
+        "transport recording precount",
+        _precount_state,
+        midi.FPT_CountDown,
+    ))
+
+
+def cmd_project_set_time_signature_numerator(a):
+    wanted = _strict_integer(a.get("numerator"), "time-signature numerator")
+    if wanted < 1 or wanted > 32:
+        raise ValueError("time-signature numerator must be within 1..32")
+    _check_session_precondition(a)
+    if _safe(lambda: bool(transport.isPlaying()), False):
+        raise ValueError("time-signature changes require stopped playback")
+    if _safe(lambda: bool(transport.isRecording()), False):
+        raise ValueError("time-signature changes require recording to be off")
+    before = _time_signature_snapshot()
+    expected = _track_b_expected(a, {"numerator"}, "time signature")
+    _expect_track_b_value(
+        expected, "numerator", before["numerator"], "time-signature numerator"
+    )
+    undone = False
+    if before["numerator"] != wanted:
+        undone = _save_undo(
+            "Universal Bridge: time signature numerator %d" % wanted
+        )
+        general.setNumerator(wanted)
+    yield
+    after = _time_signature_snapshot()
+    return {
+        "command": "project.set_time_signature_numerator",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after["numerator"] == wanted,
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def _move_project_history(a, direction):
+    _check_session_precondition(a)
+    before = _history_snapshot()
+    expected = _track_b_expected(
+        a, {"position", "count", "project_dirty_flag"}, "project history"
+    )
+    for key in ("position", "count", "project_dirty_flag"):
+        _expect_track_b_value(expected, key, before[key], "history " + key)
+    if direction == "undo":
+        if not before["can_undo"]:
+            raise ValueError("project undo refused because no earlier history level exists")
+        target = before["position"] - 1
+    else:
+        if not before["can_redo"]:
+            raise ValueError("project redo refused because no later history level exists")
+        target = before["position"] + 1
+    # This absolute API avoids FL's alternate Ctrl+Z behavior and makes the
+    # requested position independently verifiable.
+    general.setUndoHistoryPos(target)
+    yield
+    after = _history_snapshot()
+    return {
+        "command": "project." + direction,
+        "direction": direction,
+        "requested_position": target,
+        "before": before,
+        "after": after,
+        "verified": after["position"] == target,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_project_undo(a):
+    return (yield from _move_project_history(a, "undo"))
+
+
+def cmd_project_redo(a):
+    return (yield from _move_project_history(a, "redo"))
+
+
 def _channel_mix_snapshot(index):
     summary = _channel_summary(index)
     return {
@@ -2648,6 +3388,32 @@ def _channel_route_snapshot(index):
         "mixer_destination": summary["mixer_track"],
         "channel_fingerprint": summary["channel_fingerprint"],
     }
+
+
+def _channel_solo_snapshot(index):
+    summary = _channel_summary(index)
+    return {
+        "soloed": summary["solo"],
+        "channel_fingerprint": summary["channel_fingerprint"],
+    }
+
+
+def _channel_pitch_snapshot(index):
+    summary = _channel_summary(index)
+    return {
+        "pitch": summary["pitch"],
+        "pitch_semitones": summary["pitch_semitones"],
+        "pitch_range": summary["pitch_range"],
+        "channel_fingerprint": summary["channel_fingerprint"],
+    }
+
+
+def _selected_channels():
+    count = int(channels.channelCount(True))
+    return [
+        index for index in range(count)
+        if bool(_safe(lambda index=index: channels.isChannelSelected(index, True), False))
+    ]
 
 
 def _expect_channel(a, before, fields, label):
@@ -2743,6 +3509,103 @@ def cmd_channel_set_mix(a):
     }
 
 
+def cmd_channel_set_solo(a):
+    index = _channel_write_target(a)
+    wanted = _strict_bool_arg(a, "soloed")
+    _check_session_precondition(a)
+    before = _channel_solo_snapshot(index)
+    _expect_channel(
+        a, before,
+        (("soloed", "soloed", None),),
+        "channel solo"
+    )
+    undone = _save_undo("Universal Bridge: channel %d solo" % index)
+    channels.soloChannel(index, int(wanted), True)
+    yield
+    after = _channel_solo_snapshot(index)
+    return {
+        "command": "channel.set_solo",
+        "channel": index,
+        "index_scope": "global",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after["soloed"] is wanted,
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_channel_set_pitch(a):
+    index = _channel_write_target(a)
+    wanted = _finite_number(a.get("pitch"), "pitch", -1.0, 1.0)
+    _check_session_precondition(a)
+    before = _channel_pitch_snapshot(index)
+    _expect_channel(
+        a, before,
+        (("pitch_normalized", "pitch", 1e-4),),
+        "channel pitch"
+    )
+    undone = _save_undo("Universal Bridge: channel %d pitch" % index)
+    channels.setChannelPitch(index, wanted, 0, PICKUP_NONE, True)
+    yield
+    after = _channel_pitch_snapshot(index)
+    return {
+        "command": "channel.set_pitch",
+        "channel": index,
+        "index_scope": "global",
+        "requested": wanted,
+        "before": before,
+        "after": after,
+        "verified": after["pitch"] is not None and _near(
+            float(after["pitch"]), wanted, 1e-4
+        ),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_channel_select(a):
+    index = _channel_write_target(a)
+    if a.get("exclusive") is not True:
+        raise ValueError("channel.select requires exclusive=true")
+    _check_session_precondition(a)
+    before = _selected_channels()
+    expected = _track_b_expected(
+        a, {"selected_channel_indices"}, "channel selection"
+    )
+    if expected is not None:
+        wanted_before = expected.get("selected_channel_indices")
+        if (
+            not isinstance(wanted_before, list)
+            or any(type(value) is not int or value < 0 for value in wanted_before)
+            or wanted_before != sorted(set(wanted_before))
+        ):
+            raise ValueError(
+                "expected_before.selected_channel_indices must be sorted, unique "
+                "non-negative integers"
+            )
+        if wanted_before != before:
+            _precondition_failure(
+                "channel selection", wanted_before, before
+            )
+    channels.selectOneChannel(index, True)
+    yield
+    after = _selected_channels()
+    return {
+        "command": "channel.select",
+        "channel": index,
+        "index_scope": "global",
+        "exclusive": True,
+        "requested": index,
+        "before": before,
+        "after": after,
+        "verified": after == [index],
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
 def cmd_channel_set_identity(a):
     index = _channel_write_target(a)
     requested = {}
@@ -2831,6 +3694,242 @@ def cmd_channel_route_to_mixer(a):
         "before": before,
         "after": after,
         "verified": after["mixer_destination"] == destination,
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def _pattern_identity_snapshot(index):
+    summary = _pattern_summary(index)
+    return {"name": summary["name"], "color": summary["color"]}
+
+
+def cmd_pattern_select(a):
+    index = _pattern_index(a.get("pattern"))
+    _check_session_precondition(a)
+    before = _safe(lambda: patterns.patternNumber(), None)
+    expected = _track_b_expected(
+        a, {"current_pattern_number"}, "current pattern"
+    )
+    if expected is not None:
+        _expect_track_b_value(
+            expected, "current_pattern_number", before, "current pattern"
+        )
+    patterns.jumpToPattern(index)
+    yield
+    after = _safe(lambda: patterns.patternNumber(), None)
+    return {
+        "command": "pattern.select",
+        "requested": index,
+        "before": before,
+        "after": after,
+        "verified": after == index,
+        "undo_point_created": None,
+        **_precondition_report(a),
+    }
+
+
+def cmd_pattern_set_identity(a):
+    index = _pattern_index(a.get("pattern"))
+    requested = {}
+    if "name" in a:
+        name = a["name"]
+        if not isinstance(name, str):
+            raise ValueError("pattern name must be text")
+        if len(name) > MAX_PATTERN_NAME_LENGTH:
+            raise ValueError("pattern name must be at most 64 characters")
+        requested["name"] = name
+    if "color" in a:
+        _fl_color_argument(a["color"])
+        requested["color"] = a["color"]
+    if not requested:
+        raise ValueError("pattern.set_identity requires name, color, or both")
+    _check_session_precondition(a)
+    before = _pattern_identity_snapshot(index)
+    expected = _track_b_expected(a, {"name", "color"}, "pattern identity")
+    if expected is not None:
+        if "name" in expected and expected["name"] != before["name"]:
+            _precondition_failure("pattern name", expected["name"], before["name"])
+        if "color" in expected:
+            wanted_color = expected["color"]
+            _fl_color_argument(wanted_color)
+            if not _fl_colors_equivalent(wanted_color, before["color"]):
+                _precondition_failure(
+                    "pattern color", wanted_color, before["color"]
+                )
+    undone = _save_undo("Universal Bridge: pattern %d identity" % index)
+    if "name" in requested:
+        patterns.setPatternName(index, requested["name"])
+    if "color" in requested:
+        patterns.setPatternColor(index, _fl_color_argument(requested["color"]))
+    yield
+    after = _pattern_identity_snapshot(index)
+    fields = {}
+    if "name" in requested:
+        fields["name"] = after["name"] == requested["name"]
+    if "color" in requested:
+        fields["color"] = _fl_colors_equivalent(
+            after["color"], requested["color"]
+        )
+    return {
+        "command": "pattern.set_identity",
+        "pattern": index,
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_pattern_set_length(a):
+    index = _pattern_index(a.get("pattern"))
+    length = _strict_integer(a.get("length"), "pattern length")
+    if length < 1 or length > MAX_PATTERN_LENGTH_BEATS:
+        raise ValueError("pattern length must be within 1..4096 beats")
+    _check_session_precondition(a)
+    before = _safe(lambda: patterns.getPatternLength(index), None)
+    expected = _track_b_expected(a, {"length_beats"}, "pattern length")
+    if expected is not None:
+        _expect_track_b_value(
+            expected, "length_beats", before, "pattern length"
+        )
+    undone = _save_undo("Universal Bridge: pattern %d length" % index)
+    patterns.setPatternLength(index, length)
+    yield
+    after = _safe(lambda: patterns.getPatternLength(index), None)
+    return {
+        "command": "pattern.set_length",
+        "pattern": index,
+        "requested": length,
+        "before": before,
+        "after": after,
+        "verified": after == length,
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def _playlist_identity_snapshot(index):
+    summary = _playlist_track_summary(index)
+    return {"name": summary["name"], "color": summary["color"]}
+
+
+def _playlist_state_snapshot(index):
+    summary = _playlist_track_summary(index)
+    return {
+        "muted": None if summary["muted"] is None else bool(summary["muted"]),
+        "soloed": None if summary["solo"] is None else bool(summary["solo"]),
+        "selected": None
+        if summary["selected"] is None else bool(summary["selected"]),
+    }
+
+
+def cmd_playlist_set_identity(a):
+    index = _playlist_track_index(a.get("track"))
+    requested = {}
+    if "name" in a:
+        name = a["name"]
+        if not isinstance(name, str):
+            raise ValueError("Playlist track name must be text")
+        if len(name) > MAX_PLAYLIST_TRACK_NAME_LENGTH:
+            raise ValueError("Playlist track name must be at most 64 characters")
+        requested["name"] = name
+    if "color" in a:
+        _fl_color_argument(a["color"])
+        requested["color"] = a["color"]
+    if not requested:
+        raise ValueError("playlist.set_identity requires name, color, or both")
+    _check_session_precondition(a)
+    before = _playlist_identity_snapshot(index)
+    expected = _track_b_expected(a, {"name", "color"}, "Playlist identity")
+    if expected is not None:
+        if "name" in expected and expected["name"] != before["name"]:
+            _precondition_failure(
+                "Playlist track name", expected["name"], before["name"]
+            )
+        if "color" in expected:
+            _fl_color_argument(expected["color"])
+            if not _fl_colors_equivalent(expected["color"], before["color"]):
+                _precondition_failure(
+                    "Playlist track color", expected["color"], before["color"]
+                )
+    undone = _save_undo("Universal Bridge: Playlist track %d identity" % index)
+    if "name" in requested:
+        playlist.setTrackName(index, requested["name"])
+    if "color" in requested:
+        playlist.setTrackColor(index, _fl_color_argument(requested["color"]))
+    yield
+    after = _playlist_identity_snapshot(index)
+    fields = {}
+    if "name" in requested:
+        fields["name"] = after["name"] == requested["name"]
+    if "color" in requested:
+        fields["color"] = _fl_colors_equivalent(
+            after["color"], requested["color"]
+        )
+    return {
+        "command": "playlist.set_identity",
+        "track": index,
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
+        "undo_point_created": undone,
+        **_precondition_report(a),
+    }
+
+
+def cmd_playlist_set_state(a):
+    index = _playlist_track_index(a.get("track"))
+    requested = {}
+    for public in ("muted", "soloed", "selected"):
+        if public in a:
+            requested[public] = _strict_bool_arg(a, public)
+    if not requested:
+        raise ValueError(
+            "playlist.set_state requires muted, soloed, selected, or a combination"
+        )
+    _check_session_precondition(a)
+    before = _playlist_state_snapshot(index)
+    expected = _track_b_expected(
+        a, {"muted", "soloed", "selected"}, "Playlist track state"
+    )
+    if expected is not None:
+        for field in ("muted", "soloed", "selected"):
+            if field in expected and expected[field] != before[field]:
+                _precondition_failure(
+                    "Playlist track %s" % field, expected[field], before[field]
+                )
+    undone = (
+        _save_undo("Universal Bridge: Playlist track %d state" % index)
+        if "muted" in requested or "soloed" in requested
+        else None
+    )
+    if "muted" in requested:
+        playlist.muteTrack(index, int(requested["muted"]), 0)
+    if "soloed" in requested:
+        playlist.soloTrack(index, int(requested["soloed"]), 0)
+    if "selected" in requested and before["selected"] is not requested["selected"]:
+        # Playlist selection exposes only a toggle. It is issued at most once
+        # and never enters the generic retry helper.
+        playlist.selectTrack(index)
+    yield
+    after = _playlist_state_snapshot(index)
+    fields = {
+        field: after[field] is wanted for field, wanted in requested.items()
+    }
+    return {
+        "command": "playlist.set_state",
+        "track": index,
+        "requested": requested,
+        "before": before,
+        "after": after,
+        "verified_fields": fields,
+        "verified": all(fields.values()),
         "undo_point_created": undone,
         **_precondition_report(a),
     }
@@ -3173,23 +4272,308 @@ def cmd_channel_trigger_note(a):
     }
 
 
+# ---------------------------------------------------------------------------
+# Creative targeting, section markers, and public REC-event automation
+# ---------------------------------------------------------------------------
+
+
+def _arrangement_marker_names():
+    """Read the contiguous public marker-name index without inventing times."""
+    names = []
+    for index in range(MAX_ARRANGEMENT_MARKERS_SCANNED):
+        name = _safe(lambda index=index: arrangement.getMarkerName(index), "")
+        if not isinstance(name, str) or not name:
+            break
+        names.append(name)
+    return names
+
+
+def cmd_creative_prepare_piano_roll(a):
+    """Select one global channel/pattern and focus the Piano Roll.
+
+    This changes transient UI targeting only. The host-side creative subsystem
+    writes and triggers the separate Piano Roll script after this receipt.
+    """
+    _require_global_scope(a)
+    channel = _channel_index(a.get("channel"))
+    pattern = _strict_integer(a.get("pattern"), "pattern")
+    maximum = _strict_integer(patterns.patternMax(), "maximum pattern number")
+    if pattern < 1 or pattern > maximum:
+        raise ValueError("pattern must be within the live range 1..%d" % maximum)
+    _check_session_precondition(a)
+    before_channels = _selected_channels()
+    before_pattern = _strict_integer(patterns.patternNumber(), "current pattern")
+    window_id = getattr(midi, "widPianoRoll", None)
+    if window_id is None or not hasattr(ui, "showWindow"):
+        raise ValueError("FL does not expose ui.showWindow(midi.widPianoRoll)")
+    before_visible = _safe(lambda: bool(ui.getVisible(window_id)), None)
+    patterns.jumpToPattern(pattern)
+    channels.selectOneChannel(channel, True)
+    ui.showWindow(window_id)
+    yield
+    after_channels = _selected_channels()
+    after_pattern = _strict_integer(patterns.patternNumber(), "current pattern")
+    after_visible = _safe(lambda: bool(ui.getVisible(window_id)), None)
+    return {
+        "command": "creative.prepare_piano_roll",
+        "channel_index": channel,
+        "pattern_number": pattern,
+        "before_channel_indices": before_channels,
+        "after_channel_indices": after_channels,
+        "before_pattern_number": before_pattern,
+        "after_pattern_number": after_pattern,
+        "piano_roll_visible_before": before_visible,
+        "piano_roll_visible_after": after_visible,
+        "selected_target_verified": (
+            after_channels == [channel] and after_pattern == pattern
+        ),
+        "piano_roll_visibility_verified": (
+            None if after_visible is None else bool(after_visible)
+        ),
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "project_saved": False,
+    }
+
+
+def cmd_arrangement_add_markers(a):
+    """Add bounded absolute timeline markers and verify their names appeared.
+
+    Image-Line exposes marker names by index but no marker-time getter. The
+    response therefore proves name-count growth after a later idle tick and
+    reports requested time plus its FL hint, while explicitly leaving time
+    verification unavailable.
+    """
+    values = a.get("markers")
+    if not isinstance(values, list) or not (
+            1 <= len(values) <= MAX_ARRANGEMENT_MARKERS_PER_WRITE):
+        raise ValueError(
+            "markers must contain 1..%d entries"
+            % MAX_ARRANGEMENT_MARKERS_PER_WRITE
+        )
+    parsed = []
+    for index, value in enumerate(values):
+        if not isinstance(value, dict) or set(value) != {"time_ticks", "name"}:
+            raise ValueError(
+                "marker %d must contain exactly time_ticks and name" % index
+            )
+        ticks = _strict_integer(value.get("time_ticks"), "marker time_ticks")
+        name = value.get("name")
+        if ticks < 0 or ticks > 0x7FFFFFFF:
+            raise ValueError("marker time_ticks must be within 0..2147483647")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("marker name must be non-empty text")
+        if len(name) > MAX_ARRANGEMENT_MARKER_NAME_LENGTH:
+            raise ValueError(
+                "marker name must be at most %d characters"
+                % MAX_ARRANGEMENT_MARKER_NAME_LENGTH
+            )
+        parsed.append((ticks, name))
+    _check_session_precondition(a)
+    if _safe(lambda: bool(transport.isPlaying()), False):
+        raise ValueError("arrangement marker writes require stopped playback")
+    if _safe(lambda: bool(transport.isRecording()), False):
+        raise ValueError("arrangement marker writes require recording to be off")
+    before = _arrangement_marker_names()
+    before_counts = {name: before.count(name) for _ticks, name in parsed}
+    undone = _save_undo("Universal Bridge: add arrangement markers")
+    requested = []
+    for ticks, name in parsed:
+        arrangement.addAutoTimeMarker(ticks, name)
+        requested.append({
+            "time_ticks": ticks,
+            "name": name,
+            "time_hint": _safe(
+                lambda ticks=ticks: arrangement.currentTimeHint(1, ticks), ""
+            ) or "",
+        })
+    yield
+    after = _arrangement_marker_names()
+    names_verified = all(
+        after.count(name) >= before_counts[name] + sum(
+            1 for _ticks, requested_name in parsed if requested_name == name
+        )
+        for name in before_counts
+    )
+    return {
+        "command": "arrangement.add_markers",
+        "requested": requested,
+        "before_marker_names": before,
+        "after_marker_names": after,
+        "names_verified": names_verified,
+        "times_verified": False,
+        "verification_status": (
+            "name_count_verified_time_unobservable"
+            if names_verified else "marker_name_readback_unverified"
+        ),
+        # The public API has no marker-time readback. Never roll a partial
+        # observation into the kernel's fully verified meaning.
+        "verified": False,
+        "undo_point_created": undone,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "project_saved": False,
+    }
+
+
+def _automation_target(a):
+    kind = a.get("target_kind")
+    prop = a.get("property")
+    index = a.get("target_index")
+    if kind not in ("mixer", "channel"):
+        raise ValueError("target_kind must be mixer or channel")
+    if kind == "mixer":
+        track_args = {
+            "track": index,
+            "allow_master": a.get("allow_master", False),
+        }
+        index = _lean_track(track_args)
+        definitions = {
+            "volume": (
+                getattr(midi, "REC_Mixer_Vol"),
+                lambda: mixer.getTrackVolume(index),
+                lambda value: value,
+            ),
+            "pan": (
+                getattr(midi, "REC_Mixer_Pan"),
+                lambda: mixer.getTrackPan(index),
+                lambda value: (float(value) + 1.0) / 2.0,
+            ),
+            "stereo_separation": (
+                getattr(midi, "REC_Mixer_SS"),
+                lambda: mixer.getTrackStereoSep(index),
+                lambda value: (float(value) + 1.0) / 2.0,
+            ),
+        }
+        if prop not in definitions:
+            raise ValueError(
+                "mixer automation property must be volume, pan, or stereo_separation"
+            )
+        base, getter, normalize = definitions[prop]
+        event_id = int(base) + int(mixer.getTrackPluginId(index, 0))
+    else:
+        _require_global_scope(a)
+        index = _channel_index(index)
+        definitions = {
+            "volume": (
+                getattr(midi, "REC_Chan_Vol"),
+                lambda: channels.getChannelVolume(index, 0, True),
+                lambda value: value,
+            ),
+            "pan": (
+                getattr(midi, "REC_Chan_Pan"),
+                lambda: channels.getChannelPan(index, True),
+                lambda value: (float(value) + 1.0) / 2.0,
+            ),
+        }
+        if prop not in definitions:
+            raise ValueError("channel automation property must be volume or pan")
+        base, getter, normalize = definitions[prop]
+        event_id = int(base) + int(channels.getRecEventId(index, True))
+    return kind, index, prop, event_id, getter, normalize
+
+
+def cmd_automation_record_value(a):
+    """Dispatch one documented REC event while FL is actively recording.
+
+    The controlled value is read back later. FL exposes no automation-point
+    getter, so event capture itself remains explicitly unobservable.
+    """
+    normalized = _lean_value(a, "value_normalized", 0.0, 1.0)
+    _check_session_precondition(a)
+    kind, index, prop, event_id, getter, normalize = _automation_target(a)
+    if not _safe(lambda: bool(transport.isPlaying()), False):
+        raise ValueError("automation capture requires active playback")
+    if not _safe(lambda: bool(transport.isRecording()), False):
+        raise ValueError("automation capture requires FL recording to be enabled")
+    before_native = _safe(getter, None)
+    before = None if before_native is None else normalize(before_native)
+    expected = a.get("expected_before")
+    if expected is not None:
+        if isinstance(expected, bool) or not isinstance(expected, (int, float)):
+            raise ValueError("expected_before must be a normalized number")
+        if not math.isfinite(float(expected)) or not 0.0 <= float(expected) <= 1.0:
+            raise ValueError("expected_before must be within 0..1")
+        if not _near(before, float(expected), 1e-4):
+            _precondition_failure("automation target", expected, before)
+    before_position = _safe(
+        lambda: transport.getSongPos(midi.SONGLENGTH_ABSTICKS), None
+    )
+    undone = _save_undo(
+        "Universal Bridge: record %s %d %s automation" % (kind, index, prop)
+    )
+    maximum = int(getattr(midi, "FromMIDI_Max", 65536))
+    controller_value = int(round(normalized * maximum))
+    flags = int(getattr(midi, "REC_MIDIController"))
+    event_result = general.processRECEvent(event_id, controller_value, flags)
+    yield
+    after_native = _safe(getter, None)
+    after = None if after_native is None else normalize(after_native)
+    after_position = _safe(
+        lambda: transport.getSongPos(midi.SONGLENGTH_ABSTICKS), None
+    )
+    value_verified = _near(after, normalized, 2e-3)
+    capture_conditions_held = bool(
+        _safe(lambda: bool(transport.isPlaying()), False)
+        and _safe(lambda: bool(transport.isRecording()), False)
+    )
+    return {
+        "command": "automation.record_value",
+        "target_kind": kind,
+        "target_index": index,
+        "property": prop,
+        "event_id": event_id,
+        "controller_value": controller_value,
+        "process_rec_event_result": event_result,
+        "requested_normalized": normalized,
+        "before_normalized": before,
+        "after_normalized": after,
+        "control_value_verified": value_verified,
+        "capture_conditions_held": capture_conditions_held,
+        "song_position_before_ticks": before_position,
+        "song_position_after_ticks": after_position,
+        "automation_event_recorded": None,
+        "automation_event_verification": "unavailable_no_public_point_getter",
+        "verified": False,
+        "undo_point_created": undone,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "expected_before_applied": expected is not None,
+        "project_saved": False,
+    }
+
+
 HANDLERS = {
     "ping": cmd_ping,
     "session.set_write_mode": cmd_session_set_write_mode,
     "project.info": cmd_project_info,
+    "project.history": cmd_project_history,
     "arrangement.selection": cmd_arrangement_selection,
     "mixer.list": cmd_mixer_list,
+    "mixer.peaks": cmd_mixer_peaks,
     "mixer.track": cmd_mixer_track,
     "transport.set_playing": cmd_transport_set_playing,
     "transport.stop": cmd_transport_stop,
     "transport.set_song_position": cmd_transport_set_song_position,
     "transport.set_loop_mode": cmd_transport_set_loop_mode,
     "transport.set_tempo": cmd_transport_set_tempo,
+    "transport.set_recording": cmd_transport_set_recording,
+    "transport.set_metronome": cmd_transport_set_metronome,
+    "transport.set_precount": cmd_transport_set_precount,
+    "project.set_time_signature_numerator": cmd_project_set_time_signature_numerator,
+    "project.undo": cmd_project_undo,
+    "project.redo": cmd_project_redo,
     # The lean verified write surface; reachable only while the bridge session
     # reports write_test mode, see LEAN_WRITE_COMMANDS in _dispatch.
     "mixer.set_volume": cmd_mixer_set_volume,
+    "mixer.set_volume_db": cmd_mixer_set_volume_db,
     "mixer.set_pan": cmd_mixer_set_pan,
     "mixer.set_mute": cmd_mixer_set_mute,
+    "mixer.set_solo": cmd_mixer_set_solo,
+    "mixer.set_arm": cmd_mixer_set_arm,
+    "mixer.set_color": cmd_mixer_set_color,
+    "mixer.set_stereo_separation": cmd_mixer_set_stereo_separation,
+    "mixer.select_track": cmd_mixer_select_track,
     "mixer.set_eq": cmd_mixer_set_eq,
     "mixer.set_name": cmd_mixer_set_name,
     "mixer.set_send": cmd_mixer_set_send,
@@ -3198,14 +4582,29 @@ HANDLERS = {
     "plugin.set_param_display": cmd_plugin_set_param_display,
     "plugin.set_param_option": cmd_plugin_set_param_option,
     "plugin.params": cmd_plugin_params,
+    "plugin.preset_count": cmd_plugin_preset_count,
     "plugin.scan_params": cmd_plugin_scan_params,
     "channels.list": cmd_channels_list,
+    "patterns.list": cmd_patterns_list,
+    "patterns.find_empty": cmd_patterns_find_empty,
+    "playlist.list": cmd_playlist_list,
     "channel.set_mix": cmd_channel_set_mix,
+    "channel.set_solo": cmd_channel_set_solo,
+    "channel.set_pitch": cmd_channel_set_pitch,
+    "channel.select": cmd_channel_select,
+    "pattern.select": cmd_pattern_select,
+    "pattern.set_identity": cmd_pattern_set_identity,
+    "pattern.set_length": cmd_pattern_set_length,
+    "playlist.set_identity": cmd_playlist_set_identity,
+    "playlist.set_state": cmd_playlist_set_state,
     "channel.set_identity": cmd_channel_set_identity,
     "channel.route_to_mixer": cmd_channel_route_to_mixer,
     "sequencer.get": cmd_sequencer_get,
     "sequencer.set": cmd_sequencer_set,
     "channel.trigger_note": cmd_channel_trigger_note,
+    "creative.prepare_piano_roll": cmd_creative_prepare_piano_roll,
+    "arrangement.add_markers": cmd_arrangement_add_markers,
+    "automation.record_value": cmd_automation_record_value,
 }
 
 

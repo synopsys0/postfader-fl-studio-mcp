@@ -91,6 +91,7 @@ async def async_main(args, *, checkpoint=None):
             "physical_io_performed": False,
             "authoritative_tools": list(surface.all_tools),
             "read_tools": list(surface.read_tools),
+            "workflow_reads_excluded": list(surface.workflow_read_tools),
             "arguments": arguments,
             "requested_midi_port": args.midi_port,
             "per_tool_timeout_seconds": args.per_tool_timeout_seconds,

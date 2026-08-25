@@ -204,9 +204,23 @@ class NativePowerShellTests(unittest.TestCase):
         self.assertTrue(Path(facts["repository_root"]).is_absolute())
         self.assertFalse(facts["would_write_client_configuration"])
         self.assertFalse(facts["persistent_environment_changes"])
-        self.assertTrue(facts["configuration_help_command"].startswith("& '"))
-        self.assertIn("' --help", facts["configuration_help_command"])
-        self.assertIn(os.fspath(ROOT), facts["configuration_help_command"])
+        self.assertTrue(facts["guided_setup_command"].startswith("& '"))
+        self.assertIn("postfader.exe' setup", facts["guided_setup_command"])
+        self.assertIn(os.fspath(ROOT), facts["guided_setup_command"])
+
+    def test_release_bootstrap_defers_user_data_and_bridge_to_guided_setup(self):
+        result = self.run_script(
+            "install.ps1",
+            "-DryRun",
+            "-SkipBridgeDeployment",
+            "-Python",
+            sys.executable,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        facts = json.loads(result.stdout)
+        self.assertIsNone(facts["user_data_dir"])
+        self.assertFalse(facts["would_deploy_packaged_bridge"])
+        self.assertFalse(facts["would_refuse_bridge_replacement"])
 
     def test_installer_rejects_relative_user_data_before_work(self):
         result = self.run_script(
@@ -298,7 +312,15 @@ class BootstrapSourceSafetyTests(unittest.TestCase):
         self.assertNotIn(".mcp.json\"", combined)
         self.assertNotIn("config.toml", combined)
         self.assertNotIn("claude_desktop_config", combined)
-        self.assertIn("generate_mcp_config.py", combined)
+        self.assertIn("postfader.exe\"\n$GuidedSetupCommand", powershell)
+        self.assertIn('"$VENV/bin/postfader"', shell)
+        self.assertIn("(3, 10)", combined)
+        self.assertIn("(3, 15)", combined)
+        self.assertIn("--skip-bridge-deployment", shell)
+        self.assertIn("SkipBridgeDeployment", powershell)
+        for version in ("3.14", "3.13", "3.12", "3.11", "3.10"):
+            self.assertIn("python" + version, shell)
+            self.assertIn('"-' + version + '"', powershell)
 
     def test_launcher_never_persists_or_kills(self):
         source = (ROOT / "scripts" / "launch_fl_studio.ps1").read_text(

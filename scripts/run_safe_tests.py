@@ -38,6 +38,8 @@ SAFE_TESTS = (
     "tests/test_bridge_stamp.py",
     "tests/test_bridge_install.py",
     "tests/test_windows_bootstrap.py",
+    "tests/test_setup_wizard.py",
+    "tests/test_codex_installer.py",
     "tests/test_diagnostics.py",
     "tests/test_live_acceptance.py",
     "tests/test_bridge.py",
@@ -46,6 +48,7 @@ SAFE_TESTS = (
     "tests/test_file_transport.py",
     "tests/test_readonly.py",
     "tests/test_readonly_mcp.py",
+    "tests/test_sdk_compatibility.py",
     "tests/test_tick_budget.py",
     "tests/test_midi_framing.py",
     "tests/test_resource_bounds.py",
@@ -54,8 +57,12 @@ SAFE_TESTS = (
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
+    "tests/test_release_bundles.py",
     "tests/test_mcpb.py",
     "tests/test_performance.py",
+    "tests/test_workflows.py",
+    "tests/test_mixing.py",
+    "tests/test_creative.py",
 )
 
 

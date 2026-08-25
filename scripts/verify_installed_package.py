@@ -42,9 +42,11 @@ def main(argv=None) -> int:
     }
     expected_entries = {
         "fl-studio-mcp": "fl_studio_mcp.mcp_server:main",
+        "postfader": "fl_studio_mcp.cli:main",
         "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
         "postfader-doctor": "fl_studio_mcp.diagnostics:main",
         "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+        "postfader-setup": "fl_studio_mcp.setup_wizard:main",
     }
     if entries != expected_entries:
         failures.append("installed console entry points differ: %s" % entries)

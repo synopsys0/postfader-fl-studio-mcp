@@ -41,9 +41,16 @@ MAILBOX = tempfile.mkdtemp(prefix="flmcp-readonly-e2e-")
 BRIDGE_PORT = None
 
 WRITE_TOOLS = {
+    "fl_apply_verified_batch",
     "fl_set_mixer_volume",
+    "fl_set_mixer_volume_db",
     "fl_set_mixer_pan",
     "fl_set_mixer_mute",
+    "fl_set_mixer_solo",
+    "fl_set_mixer_arm",
+    "fl_set_mixer_color",
+    "fl_set_mixer_stereo_separation",
+    "fl_select_mixer_track",
     "fl_set_track_eq",
     "fl_set_mixer_name",
     "fl_set_mixer_send",
@@ -56,13 +63,62 @@ WRITE_TOOLS = {
     "fl_set_song_position",
     "fl_set_loop_mode",
     "fl_set_tempo",
+    "fl_set_recording",
+    "fl_set_metronome",
+    "fl_set_precount",
+    "fl_set_time_signature_numerator",
+    "fl_undo",
+    "fl_redo",
     "fl_set_channel_mix",
+    "fl_set_channel_solo",
+    "fl_set_channel_pitch",
+    "fl_select_channel",
+    "fl_select_pattern",
+    "fl_set_pattern_identity",
+    "fl_set_pattern_length",
+    "fl_set_playlist_track_identity",
+    "fl_set_playlist_track_state",
     "fl_set_channel_identity",
     "fl_route_channel_to_mixer",
     "fl_set_step_sequence",
 }
 EPHEMERAL_TOOLS = {"fl_trigger_note"}
 MODE_TOOLS = {"fl_set_write_mode"}
+MIX_READ_TOOLS = {
+    "mix_doctor",
+    "mix_reference_recommendations",
+    "mix_masking_recommendations",
+    "mix_get_peak_watch",
+    "mix_list_plugin_profiles",
+    "mix_inspect_plugin_compatibility",
+    "mix_resolve_processing_intent",
+    "mix_get_plan",
+    "mix_finish_assessment",
+}
+WORKFLOW_STATE_TOOLS = {
+    "mix_start_peak_watch",
+    "mix_stop_peak_watch",
+    "mix_create_gain_stage_plan",
+    "mix_create_plan",
+    "piano_roll_bridge",
+}
+PLAN_APPLY_TOOLS = {"mix_apply_plan"}
+CREATIVE_READ_TOOLS = {
+    "compose_chord_progression",
+    "compose_melody",
+    "compose_bassline",
+    "compose_drums",
+    "audio_estimate_tempo_and_key",
+    "audio_transcribe_melody",
+}
+CREATIVE_FL_TOOLS = {
+    "piano_roll_write_notes",
+    "piano_roll_transform",
+    "arrangement_prepare_pattern",
+    "arrangement_add_section_markers",
+    "automation_record_value",
+}
+FILE_MUTATING_TOOLS = {"midi_export_type1"}
 EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_get_capabilities",
     "fl_get_project_summary",
@@ -76,21 +132,61 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     "copilot_capture_readonly_inspection",
     "fl_list_channels",
     "fl_get_step_sequence",
+    "fl_list_patterns",
+    "fl_find_empty_pattern",
+    "fl_list_playlist_tracks",
+    "fl_get_project_history",
+    "fl_get_plugin_preset_count",
     *EPHEMERAL_TOOLS,
     *MODE_TOOLS,
+    *MIX_READ_TOOLS,
+    *WORKFLOW_STATE_TOOLS,
+    *PLAN_APPLY_TOOLS,
+    *CREATIVE_READ_TOOLS,
+    *CREATIVE_FL_TOOLS,
+    *FILE_MUTATING_TOOLS,
     # File measurement, not FL control.
     "audio_analyze_file",
     "audio_compare_files",
     "audio_analyze_masking",
     "audio_find_recent_bounces",
 }
+EXPECTED_RESOURCES = {
+    "fl://capabilities",
+    "fl://status",
+    "fl://project",
+    "fl://transport",
+    "fl://mixer",
+    "fl://channels",
+    "fl://plugins",
+    "fl://patterns",
+}
 # One minimal, in-range call per write tool. This fake bridge is pumped
 # in-process without FL_BRIDGE_ENABLE_WRITES, so each of these must be refused
 # by name rather than reaching FL.
 WRITE_CALLS = {
+    "fl_apply_verified_batch": {
+        "operations": [
+            {
+                "operation_id": "volume-1",
+                "operation": "mixer_volume",
+                "track_index": 3,
+                "volume_normalized": 0.65,
+            }
+        ]
+    },
     "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 0.65},
+    "fl_set_mixer_volume_db": {"track_index": 3, "volume_db": -6.0},
     "fl_set_mixer_pan": {"track_index": 3, "pan": -0.4},
     "fl_set_mixer_mute": {"track_index": 3, "muted": True},
+    "fl_set_mixer_solo": {"track_index": 3, "soloed": True},
+    "fl_set_mixer_arm": {"track_index": 3, "armed": True},
+    "fl_set_mixer_color": {"track_index": 3, "color": 0x0055AA},
+    "fl_set_mixer_stereo_separation": {
+        "track_index": 3,
+        "stereo_separation": 0.35,
+    },
+    "fl_select_mixer_track": {"track_index": 3},
     "fl_set_track_eq": {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
     "fl_set_mixer_name": {"track_index": 3, "name": "Lead Verb"},
     "fl_set_mixer_send": {
@@ -126,7 +222,21 @@ WRITE_CALLS = {
     "fl_set_song_position": {"position_normalized": 0.25},
     "fl_set_loop_mode": {"loop_mode": "pattern"},
     "fl_set_tempo": {"tempo_bpm": 128.0},
+    "fl_set_recording": {"recording": True},
+    "fl_set_metronome": {"enabled": True},
+    "fl_set_precount": {"enabled": True},
+    "fl_set_time_signature_numerator": {"numerator": 3},
+    "fl_undo": {},
+    "fl_redo": {},
     "fl_set_channel_mix": {"channel_index": 0, "volume_normalized": 0.7},
+    "fl_set_channel_solo": {"channel_index": 0, "soloed": True},
+    "fl_set_channel_pitch": {"channel_index": 0, "pitch_normalized": 0.25},
+    "fl_select_channel": {"channel_index": 1},
+    "fl_select_pattern": {"pattern_number": 2},
+    "fl_set_pattern_identity": {"pattern_number": 1, "name": "Intro"},
+    "fl_set_pattern_length": {"pattern_number": 1, "length_beats": 8},
+    "fl_set_playlist_track_identity": {"track_index": 1, "name": "Vocals"},
+    "fl_set_playlist_track_state": {"track_index": 1, "muted": True},
     "fl_set_channel_identity": {"channel_index": 0, "name": "Demo"},
     "fl_route_channel_to_mixer": {"channel_index": 0, "mixer_destination": 3},
     "fl_set_step_sequence": {
@@ -164,6 +274,14 @@ def payload(result):
     for block in result.content:
         if getattr(block, "type", None) == "text":
             return json.loads(block.text)
+    return None
+
+
+def resource_payload(result):
+    for content in result.contents:
+        text = getattr(content, "text", None)
+        if isinstance(text, str):
+            return json.loads(text)
     return None
 
 
@@ -241,14 +359,83 @@ async def run():
                 names == EXPECTED_TOOLS,
                 sorted(names ^ EXPECTED_TOOLS),
             )
+            resources = (await session.list_resources()).resources
+            resource_uris = {str(resource.uri) for resource in resources}
             check(
-                "no transport, undo, render or generic API tools exposed",
+                "exactly the eight live FL resources are exposed",
+                resource_uris == EXPECTED_RESOURCES,
+                sorted(resource_uris ^ EXPECTED_RESOURCES),
+            )
+            capabilities_resource = resource_payload(
+                await session.read_resource("fl://capabilities")
+            )
+            check(
+                "capabilities resource uses the live compatible bridge",
+                capabilities_resource["connection"]["compatible"] is True,
+                capabilities_resource,
+            )
+            status_resource = resource_payload(
+                await session.read_resource("fl://status")
+            )
+            check(
+                "status resource combines project, transport, and write mode",
+                status_resource["project_title"] == "Synthetic Test Project"
+                and status_resource["transport"]["playing"] is False
+                and status_resource["verified_writes_enabled"] is False,
+                status_resource,
+            )
+            mixer_resource = resource_payload(
+                await session.read_resource("fl://mixer")
+            )
+            check(
+                "mixer resource returns the bounded authoritative inventory",
+                mixer_resource["total_track_count"] == 126
+                and len(mixer_resource["tracks"]) == 126,
+                mixer_resource,
+            )
+            channels_resource = resource_payload(
+                await session.read_resource("fl://channels")
+            )
+            check(
+                "channel resource preserves global channel scope",
+                channels_resource["total_channel_count"]
+                == len(channels_resource["channels"])
+                and all(
+                    channel["index_scope"] == "global"
+                    for channel in channels_resource["channels"]
+                ),
+                channels_resource,
+            )
+            plugins_resource = resource_payload(
+                await session.read_resource("fl://plugins")
+            )
+            check(
+                "plugin resource includes target-aware loaded plug-ins",
+                bool(plugins_resource["plugins"])
+                and all(
+                    plugin["target"]["kind"]
+                    in {"mixer_effect", "channel_generator"}
+                    for plugin in plugins_resource["plugins"]
+                ),
+                plugins_resource,
+            )
+            patterns_resource = resource_payload(
+                await session.read_resource("fl://patterns")
+            )
+            check(
+                "pattern resource reports the live current pattern",
+                patterns_resource["current_pattern_number"] == 1
+                and patterns_resource["patterns"][0]["current"] is True,
+                patterns_resource,
+            )
+            check(
+                "no render, project-save or generic API tools exposed",
                 not [
                     name
                     for name in names
                     if any(
                         token in name
-                        for token in ("undo", "apply", "render", "api_call", "save")
+                        for token in ("render", "api_call", "save")
                     )
                 ],
                 sorted(names),
@@ -260,7 +447,14 @@ async def run():
                     and tool.annotations.read_only_hint
                     and tool.annotations.destructive_hint is False
                     for tool in tools
-                    if tool.name not in WRITE_TOOLS | EPHEMERAL_TOOLS | MODE_TOOLS
+                    if tool.name
+                    not in WRITE_TOOLS
+                    | EPHEMERAL_TOOLS
+                    | MODE_TOOLS
+                    | WORKFLOW_STATE_TOOLS
+                    | PLAN_APPLY_TOOLS
+                    | CREATIVE_FL_TOOLS
+                    | FILE_MUTATING_TOOLS
                 ),
             )
             check(
@@ -297,6 +491,56 @@ async def run():
                     if tool.name in MODE_TOOLS
                 ),
             )
+            check(
+                "mix workflow registries are non-destructive process-local state",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is False
+                    for tool in tools
+                    if tool.name in WORKFLOW_STATE_TOOLS
+                ),
+                sorted(WORKFLOW_STATE_TOOLS),
+            )
+            check(
+                "mix plan application is an explicit non-idempotent FL mutation",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is False
+                    for tool in tools
+                    if tool.name in PLAN_APPLY_TOOLS
+                ),
+                sorted(PLAN_APPLY_TOOLS),
+            )
+            check(
+                "creative FL tools are explicit non-idempotent live mutations",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is False
+                    and tool.annotations.open_world_hint is True
+                    for tool in tools
+                    if tool.name in CREATIVE_FL_TOOLS
+                ),
+                sorted(CREATIVE_FL_TOOLS),
+            )
+            check(
+                "MIDI export is a closed-world local file mutation",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is False
+                    and tool.annotations.open_world_hint is False
+                    for tool in tools
+                    if tool.name in FILE_MUTATING_TOOLS
+                ),
+                sorted(FILE_MUTATING_TOOLS),
+            )
             by_name = {tool.name: tool for tool in tools}
             check(
                 "every write tool exposes optional session and before-state preconditions",
@@ -306,7 +550,7 @@ async def run():
                     and "session_fingerprint"
                     not in set(by_name[name].input_schema.get("required", []))
                     and (
-                        name == "fl_set_step_sequence"
+                        name in {"fl_set_step_sequence", "fl_apply_verified_batch"}
                         or (
                             "expected_before"
                             in set(by_name[name].input_schema.get("properties", {}))

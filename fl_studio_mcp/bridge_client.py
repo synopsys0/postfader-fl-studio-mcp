@@ -162,13 +162,19 @@ if MAX_SYSEX_FRAME_BYTES > WINMM_SYSEX_BUFFER_BYTES:
 IDEMPOTENT_READ_COMMANDS = frozenset({
     "ping",
     "project.info",
+    "project.history",
     "arrangement.selection",
     "mixer.list",
+    "mixer.peaks",
     "mixer.track",
     "plugin.params",
+    "plugin.preset_count",
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
+    "patterns.list",
+    "patterns.find_empty",
+    "playlist.list",
 })
 MAX_IDEMPOTENT_READ_RECONNECTS = 1
 RECONNECT_DELAY_SECONDS = 0.05
@@ -1350,13 +1356,15 @@ class BridgeClient:
 
 
 _client: BridgeClient | None = None
+_client_lock = threading.Lock()
 
 
 def get_client() -> BridgeClient:
     global _client
-    if _client is None:
-        _client = BridgeClient()
-    return _client
+    with _client_lock:
+        if _client is None:
+            _client = BridgeClient()
+        return _client
 
 
 def close_client() -> bool:
@@ -1368,8 +1376,12 @@ def close_client() -> bool:
     """
 
     global _client
-    client, _client = _client, None
-    if client is None:
-        return False
-    client.close()
-    return True
+    with _client_lock:
+        client = _client
+        if client is None:
+            return False
+        try:
+            client.close()
+        finally:
+            _client = None
+        return True
