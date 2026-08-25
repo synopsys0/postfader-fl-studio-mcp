@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build byte-stable, musician-friendly ZIPs with a fixed Python/zlib toolchain."""
+"""Build byte-stable setup ZIPs with a fixed Python/zlib toolchain."""
 
 from __future__ import annotations
 
@@ -31,6 +31,12 @@ ROOT_FILES = (
     "pyproject.toml",
 )
 SOURCE_DIRECTORIES = ("docs", "fl_studio_mcp", "scripts")
+BUNDLE_SPECS = (
+    ("Windows", False),
+    ("macOS", False),
+    ("Windows", True),
+    ("macOS", True),
+)
 FORBIDDEN_PARTS = {
     ".git",
     ".github",
@@ -132,13 +138,21 @@ def _write_member(
     archive.writestr(_zip_info(name, executable=executable), content)
 
 
-def _windows_launcher(version: str) -> bytes:
+def _windows_launcher(version: str, *, codex: bool = False) -> bytes:
+    product = "PostFader v%s Codex installer for Windows" % version if codex else (
+        "PostFader v%s installer for Windows" % version
+    )
+    setup_args = (
+        "setup --interactive --client codex-toml --register-codex"
+        if codex
+        else "setup --interactive"
+    )
     text = f"""@echo off
 setlocal
 cd /d "%~dp0"
 
 echo.
-echo PostFader v{version} installer for Windows
+echo {product}
 echo.
 echo Checking requirements and planned changes...
 echo.
@@ -158,7 +172,7 @@ if errorlevel 1 goto failed
 echo.
 echo PostFader is installed. Starting guided setup...
 echo.
-"%~dp0.venv\\Scripts\\postfader.exe" setup --interactive
+"%~dp0.venv\\Scripts\\postfader.exe" {setup_args}
 set "POSTFADER_SETUP_STATUS=%ERRORLEVEL%"
 if "%POSTFADER_SETUP_STATUS%"=="0" goto setup_complete
 
@@ -166,7 +180,7 @@ echo.
 echo PostFader is installed, but guided setup is not complete yet.
 echo This is expected if the MIDI endpoint or FL Studio is not ready.
 echo Complete the action shown above, then resume with:
-echo   "%~dp0.venv\\Scripts\\postfader.exe" setup
+echo   "%~dp0.venv\\Scripts\\postfader.exe" {setup_args}
 goto installed
 
 :setup_complete
@@ -196,7 +210,15 @@ exit /b 1
     return text.replace("\n", "\r\n").encode("utf-8")
 
 
-def _macos_launcher(version: str) -> bytes:
+def _macos_launcher(version: str, *, codex: bool = False) -> bytes:
+    product = "PostFader v%s Codex installer for macOS" % version if codex else (
+        "PostFader v%s installer for macOS" % version
+    )
+    setup_args = (
+        "setup --interactive --client codex-toml --register-codex"
+        if codex
+        else "setup --interactive"
+    )
     return f"""#!/bin/bash
 
 set -u
@@ -204,7 +226,7 @@ set -u
 POSTFADER_RELEASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$POSTFADER_RELEASE_DIR" || exit 1
 
-printf '\nPostFader v{version} installer for macOS\n\n'
+printf '\n{product}\n\n'
 
 if [ "${{POSTFADER_BUNDLE_DRY_RUN:-0}}" = "1" ]; then
     bash -n "$POSTFADER_RELEASE_DIR/scripts/install.sh"
@@ -221,7 +243,7 @@ if [ "${{POSTFADER_BUNDLE_DRY_RUN:-0}}" = "1" ]; then
     exit "$POSTFADER_STATUS"
 elif [ "$POSTFADER_STATUS" -eq 0 ]; then
     printf '\nPostFader is installed. Starting guided setup...\n\n'
-    "$POSTFADER_RELEASE_DIR/.venv/bin/postfader" setup --interactive
+    "$POSTFADER_RELEASE_DIR/.venv/bin/postfader" {setup_args}
     POSTFADER_SETUP_STATUS=$?
     if [ "$POSTFADER_SETUP_STATUS" -eq 0 ]; then
         printf '\nGuided setup finished.\n'
@@ -229,7 +251,7 @@ elif [ "$POSTFADER_STATUS" -eq 0 ]; then
         printf '\nPostFader is installed, but guided setup is not complete yet.\n'
         printf 'This is expected if the MIDI endpoint or FL Studio is not ready.\n'
         printf 'Complete the action shown above, then resume with:\n'
-        printf '  "%s/.venv/bin/postfader" setup\n' "$POSTFADER_RELEASE_DIR"
+        printf '  "%s/.venv/bin/postfader" {setup_args}\n' "$POSTFADER_RELEASE_DIR"
     fi
     printf 'Read START HERE - macOS.md for the manual FL Studio action and safety boundaries.\n'
     POSTFADER_STATUS=0
@@ -243,13 +265,17 @@ exit "$POSTFADER_STATUS"
 """.encode("utf-8")
 
 
-def _start_here(platform: str, version: str) -> bytes:
+def _start_here(platform: str, version: str, *, codex: bool = False) -> bytes:
     if platform == "Windows":
         endpoint = (
             "Create one bidirectional virtual MIDI endpoint with the local provider "
             "of your choice."
         )
-        launcher = "`Install PostFader.cmd`"
+        launcher = (
+            "`Install PostFader for Codex.cmd`"
+            if codex
+            else "`Install PostFader.cmd`"
+        )
         setup_command = ".\\.venv\\Scripts\\postfader.exe setup"
         doctor_command = (
             ".\\.venv\\Scripts\\postfader-doctor.exe "
@@ -258,7 +284,11 @@ def _start_here(platform: str, version: str) -> bytes:
         installer_note = "Review the dry-run summary, then press **Y** to continue."
     else:
         endpoint = "Enable an IAC bus in Audio MIDI Setup."
-        launcher = "`Install PostFader.command`"
+        launcher = (
+            "`Install PostFader for Codex.command`"
+            if codex
+            else "`Install PostFader.command`"
+        )
         setup_command = "./.venv/bin/postfader setup"
         doctor_command = (
             "./.venv/bin/postfader-doctor "
@@ -269,7 +299,24 @@ def _start_here(platform: str, version: str) -> bytes:
             "**Open**."
         )
 
-    text = f"""# Start here — PostFader v{version} for {platform}
+    if codex:
+        setup_command += " --client codex-toml --register-codex"
+        codex_requirement = "- Install the Codex CLI so the `codex` command is available.\n"
+        client_setup = """Guided setup uses the discovered machine-specific values and asks for a
+separate confirmation before it runs `codex mcp add`. It treats an identical
+`fl-studio` entry as already current and refuses to replace a different entry.
+If the Codex CLI is unavailable, PostFader remains installed and setup prints
+the exact `codex-toml` configuration as a manual fallback.
+"""
+    else:
+        codex_requirement = ""
+        client_setup = """Guided setup asks which client configuration format to print. If you
+select `codex-command`, run the emitted command in **PowerShell**. The Windows
+installer window itself is Command Prompt and uses different quoting.
+"""
+
+    title_suffix = " for Codex" if codex else ""
+    text = f"""# Start here — PostFader v{version}{title_suffix} on {platform}
 
 PostFader is the verified AI copilot for FL Studio. It starts read-only, never
 saves your project automatically, and reports whether FL Studio actually
@@ -279,7 +326,7 @@ accepted each supported change.
 
 - Install FL Studio 2026 version 26.1.3 build 5336 or newer.
 - Install Python 3.10 through 3.14.
-- Launch FL Studio once so it creates its user-data folders, then quit it.
+{codex_requirement}- Launch FL Studio once so it creates its user-data folders, then quit it.
 - Keep an internet connection available while Python dependencies download.
 - {endpoint}
 
@@ -307,8 +354,7 @@ enumerates virtual MIDI endpoints that already exist, walks through client
 configuration, and runs the connection doctor. It shows what it found and
 what it intends to change before continuing.
 
-If you select `codex-command`, run the emitted command in **PowerShell**. The
-Windows installer window itself is Command Prompt and uses different quoting.
+{client_setup.rstrip()}
 
 If setup stops because the endpoint is missing or FL Studio is still closed,
 PostFader remains installed. Complete the action it names and run the same
@@ -366,16 +412,37 @@ For client-specific details and troubleshooting, see `docs/setup.md`.
     return text.encode("utf-8")
 
 
-def _generated_members(platform: str, version: str) -> dict[str, tuple[bytes, bool]]:
+def _generated_members(
+    platform: str,
+    version: str,
+    *,
+    codex: bool = False,
+) -> dict[str, tuple[bytes, bool]]:
     if platform == "Windows":
+        launcher = (
+            "Install PostFader for Codex.cmd"
+            if codex
+            else "Install PostFader.cmd"
+        )
         return {
-            "Install PostFader.cmd": (_windows_launcher(version), False),
-            "START HERE - Windows.md": (_start_here(platform, version), False),
+            launcher: (_windows_launcher(version, codex=codex), False),
+            "START HERE - Windows.md": (
+                _start_here(platform, version, codex=codex),
+                False,
+            ),
         }
     if platform == "macOS":
+        launcher = (
+            "Install PostFader for Codex.command"
+            if codex
+            else "Install PostFader.command"
+        )
         return {
-            "Install PostFader.command": (_macos_launcher(version), True),
-            "START HERE - macOS.md": (_start_here(platform, version), False),
+            launcher: (_macos_launcher(version, codex=codex), True),
+            "START HERE - macOS.md": (
+                _start_here(platform, version, codex=codex),
+                False,
+            ),
         }
     raise ValueError("unsupported release platform: %s" % platform)
 
@@ -386,11 +453,16 @@ def build_bundle(
     *,
     root: Path = ROOT,
     version: str | None = None,
+    codex: bool = False,
 ) -> Path:
     """Build one deterministic platform bundle and return its path."""
 
     version = version or project_version(root)
-    archive_root = "PostFader-v%s-%s" % (version, platform)
+    archive_root = "PostFader-v%s-%s%s" % (
+        version,
+        "Codex-" if codex else "",
+        platform,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / (archive_root + ".zip")
 
@@ -417,7 +489,7 @@ def build_bundle(
                     executable=executable,
                 )
             for relative_text, (content, executable) in sorted(
-                _generated_members(platform, version).items()
+                _generated_members(platform, version, codex=codex).items()
             ):
                 _write_member(
                     archive,
@@ -430,6 +502,7 @@ def build_bundle(
             platform=platform,
             version=version,
             root=root,
+            codex=codex,
         )
         if failures:
             raise ValueError("release bundle verification failed: %s" % "; ".join(failures))
@@ -446,6 +519,7 @@ def inspect_bundle(
     platform: str,
     version: str,
     root: Path = ROOT,
+    codex: bool = False,
 ) -> list[str]:
     """Return verification failures for one platform bundle."""
 
@@ -455,8 +529,12 @@ def inspect_bundle(
     if not zipfile.is_zipfile(target):
         return ["bundle is not a ZIP archive: %s" % target]
 
-    archive_root = "PostFader-v%s-%s" % (version, platform)
-    generated = _generated_members(platform, version)
+    archive_root = "PostFader-v%s-%s%s" % (
+        version,
+        "Codex-" if codex else "",
+        platform,
+    )
+    generated = _generated_members(platform, version, codex=codex)
     expected = {
         "%s/%s" % (archive_root, relative.as_posix())
         for relative in _source_files(root)
@@ -507,8 +585,14 @@ def inspect_bundle(
 def build_bundles(output_dir: Path, *, root: Path = ROOT) -> list[Path]:
     version = project_version(root)
     return [
-        build_bundle(platform, output_dir, root=root, version=version)
-        for platform in ("Windows", "macOS")
+        build_bundle(
+            platform,
+            output_dir,
+            root=root,
+            version=version,
+            codex=codex,
+        )
+        for platform, codex in BUNDLE_SPECS
     ]
 
 

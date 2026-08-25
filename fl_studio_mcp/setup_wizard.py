@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence, cast
 
-from . import bridge_install, client_config, diagnostics
+from . import bridge_install, client_config, codex_installer, diagnostics
 from .host_config import (
     FL_BRIDGE_MIDI_PORT_ENV,
     FL_STUDIO_USER_DATA_ENV,
@@ -615,6 +615,16 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NEW_FILE",
         help="create this new config file instead of printing config to stdout",
     )
+    parser.add_argument(
+        "--register-codex",
+        action="store_true",
+        help="register the resolved local server through the Codex CLI",
+    )
+    parser.add_argument(
+        "--yes-register-codex",
+        action="store_true",
+        help="separately confirm Codex MCP registration without a prompt",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--interactive", action="store_true")
     mode.add_argument("--non-interactive", action="store_true")
@@ -640,7 +650,24 @@ def main(
     interactive = args.interactive or (
         not args.non_interactive and not args.json and sys.stdin.isatty()
     )
+    codex_registration: Mapping[str, object] | None = None
     try:
+        if args.yes_register_codex and not args.register_codex:
+            raise SetupError("--yes-register-codex requires --register-codex")
+        if args.register_codex and args.client == "claude-json":
+            raise SetupError(
+                "--register-codex requires a Codex client format, not claude-json"
+            )
+        if (
+            args.register_codex
+            and not args.dry_run
+            and not interactive
+            and not args.yes_register_codex
+        ):
+            raise SetupError(
+                "Codex registration requires separate confirmation; add "
+                "--yes-register-codex"
+            )
         family = platform_family()
         if family not in {"windows", "macos"}:
             raise SetupError(
@@ -659,6 +686,8 @@ def main(
             raise SetupError("--midi-port is required in non-interactive mode")
         if args.client:
             output_format = args.client
+        elif args.register_codex:
+            output_format = "codex-toml"
         elif interactive:
             output_format = _prompt_client_format(prompt)
         else:
@@ -703,10 +732,43 @@ def main(
             deployer=deployer,
             doctor_collector=doctor_collector,
         )
+        if args.register_codex:
+            facts = client_config.configuration_facts(
+                repository_root=request.repository_root,
+                interpreter=request.interpreter,
+                user_data_dir=request.user_data_dir,
+                transport="midi",
+                midi_port=request.midi_choice.name,
+                server_name=request.server_name,
+                platform_name=request.platform_name,
+            )
+            register_confirmed = args.yes_register_codex
+            if not request.dry_run and not register_confirmed:
+                print(
+                    "Codex registration plan:\n%s"
+                    % codex_installer.render_registration_plan(facts),
+                    file=sys.stderr,
+                )
+                answer = prompt(
+                    "Register this resolved read-only server in Codex? [y/N] "
+                )
+                register_confirmed = answer.strip().casefold() in {"y", "yes"}
+            if register_confirmed or request.dry_run:
+                codex_registration = codex_installer.register_codex(
+                    facts, apply=not request.dry_run
+                )
+            else:
+                codex_registration = {
+                    "status": "skipped",
+                    "changed": False,
+                    "server_name": request.server_name,
+                }
+            result["codex_registration"] = codex_registration
     except (
         SetupError,
         HostConfigurationError,
         bridge_install.BridgeInstallError,
+        codex_installer.CodexRegistrationError,
         EOFError,
         OSError,
     ) as exc:
@@ -731,7 +793,13 @@ def main(
                 file=sys.stderr,
             )
         if request.output is None:
-            print(str(configuration["content"]), end="")
+            content = configuration["content"]
+            if (
+                codex_registration is not None
+                and codex_registration["status"] == "manual"
+            ):
+                content = codex_registration["manual_toml"]
+            print(str(content), end="")
         elif configuration["state"] == "current":
             print(
                 "Client configuration already current: %s" % request.output,
@@ -744,6 +812,30 @@ def main(
             )
         else:
             print("Created client configuration: %s" % request.output, file=sys.stderr)
+        if args.register_codex:
+            assert codex_registration is not None
+            registration_status = str(codex_registration["status"])
+            if registration_status == "planned":
+                print("Would register PostFader in Codex.", file=sys.stderr)
+            elif registration_status == "added":
+                print("Registered PostFader in Codex.", file=sys.stderr)
+            elif registration_status == "current":
+                print("Codex registration is already current.", file=sys.stderr)
+            elif registration_status == "conflict":
+                print(
+                    "Codex registration was not changed: an existing server named "
+                    "%r has different settings." % request.server_name,
+                    file=sys.stderr,
+                )
+            elif registration_status == "manual":
+                if request.output is not None:
+                    print(str(codex_registration["manual_toml"]), end="")
+                print(
+                    "Codex CLI was not found. Use the generated Codex TOML manually.",
+                    file=sys.stderr,
+                )
+            else:
+                print("Codex registration was skipped.", file=sys.stderr)
         bridge = result["bridge"]
         doctor = result["doctor"]
         assert isinstance(bridge, dict) and isinstance(doctor, dict)
@@ -756,6 +848,9 @@ def main(
         if isinstance(deployment, Mapping) and deployment.get("backup"):
             print("Bridge backup: %s" % deployment["backup"], file=sys.stderr)
         print("Next FL action: %s" % result["next_fl_action"], file=sys.stderr)
+    if args.register_codex and codex_registration is not None:
+        if codex_registration["status"] in {"manual", "conflict", "skipped"}:
+            return 2
     if request.dry_run or result["status"] == "ready":
         return 0
     return 2

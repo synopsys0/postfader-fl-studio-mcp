@@ -1,4 +1,4 @@
-"""Tests for the public Windows and macOS release bundles."""
+"""Tests for the public generic and Codex setup bundles."""
 
 from __future__ import annotations
 
@@ -36,25 +36,31 @@ class ReleaseBundleTests(unittest.TestCase):
     def tearDownClass(cls) -> None:
         cls.temporary.cleanup()
 
-    def test_builds_both_canonical_platform_names(self) -> None:
+    def test_builds_all_canonical_platform_and_codex_names(self) -> None:
         version = self.builder.project_version()
         self.assertEqual(
             [path.name for path in self.bundles],
             [
                 f"PostFader-v{version}-Windows.zip",
                 f"PostFader-v{version}-macOS.zip",
+                f"PostFader-v{version}-Codex-Windows.zip",
+                f"PostFader-v{version}-Codex-macOS.zip",
             ],
         )
 
     def test_bundles_pass_their_centralized_inspector(self) -> None:
         version = self.builder.project_version()
-        for platform, bundle in zip(("Windows", "macOS"), self.bundles):
-            with self.subTest(platform=platform):
+        for (platform, codex), bundle in zip(
+            self.builder.BUNDLE_SPECS,
+            self.bundles,
+        ):
+            with self.subTest(platform=platform, codex=codex):
                 self.assertEqual(
                     self.builder.inspect_bundle(
                         bundle,
                         platform=platform,
                         version=version,
+                        codex=codex,
                     ),
                     [],
                 )
@@ -148,6 +154,26 @@ class ReleaseBundleTests(unittest.TestCase):
             self.assertIn("Setup never enables write mode", guide)
             self.assertIn("PowerShell", guide)
 
+    def test_codex_bundles_have_targeted_launchers_and_registration_guides(self) -> None:
+        version = self.builder.project_version()
+        expected = {
+            "Windows": "Install PostFader for Codex.cmd",
+            "macOS": "Install PostFader for Codex.command",
+        }
+        for platform, bundle in zip(("Windows", "macOS"), self.bundles[2:]):
+            root = f"PostFader-v{version}-Codex-{platform}"
+            guide_name = f"START HERE - {platform}.md"
+            with zipfile.ZipFile(bundle) as archive:
+                names = set(archive.namelist())
+                guide = archive.read(f"{root}/{guide_name}").decode("utf-8")
+                launcher = archive.read(f"{root}/{expected[platform]}").decode("utf-8")
+            self.assertIn(f"{root}/{expected[platform]}", names)
+            self.assertIn("--client codex-toml --register-codex", launcher)
+            self.assertIn("codex mcp add", guide)
+            self.assertIn("separate confirmation", guide)
+            self.assertIn("refuses to replace a different entry", guide)
+            self.assertIn("manual fallback", guide)
+
     def test_launchers_start_guided_setup_without_rolling_back_bootstrap(self) -> None:
         windows = self.builder._windows_launcher("test").decode("utf-8")
         macos = self.builder._macos_launcher("test").decode("utf-8")
@@ -179,6 +205,16 @@ class ReleaseBundleTests(unittest.TestCase):
         setup_branch = macos[macos.index(macos_setup) :]
         self.assertIn("POSTFADER_STATUS=0", setup_branch)
 
+        codex_windows = self.builder._windows_launcher("test", codex=True).decode(
+            "utf-8"
+        )
+        codex_macos = self.builder._macos_launcher("test", codex=True).decode("utf-8")
+        codex_args = "setup --interactive --client codex-toml --register-codex"
+        self.assertIn(codex_args, codex_windows)
+        self.assertEqual(codex_windows.count(codex_args), 2)
+        self.assertIn(codex_args, codex_macos)
+        self.assertEqual(codex_macos.count(codex_args), 2)
+
     def test_macos_launcher_and_shell_installer_are_executable(self) -> None:
         version = self.builder.project_version()
         bundle = next(path for path in self.bundles if path.name.endswith("-macOS.zip"))
@@ -186,6 +222,18 @@ class ReleaseBundleTests(unittest.TestCase):
         with zipfile.ZipFile(bundle) as archive:
             for relative in ("Install PostFader.command", "scripts/install.sh"):
                 mode = archive.getinfo(f"{root}/{relative}").external_attr >> 16
+                self.assertNotEqual(mode & 0o111, 0, relative)
+
+        codex_bundle = next(
+            path for path in self.bundles if path.name.endswith("-Codex-macOS.zip")
+        )
+        codex_root = f"PostFader-v{version}-Codex-macOS"
+        with zipfile.ZipFile(codex_bundle) as archive:
+            for relative in (
+                "Install PostFader for Codex.command",
+                "scripts/install.sh",
+            ):
+                mode = archive.getinfo(f"{codex_root}/{relative}").external_attr >> 16
                 self.assertNotEqual(mode & 0o111, 0, relative)
 
     def test_generated_launchers_have_non_mutating_ci_entry_points(self) -> None:
@@ -214,6 +262,15 @@ class ReleaseBundleTests(unittest.TestCase):
             macos.index('if [ "${POSTFADER_BUNDLE_DRY_RUN:-0}" = "1" ]'),
             macos.index('"$POSTFADER_RELEASE_DIR/.venv/bin/postfader" setup --interactive'),
         )
+        for launcher in (
+            self.builder._windows_launcher("test", codex=True).decode("utf-8"),
+            self.builder._macos_launcher("test", codex=True).decode("utf-8"),
+        ):
+            self.assertIn("POSTFADER_BUNDLE_DRY_RUN", launcher)
+            self.assertLess(
+                launcher.index("POSTFADER_BUNDLE_DRY_RUN"),
+                launcher.index("--register-codex"),
+            )
 
     def test_repeated_builds_are_byte_for_byte_reproducible(self) -> None:
         second = Path(self.temporary.name) / "second"
