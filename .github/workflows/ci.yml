@@ -49,7 +49,7 @@ jobs:
       - name: Run hermetic safe suite with coverage
         run: python scripts/run_coverage.py --artifact-dir coverage-artifacts
       - name: Upload hermetic coverage report
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermetic-coverage
           path: coverage-artifacts/
@@ -244,7 +244,7 @@ jobs:
           done
 
       - name: Upload Python distributions
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: python-distributions-${{ matrix.os }}
           path: |
@@ -272,13 +272,13 @@ jobs:
       - name: Build deterministic generic and Codex setup bundles
         run: python scripts/build_release_bundles.py --output-dir release-bundles
       - name: Upload Claude Desktop extension
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: desktop-extension
           path: mcpb-dist/*.mcpb
           if-no-files-found: error
       - name: Upload generic and Codex platform setup bundles
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: platform-setup-bundles
           path: release-bundles/*.zip
