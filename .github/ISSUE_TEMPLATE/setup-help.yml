@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please do not attach projects, audio, presets, screenshots with project names, or unredacted logs. PostFader diagnostics can contain local paths and endpoint names; remove anything private before posting.
+        Do not attach an FL Studio project, audio, preset, credential, private path, raw log, or screenshot containing private project information. Doctor output can contain local paths and endpoint names; share only sanitized status fields and a short redacted error.
   - type: input
     id: postfader_version
     attributes:
@@ -16,28 +16,172 @@ body:
   - type: dropdown
     id: operating_system
     attributes:
-      label: Operating system
+      label: Operating system and architecture
       options:
         - Windows 11 x64
         - Windows 11 ARM64
         - macOS Apple silicon
         - macOS Intel
-        - Other supported configuration
+        - Other (describe below)
     validations:
       required: true
   - type: input
-    id: host_versions
+    id: host_details
     attributes:
-      label: Python and FL Studio versions
-      description: Include the FL Studio edition, version, and build.
-      placeholder: Python 3.12.8; FL Studio Producer Edition 26.1.4 build 5589
+      label: Additional host details (if needed)
+      description: If you selected Other, give the operating system and architecture. Otherwise write n/a; do not include a username, machine name, or filesystem path.
+      placeholder: n/a, or the exact supported host and architecture
+    validations:
+      required: true
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      description: Use the interpreter version for a Python/source install; write bundled or unknown when the platform package manages it.
+      placeholder: Python 3.12.8 (or bundled / unknown)
+    validations:
+      required: true
+  - type: input
+    id: fl_studio_version
+    attributes:
+      label: FL Studio edition, version, and build
+      placeholder: Producer Edition 26.1.4 build 5589
+    validations:
+      required: true
+  - type: dropdown
+    id: package_used
+    attributes:
+      label: PostFader package used
+      options:
+        - Windows ZIP
+        - macOS ZIP
+        - Codex Windows ZIP
+        - Codex macOS ZIP
+        - Claude Desktop MCPB after platform setup
+        - Python wheel
+        - Python source archive
+        - Source checkout
+        - Other (describe below)
     validations:
       required: true
   - type: input
     id: client
     attributes:
-      label: AI client and version
-      placeholder: Codex desktop app, Claude Desktop, Cursor, or another local MCP client
+      label: AI client or host and version
+      placeholder: Codex desktop, Claude Desktop, Cursor, or another local MCP client
+    validations:
+      required: true
+  - type: input
+    id: virtual_midi_provider
+    attributes:
+      label: Virtual MIDI provider
+      description: Name the provider only; do not include the private endpoint name. Write not configured if setup has not reached MIDI selection.
+      placeholder: macOS IAC Driver, Windows virtual MIDI provider, or not configured
+    validations:
+      required: true
+  - type: dropdown
+    id: doctor_overall
+    attributes:
+      label: Doctor overall status
+      description: Select the exact value from the doctor's JSON or summary output.
+      options:
+        - pass
+        - partial
+        - fail
+        - pending
+    validations:
+      required: true
+  - type: dropdown
+    id: bridge_deployment_status
+    attributes:
+      label: Doctor bridge deployment status
+      description: Select the exact bridge_deployment.status value when available.
+      options:
+        - current
+        - stale
+        - missing_bridge
+        - unreadable_bridge
+        - missing_hardware_directory
+        - source_unavailable
+        - not_checked
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: live_status
+    attributes:
+      label: Doctor live status
+      description: Select the exact live.status value when available.
+      options:
+        - connected
+        - unavailable
+        - blocked_missing_midi_configuration
+        - blocked_endpoint_selection
+        - blocked_midi_probe_failed
+        - skipped_restricted_host
+        - not_started
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: midi_enumeration_status
+    attributes:
+      label: Doctor MIDI enumeration status
+      description: Select the exact midi.enumeration_status value when available.
+      options:
+        - complete
+        - not_started
+        - blocked_missing_configuration
+        - skipped_restricted_host
+        - failed
+        - Other (describe below)
+    validations:
+      required: true
+  - type: dropdown
+    id: bridge_appeared
+    attributes:
+      label: Did the Universal Bridge appear in FL Studio?
+      options:
+        - Yes
+        - No
+        - Not sure
+        - Not reached
+    validations:
+      required: true
+  - type: dropdown
+    id: script_output
+    attributes:
+      label: Script Output result
+      description: "The expected ready line is ready: MIDI SysEx. Share only the message category, not a full log."
+      options:
+        - "ready: MIDI SysEx"
+        - Different message
+        - No ready message
+        - Not reached
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: project_reads
+    attributes:
+      label: Did project reads work?
+      options:
+        - Yes
+        - No
+        - Not attempted
+    validations:
+      required: true
+  - type: dropdown
+    id: writes_attempted
+    attributes:
+      label: Were writes attempted?
+      description: Do not test writes in a valuable project. If a mutation was ambiguous, stop and report its result rather than replaying it.
+      options:
+        - No
+        - Yes — verified true
+        - Yes — verified false
+        - Yes — refused or blocked
+        - Not sure
     validations:
       required: true
   - type: dropdown
@@ -56,24 +200,32 @@ body:
     validations:
       required: true
   - type: textarea
-    id: observed
+    id: reproduction
     attributes:
-      label: What happened
-      description: Include the exact error and the steps immediately before it. Redact private paths, names, and project details.
+      label: Smallest reproducible failure
+      description: Describe the fewest steps immediately before the problem. Do not include private paths, project details, raw logs, or client transcripts.
     validations:
       required: true
   - type: textarea
+    id: sanitized_error
+    attributes:
+      label: Sanitized error text
+      description: Paste only the relevant error after removing paths, usernames, endpoint names, credentials, project names, and other private data.
+      render: text
+  - type: textarea
     id: doctor
     attributes:
-      label: Redacted doctor evidence
-      description: Paste only the relevant fields or messages after removing paths, endpoint names, and other identifying data.
+      label: Optional redacted doctor status excerpt
+      description: Paste only safe status fields such as overall, bridge deployment status, live status, bridge_mode, and verified_writes_enabled. Remove paths, endpoint names, and identifying data.
       render: text
   - type: checkboxes
     id: safety
     attributes:
       label: Safety and privacy confirmation
       options:
-        - label: I removed project, artist, file-path, endpoint, account, and machine-identifying information.
+        - label: I removed project, artist, file-path, endpoint, account, credential, and machine-identifying information.
           required: true
-        - label: I did not attach an FLP, audio file, preset, raw log, or unredacted screenshot.
+        - label: I did not attach an FLP/project, audio file, preset, raw log, unredacted screenshot, or client transcript.
+          required: true
+        - label: I understand PostFader has no telemetry and maintainers can diagnose only the sanitized information I choose to share.
           required: true

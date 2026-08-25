@@ -9,7 +9,7 @@ its exact name.
 ## 1. Find the FL Studio user-data directory
 
 The directory contains `Settings/Hardware` and is not necessarily beside the
-FL Studio executable. On Windows, Postfader asks the Known Documents API first,
+FL Studio executable. On Windows, PostFader asks the Known Documents API first,
 which handles OneDrive or enterprise redirection. On macOS the conventional
 location is under `~/Documents/Image-Line/FL Studio`.
 
@@ -352,11 +352,11 @@ the correct absolute user-data path, reopen FL, and reload scripts.
 compares repository, deployed, and running bridge digests.
 
 **No endpoint is configured on Windows.** Set an exact
-`FL_BRIDGE_MIDI_PORT` in generated client configuration. Postfader will not
+`FL_BRIDGE_MIDI_PORT` in generated client configuration. PostFader will not
 guess a provider.
 
 **Endpoint selection is ambiguous.** Use the full exact endpoint name printed
-by the doctor. Postfader refuses ambiguity before lock/open.
+by the doctor. PostFader refuses ambiguity before lock/open.
 
 **The endpoint is already owned.** Close the other MCP server and retry. The
 reported PID is local ownership evidence, not authentication.
