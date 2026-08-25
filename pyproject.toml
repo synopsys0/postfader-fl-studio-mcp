@@ -47,8 +47,11 @@ test = [
     "tomli>=2; python_version < '3.11'",
 ]
 dev = [
+    "coverage>=7.6,<8",
     "fl-studio-api-stubs>=37,<38",
+    "pyright>=1.1.390,<2",
     "tomli>=2; python_version < '3.11'",
+    "ruff>=0.9,<1",
 ]
 
 [project.urls]
@@ -70,3 +73,71 @@ packages = ["fl_studio_mcp", "fl_studio_mcp._bridge"]
 # imports it: the controller body is executable only inside FL Studio. List the
 # namespace explicitly so setuptools treats its .py source as an intentional
 # package member instead of deprecated, implicitly included package data.
+
+[tool.ruff]
+# Ruff is a lint/import/error gate only for now.  Formatting is intentionally
+# not enabled: the existing project uses stable hand-formatted source and a
+# formatter-wide rewrite would obscure safety-relevant review.
+target-version = "py310"
+extend-exclude = ["tests", "fl_studio_mcp/_bridge"]
+
+[tool.ruff.lint]
+# Keep the first CI baseline deliberately small: pycodestyle's syntax/error
+# subsets, pyflakes, and import sorting catch actionable defects without
+# turning existing style into an unrelated repository-wide diff.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+# Existing imports intentionally preserve the project's case-sensitive public
+# contract names (for example, SCHEMA_VERSION before ContractModel).
+case-sensitive = true
+# Keep the established two-line visual separation before top-level constants
+# and declarations; this is import layout, not a formatter-wide rewrite.
+lines-after-imports = 2
+
+[tool.ruff.lint.per-file-ignores]
+# These files predate the import gate and intentionally use the repository's
+# one-line separation before a comment or declaration.  Keep the exception
+# file-scoped so new modules still receive I001 coverage.
+"fl_studio_mcp/audio.py" = ["I001"]
+"fl_studio_mcp/bridge_client.py" = ["I001"]
+"fl_studio_mcp/bridge_install.py" = ["I001"]
+"fl_studio_mcp/creative.py" = ["I001"]
+"fl_studio_mcp/mcp_server.py" = ["I001"]
+"fl_studio_mcp/mixing.py" = ["I001"]
+"fl_studio_mcp/music_analysis.py" = ["I001"]
+"fl_studio_mcp/performance.py" = ["I001"]
+"fl_studio_mcp/readonly_inspector.py" = ["I001"]
+"fl_studio_mcp/track_b_contracts.py" = ["I001"]
+"fl_studio_mcp/verified_writer.py" = ["I001"]
+"fl_studio_mcp/workflows.py" = ["I001"]
+"scripts/build_mcpb.py" = ["I001"]
+"scripts/build_release_bundles.py" = ["I001"]
+"scripts/doctor.py" = ["I001"]
+"scripts/generate_mcp_config.py" = ["I001"]
+"scripts/inspect_readonly.py" = ["I001"]
+"scripts/live_note_acceptance.py" = ["I001"]
+"scripts/live_read_acceptance.py" = ["I001"]
+"scripts/live_write_acceptance.py" = ["I001"]
+"scripts/plugin_report.py" = ["I001"]
+"scripts/validate_selection_readonly.py" = ["I001"]
+"scripts/validate_writes.py" = ["I001"]
+"scripts/verify_distribution.py" = ["I001"]
+
+[tool.coverage.run]
+# The safe suite runs each test in a fresh child.  The wrapper combines the
+# parallel data files after all children exit.  Source coverage intentionally
+# measures the Python package only; test harnesses and the FL-only controller
+# are not product-runtime coverage targets.
+branch = true
+parallel = true
+source = ["fl_studio_mcp"]
+omit = ["*/_bridge/device_UniversalBridge.py"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "pragma: no cover",
+]
+precision = 1
