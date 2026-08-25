@@ -214,7 +214,7 @@ Build do not need it because the interpreter path is absolute. T3 Code users
 configure whichever MCP-capable provider T3 launches. Grok on the web and Grok
 Bot require a remote HTTP MCP server and cannot use PostFader's current local
 packages directly. See the README's
-[client/package matrix](../README.md#works-with-your-ai-client).
+[client/package matrix](../README.md#supported-ai-clients).
 
 Automatic mode emits only `FL_STUDIO_USER_DATA_DIR`. It is an offline,
 fail-closed configuration with no native MIDI transport, not the ordinary live
