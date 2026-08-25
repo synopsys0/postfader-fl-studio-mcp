@@ -136,8 +136,48 @@ class ReleaseBundleTests(unittest.TestCase):
                 names = set(archive.namelist())
                 guide = archive.read(f"{root}/{expected[platform][1]}").decode("utf-8")
             self.assertIn(f"{root}/{expected[platform][0]}", names)
+            self.assertIn(f"{root}/fl_studio_mcp/cli.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/setup_wizard.py", names)
             self.assertIn("starts read-only", guide)
             self.assertIn("postfader-doctor", guide)
+            self.assertIn("postfader", guide)
+            self.assertIn(" setup", guide)
+            self.assertIn("The one FL Studio action you must complete", guide)
+            self.assertIn("PostFader remains installed", guide)
+            self.assertIn("does not install or configure a virtual MIDI", guide)
+            self.assertIn("Setup never enables write mode", guide)
+            self.assertIn("PowerShell", guide)
+
+    def test_launchers_start_guided_setup_without_rolling_back_bootstrap(self) -> None:
+        windows = self.builder._windows_launcher("test").decode("utf-8")
+        macos = self.builder._macos_launcher("test").decode("utf-8")
+
+        windows_setup = '"%~dp0.venv\\Scripts\\postfader.exe" setup --interactive'
+        self.assertIn(windows_setup, windows)
+        self.assertGreater(
+            windows.index(windows_setup),
+            windows.rindex('scripts\\install.ps1" -SkipBridgeDeployment'),
+        )
+        self.assertIn(
+            "PostFader is installed, but guided setup is not complete yet.",
+            windows,
+        )
+        self.assertIn("goto installed", windows)
+        self.assertIn(":installed\r\n", windows)
+        self.assertIn("exit /b 0", windows[windows.index(":installed\r\n") :])
+
+        macos_setup = '"$POSTFADER_RELEASE_DIR/.venv/bin/postfader" setup --interactive'
+        self.assertIn(macos_setup, macos)
+        self.assertGreater(
+            macos.index(macos_setup),
+            macos.index('bash "$POSTFADER_RELEASE_DIR/scripts/install.sh"'),
+        )
+        self.assertIn(
+            "PostFader is installed, but guided setup is not complete yet.",
+            macos,
+        )
+        setup_branch = macos[macos.index(macos_setup) :]
+        self.assertIn("POSTFADER_STATUS=0", setup_branch)
 
     def test_macos_launcher_and_shell_installer_are_executable(self) -> None:
         version = self.builder.project_version()
@@ -152,11 +192,28 @@ class ReleaseBundleTests(unittest.TestCase):
         windows = self.builder._windows_launcher("test").decode("utf-8")
         macos = self.builder._macos_launcher("test").decode("utf-8")
         self.assertIn("POSTFADER_BUNDLE_DRY_RUN", windows)
-        self.assertIn("scripts\\install.ps1\" -DryRun", windows)
+        self.assertIn(
+            'scripts\\install.ps1" -DryRun -SkipBridgeDeployment', windows
+        )
+        self.assertIn(
+            'scripts\\install.ps1" -SkipBridgeDeployment', windows
+        )
         self.assertIn("POSTFADER_BUNDLE_DRY_RUN", macos)
         self.assertIn("bash -n", macos)
-        self.assertIn("(3, 10)", macos)
-        self.assertIn("(3, 15)", macos)
+        self.assertNotIn("command -v python3", macos)
+        self.assertIn(
+            'bash "$POSTFADER_RELEASE_DIR/scripts/install.sh" '
+            "--skip-bridge-deployment",
+            macos,
+        )
+        self.assertLess(
+            windows.index('if "%POSTFADER_BUNDLE_DRY_RUN%"=="1" exit /b 0'),
+            windows.index('"%~dp0.venv\\Scripts\\postfader.exe" setup --interactive'),
+        )
+        self.assertLess(
+            macos.index('if [ "${POSTFADER_BUNDLE_DRY_RUN:-0}" = "1" ]'),
+            macos.index('"$POSTFADER_RELEASE_DIR/.venv/bin/postfader" setup --interactive'),
+        )
 
     def test_repeated_builds_are_byte_for_byte_reproducible(self) -> None:
         second = Path(self.temporary.name) / "second"

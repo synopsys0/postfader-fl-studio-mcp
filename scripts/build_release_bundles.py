@@ -143,7 +143,7 @@ echo.
 echo Checking requirements and planned changes...
 echo.
 
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\install.ps1" -DryRun
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\install.ps1" -DryRun -SkipBridgeDeployment
 if errorlevel 1 goto failed
 if "%POSTFADER_BUNDLE_DRY_RUN%"=="1" exit /b 0
 
@@ -152,11 +152,29 @@ choice /C YN /M "Continue with the installation"
 if errorlevel 2 goto cancelled
 
 echo.
-powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\install.ps1"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\install.ps1" -SkipBridgeDeployment
 if errorlevel 1 goto failed
 
 echo.
-echo Installation finished. Follow START HERE - Windows.md to connect FL Studio.
+echo PostFader is installed. Starting guided setup...
+echo.
+"%~dp0.venv\\Scripts\\postfader.exe" setup --interactive
+set "POSTFADER_SETUP_STATUS=%ERRORLEVEL%"
+if "%POSTFADER_SETUP_STATUS%"=="0" goto setup_complete
+
+echo.
+echo PostFader is installed, but guided setup is not complete yet.
+echo This is expected if the MIDI endpoint or FL Studio is not ready.
+echo Complete the action shown above, then resume with:
+echo   "%~dp0.venv\\Scripts\\postfader.exe" setup
+goto installed
+
+:setup_complete
+echo.
+echo Guided setup finished.
+
+:installed
+echo Read START HERE - Windows.md for the manual FL Studio action and safety boundaries.
 echo.
 pause
 exit /b 0
@@ -188,17 +206,11 @@ cd "$POSTFADER_RELEASE_DIR" || exit 1
 
 printf '\nPostFader v{version} installer for macOS\n\n'
 
-if ! command -v python3 >/dev/null 2>&1; then
-    printf 'Python 3.10 through 3.14 is required. Install Python, then try again.\n'
-    POSTFADER_STATUS=1
-elif ! python3 -c 'import sys; raise SystemExit(0 if (3, 10) <= sys.version_info[:2] < (3, 15) else 1)'; then
-    printf 'Found an unsupported Python version. Python 3.10 through 3.14 is required.\n'
-    POSTFADER_STATUS=1
-elif [ "${{POSTFADER_BUNDLE_DRY_RUN:-0}}" = "1" ]; then
+if [ "${{POSTFADER_BUNDLE_DRY_RUN:-0}}" = "1" ]; then
     bash -n "$POSTFADER_RELEASE_DIR/scripts/install.sh"
     POSTFADER_STATUS=$?
 else
-    bash "$POSTFADER_RELEASE_DIR/scripts/install.sh"
+    bash "$POSTFADER_RELEASE_DIR/scripts/install.sh" --skip-bridge-deployment
     POSTFADER_STATUS=$?
 fi
 
@@ -208,7 +220,19 @@ if [ "${{POSTFADER_BUNDLE_DRY_RUN:-0}}" = "1" ]; then
     fi
     exit "$POSTFADER_STATUS"
 elif [ "$POSTFADER_STATUS" -eq 0 ]; then
-    printf '\nInstallation finished. Follow START HERE - macOS.md to connect FL Studio.\n'
+    printf '\nPostFader is installed. Starting guided setup...\n\n'
+    "$POSTFADER_RELEASE_DIR/.venv/bin/postfader" setup --interactive
+    POSTFADER_SETUP_STATUS=$?
+    if [ "$POSTFADER_SETUP_STATUS" -eq 0 ]; then
+        printf '\nGuided setup finished.\n'
+    else
+        printf '\nPostFader is installed, but guided setup is not complete yet.\n'
+        printf 'This is expected if the MIDI endpoint or FL Studio is not ready.\n'
+        printf 'Complete the action shown above, then resume with:\n'
+        printf '  "%s/.venv/bin/postfader" setup\n' "$POSTFADER_RELEASE_DIR"
+    fi
+    printf 'Read START HERE - macOS.md for the manual FL Studio action and safety boundaries.\n'
+    POSTFADER_STATUS=0
 else
     printf '\nInstallation did not complete. Review the error above.\n'
 fi
@@ -226,10 +250,7 @@ def _start_here(platform: str, version: str) -> bytes:
             "of your choice."
         )
         launcher = "`Install PostFader.cmd`"
-        config_command = (
-            ".\\.venv\\Scripts\\python.exe "
-            "scripts\\generate_mcp_config.py --help"
-        )
+        setup_command = ".\\.venv\\Scripts\\postfader.exe setup"
         doctor_command = (
             ".\\.venv\\Scripts\\postfader-doctor.exe "
             "--midi-port \"Exact Virtual MIDI Endpoint Name\" --json"
@@ -238,7 +259,7 @@ def _start_here(platform: str, version: str) -> bytes:
     else:
         endpoint = "Enable an IAC bus in Audio MIDI Setup."
         launcher = "`Install PostFader.command`"
-        config_command = "./.venv/bin/python scripts/generate_mcp_config.py --help"
+        setup_command = "./.venv/bin/postfader setup"
         doctor_command = (
             "./.venv/bin/postfader-doctor "
             "--midi-port \"IAC Driver Bus 1\" --json"
@@ -266,24 +287,72 @@ PostFader does not install or configure virtual MIDI software.
 
 ## Install
 
-1. Extract the entire ZIP to a writable folder.
+1. Extract the entire ZIP to a stable, writable folder and keep it there;
+   PostFader's `.venv` and generated client configuration point into it.
 2. Quit FL Studio.
 3. Open {launcher}.
 4. {installer_note}
 
 The installer creates `.venv` inside this folder, installs PostFader there,
-and copies Universal Bridge into FL Studio's controller-script folder. It does
-not alter your AI client's configuration.
+and starts the guided setup command. Guided setup asks for the FL Studio
+user-data folder and confirmation before it copies Universal Bridge into the
+controller-script folder:
 
-## Connect FL Studio
+```text
+{setup_command}
+```
 
-1. Open FL Studio and choose **Options → MIDI settings**.
-2. Enable the same virtual endpoint under **Input** and **Output**.
-3. Give both sides the same FL Studio Port number.
-4. Set the Input controller type to **Universal Bridge**.
-5. Open **View → Script output** and reload the script.
+Guided setup detects the supported host and FL Studio user-data folder,
+enumerates virtual MIDI endpoints that already exist, walks through client
+configuration, and runs the connection doctor. It shows what it found and
+what it intends to change before continuing.
 
-Check the complete connection:
+If you select `codex-command`, run the emitted command in **PowerShell**. The
+Windows installer window itself is Command Prompt and uses different quoting.
+
+If setup stops because the endpoint is missing or FL Studio is still closed,
+PostFader remains installed. Complete the action it names and run the same
+setup command again; rerunning setup is the supported resume path.
+
+## The one FL Studio action you must complete
+
+PostFader cannot operate FL Studio's MIDI Settings window for you:
+
+1. Start FL Studio and open **Options → MIDI settings**.
+2. Under **Input**, select the exact endpoint chosen during setup, enable it,
+   and set Controller type to **Universal Bridge**.
+3. Assign that Input an unused FL Studio Port number.
+4. Under **Output**, enable the matching endpoint and assign the same Port
+   number.
+5. Open **View → Script output** and reload **Universal Bridge**.
+6. Return to the waiting setup prompt. If you closed it, rerun:
+
+```text
+{setup_command}
+```
+
+The expected Script output ends with `ready: MIDI SysEx`. Guided setup then
+runs the doctor and reports the exact next action if the connection is not yet
+complete.
+
+## Safety boundaries
+
+- PostFader does not install or configure a virtual MIDI driver or IAC bus.
+- It does not click through FL Studio, choose an FL Port number, or reload a
+  controller script for you.
+- Setup never enables write mode, changes project controls, or saves a project.
+- Client configuration prints to the terminal by default. An explicit
+  `--output` creates one new file. A resume accepts that same file only when
+  its content is already identical; different files are never overwritten.
+  Write mode is never stored in that configuration.
+- The first live connection remains read-only. Try project writes later in a
+  blank or disposable project and close without saving until you trust the
+  workflow.
+
+## Verify directly
+
+Guided setup runs this check. You can repeat it directly when troubleshooting:
+
 
 ```text
 {doctor_command}
@@ -292,16 +361,7 @@ Check the complete connection:
 A healthy result reports `overall: "pass"`, a matching controller script,
 `bridge_mode: "read_only"`, and `verified_writes_enabled: false`.
 
-Generate configuration for Codex, Claude-compatible clients, Cursor, and other
-local MCP clients with:
-
-```text
-{config_command}
-```
-
-For the complete guide, see `docs/setup.md`. Try writes first in a blank or
-disposable project, and close the session without saving until you trust the
-workflow.
+For client-specific details and troubleshooting, see `docs/setup.md`.
 """
     return text.encode("utf-8")
 

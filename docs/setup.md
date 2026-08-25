@@ -1,7 +1,10 @@
 # Setup and usage
 
-Postfader does not install or configure virtual MIDI software. Configure one
-bidirectional virtual endpoint yourself, then give Postfader its exact name.
+PostFader's guided `postfader setup` command connects the package, bridge,
+existing virtual MIDI endpoint, generated client configuration, and doctor in
+one resumable flow. PostFader does not install or configure virtual MIDI
+software. Configure one bidirectional endpoint yourself, then let setup select
+its exact name.
 
 ## 1. Find the FL Studio user-data directory
 
@@ -35,12 +38,17 @@ Override discovery when needed:
 The script uses `.venv\Scripts\python.exe`, creates the venv if needed,
 installs the checkout editable, and invokes the same packaged bridge installer
 as the console command. It does not edit MCP client configuration or persist
-environment variables.
+environment variables. Continue with:
+
+```powershell
+.\.venv\Scripts\postfader.exe setup
+```
 
 macOS:
 
 ```bash
 ./scripts/install.sh
+./.venv/bin/postfader setup
 ```
 
 Override discovery with an absolute environment value:
@@ -49,21 +57,30 @@ Override discovery with an absolute environment value:
 FL_STUDIO_USER_DATA_DIR='/absolute/path/to/FL Studio' ./scripts/install.sh
 ```
 
-From an installed Python distribution, deploy the controller script with:
+From an installed Python distribution, run the same complete setup flow:
 
 ```text
-postfader-install-bridge
+postfader setup
 ```
 
-Use `postfader-install-bridge --help` when an explicit user-data path is
-required. FL Studio cannot list `Universal Bridge` until deployment succeeds.
+It detects the platform and standard user-data location, requires an exact
+bidirectional endpoint, previews and confirmation-gates bridge deployment,
+prints or create-only writes the selected client configuration, pauses for the
+manual FL Studio action, and runs the doctor. Use `postfader setup --help` for
+explicit paths, non-interactive automation, `--dry-run`, `--json`, and
+`--output NEW_FILE`. A rerun accepts an existing output only when its content
+is identical to the newly rendered configuration. It never overwrites a
+different file.
+
+`postfader-install-bridge` remains available as the lower-level bridge-only
+command. FL Studio cannot list `Universal Bridge` until deployment succeeds.
 
 ### Claude Desktop extension and upgrades
 
 The release `.mcpb` registers the local MCP server in Claude Desktop. It does
 not deploy `device_UniversalBridge.py`, create a virtual endpoint, or edit FL
 Studio MIDI settings. Install the matching Python distribution or use the
-matching checkout, run `postfader-install-bridge`, and configure the endpoint
+matching checkout, run `postfader setup`, and configure the endpoint
 before connecting the extension. The bundle never enables writes.
 
 Upgrades have one mandatory order on both hosts: close MCP clients and FL
@@ -90,10 +107,10 @@ In **Options → MIDI settings**:
 The expected final line is `ready: MIDI SysEx`. The bridge refuses to become
 ready if output is missing because responses travel over that endpoint.
 
-Postfader endpoint matching is deterministic. A case-insensitive exact match
-wins. If none exists, one unique case-insensitive substring may be used so the
-macOS `IAC Driver` default remains compatible. Zero or multiple matches fail
-with bounded candidates before any ownership lock or endpoint open.
+The setup wizard offers only unique case-insensitive endpoint names present in
+both input and output inventories. It never guesses among partial or ambiguous
+matches. The runtime matcher also fails bounded and deterministic before any
+ownership lock or endpoint open.
 
 ### Optional Piano Roll scripting bridge
 
@@ -120,9 +137,17 @@ note readback; inspect the Piano Roll before issuing another mutation. Set
 
 ## 4. Generate client configuration
 
-Configuration generation is pure and create-only. For an ordinary live,
-read-only Windows connection, supply absolute paths and the exact endpoint;
-write tools remain independently disabled:
+Guided setup generates the selected format from the exact interpreter,
+user-data folder, and endpoint it just resolved:
+
+```text
+postfader setup
+```
+
+It prints configuration by default. `--output` creates one new file; a rerun
+recognizes identical content as already current and refuses every differing
+file. For advanced scripting, the lower-level generator remains pure and
+create-only. An ordinary live, read-only Windows example is:
 
 ```powershell
 $Port = 'Exact Virtual MIDI Endpoint Name'
@@ -178,6 +203,10 @@ Only one MCP process may own a selected endpoint pair. Disable duplicate
 project/user registrations before testing.
 
 ## 5. Run the doctor
+
+Interactive guided setup pauses after bridge deployment so you can complete
+FL Studio's MIDI Settings and script reload, then runs this same doctor. It
+returns the first precise corrective action when the connection is incomplete.
 
 ```powershell
 $Port = 'Exact Virtual MIDI Endpoint Name'
