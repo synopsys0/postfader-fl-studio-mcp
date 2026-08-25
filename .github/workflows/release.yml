@@ -2,7 +2,8 @@ name: Release
 
 # A version tag publishes the Python distributions through PyPI Trusted
 # Publishing, publishes server.json to the MCP Registry, and creates a GitHub
-# Release carrying the wheel, sdist, and Claude Desktop .mcpb extension.
+# Release carrying friendly generic and Codex Windows/macOS setup ZIPs, the
+# wheel, sdist, and Claude Desktop .mcpb extension.
 on:
   push:
     tags:
@@ -31,10 +32,10 @@ jobs:
       FL_BRIDGE_SANDBOXED: "1"
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -89,21 +90,82 @@ jobs:
       - name: Install and verify the wheel in a clean native environment
         run: python scripts/clean_wheel_smoke.py --dist-dir dist
 
+      - name: Build the generic and Codex platform setup bundles on the native host
+        run: python scripts/build_release_bundles.py --output-dir release-bundles
+
+      - name: Smoke-test the extracted Windows bundle launchers
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (& python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+          $bundles = @(
+            @{
+              Label = 'generic'
+              Archive = "release-bundles\PostFader-v$version-Windows.zip"
+              Launcher = 'Install PostFader.cmd'
+            },
+            @{
+              Label = 'Codex'
+              Archive = "release-bundles\PostFader-v$version-Codex-Windows.zip"
+              Launcher = 'Install PostFader for Codex.cmd'
+            }
+          )
+          $env:POSTFADER_BUNDLE_DRY_RUN = '1'
+          foreach ($bundle in $bundles) {
+            if (-not (Test-Path -LiteralPath $bundle.Archive -PathType Leaf)) {
+              throw "$($bundle.Label) Windows setup bundle was not built: $($bundle.Archive)"
+            }
+            $target = Join-Path $env:RUNNER_TEMP "postfader-windows-$($bundle.Label.ToLower())-bundle"
+            Expand-Archive -LiteralPath $bundle.Archive -DestinationPath $target
+            $launcher = Get-ChildItem $target -Recurse -File -Filter $bundle.Launcher |
+              Select-Object -First 1
+            if (-not $launcher) {
+              throw "$($bundle.Label) Windows setup launcher was not found"
+            }
+            & cmd.exe /d /c ('"' + $launcher.FullName + '"')
+            if ($LASTEXITCODE -ne 0) {
+              throw "$($bundle.Label) Windows bundle launcher dry run failed"
+            }
+          }
+
+      - name: Smoke-test the extracted macOS bundle launchers
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
+          for kind in generic codex; do
+            if [ "$kind" = generic ]; then
+              archive="release-bundles/PostFader-v${version}-macOS.zip"
+              launcher_name='Install PostFader.command'
+            else
+              archive="release-bundles/PostFader-v${version}-Codex-macOS.zip"
+              launcher_name='Install PostFader for Codex.command'
+            fi
+            test -f "$archive"
+            target="$RUNNER_TEMP/postfader-macos-${kind}-bundle"
+            ditto -x -k "$archive" "$target"
+            launcher="$(find "$target" -type f -name "$launcher_name" -print -quit)"
+            test -n "$launcher"
+            POSTFADER_BUNDLE_DRY_RUN=1 "$launcher"
+          done
+
   build:
     name: Build verified publishing artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Set up Node for the MCPB packager
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
@@ -173,10 +235,13 @@ jobs:
       - name: Validate and build Claude Desktop extension
         run: python scripts/build_mcpb.py --output-dir mcpb-dist
 
+      - name: Build and verify deterministic generic and Codex setup bundles
+        run: python scripts/build_release_bundles.py --output-dir release-bundles
+
       # These artifacts stay separate by design: the PyPI action below reads
       # dist/ wholesale and must never be handed a .mcpb file.
       - name: Upload Python distributions for publishing
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-python-distributions
           path: |
@@ -185,10 +250,17 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Claude Desktop extension for the GitHub Release
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: release-desktop-extension
           path: mcpb-dist/*.mcpb
+          if-no-files-found: error
+
+      - name: Upload generic and Codex platform setup bundles for the GitHub Release
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-platform-bundles
+          path: release-bundles/*.zip
           if-no-files-found: error
 
   publish:
@@ -206,13 +278,15 @@ jobs:
       id-token: write
     steps:
       - name: Fetch the verified distributions
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-python-distributions
           path: dist/
 
       - name: Publish
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          skip-existing: true
 
   github-release:
     name: Attach verified artifacts to GitHub Release
@@ -224,16 +298,44 @@ jobs:
       contents: write
     steps:
       - name: Fetch Python distributions
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-python-distributions
           path: release-assets/
 
       - name: Fetch Claude Desktop extension
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-desktop-extension
           path: release-assets/
+
+      - name: Fetch generic and Codex platform setup bundles
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-platform-bundles
+          path: release-assets/
+
+      - name: Publish SHA-256 checksums for every downloadable artifact
+        env:
+          CHECKSUM_FILE: release-assets/PostFader-${{ github.ref_name }}-SHA256SUMS.txt
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          directory = Path("release-assets")
+          target = Path(os.environ["CHECKSUM_FILE"])
+          artifacts = sorted(path for path in directory.iterdir() if path.is_file())
+          if not artifacts:
+              raise SystemExit("no release artifacts were downloaded")
+          lines = []
+          for artifact in artifacts:
+              digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+              lines.append(f"{digest}  {artifact.name}")
+          target.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          print(target.read_text(encoding="utf-8"), end="")
+          PY
 
       - name: Create the release or replace its assets on a retry
         env:
@@ -246,7 +348,7 @@ jobs:
             gh release create "$GITHUB_REF_NAME" release-assets/* \
               --verify-tag \
               --generate-notes \
-              --title "Postfader $GITHUB_REF_NAME"
+              --title "PostFader $GITHUB_REF_NAME"
           fi
 
   publish-mcp-registry:
@@ -260,7 +362,7 @@ jobs:
       id-token: write
     steps:
       - name: Check out source
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Install MCP Registry publisher v1.7.9
         run: |

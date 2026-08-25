@@ -1,7 +1,10 @@
 # Setup and usage
 
-Postfader does not install or configure virtual MIDI software. Configure one
-bidirectional virtual endpoint yourself, then give Postfader its exact name.
+PostFader's guided `postfader setup` command connects the package, bridge,
+existing virtual MIDI endpoint, generated client configuration, and doctor in
+one resumable flow. PostFader does not install or configure virtual MIDI
+software. Configure one bidirectional endpoint yourself, then let setup select
+its exact name.
 
 ## 1. Find the FL Studio user-data directory
 
@@ -35,12 +38,17 @@ Override discovery when needed:
 The script uses `.venv\Scripts\python.exe`, creates the venv if needed,
 installs the checkout editable, and invokes the same packaged bridge installer
 as the console command. It does not edit MCP client configuration or persist
-environment variables.
+environment variables. Continue with:
+
+```powershell
+.\.venv\Scripts\postfader.exe setup
+```
 
 macOS:
 
 ```bash
 ./scripts/install.sh
+./.venv/bin/postfader setup
 ```
 
 Override discovery with an absolute environment value:
@@ -49,21 +57,55 @@ Override discovery with an absolute environment value:
 FL_STUDIO_USER_DATA_DIR='/absolute/path/to/FL Studio' ./scripts/install.sh
 ```
 
-From an installed Python distribution, deploy the controller script with:
+From an installed Python distribution, run the same complete setup flow:
 
 ```text
-postfader-install-bridge
+postfader setup
 ```
 
-Use `postfader-install-bridge --help` when an explicit user-data path is
-required. FL Studio cannot list `Universal Bridge` until deployment succeeds.
+For Codex, the release also provides dedicated
+`PostFader-v0.20.0-Codex-Windows.zip` and
+`PostFader-v0.20.0-Codex-macOS.zip` packages. Their launchers run the same base
+installation, preselect `codex-toml`, and request a separate confirmation
+before registering the resolved server through the Codex CLI. The equivalent
+command for a source or Python installation is:
+
+```text
+postfader setup --client codex-toml --register-codex
+```
+
+It detects the platform and standard user-data location, requires an exact
+bidirectional endpoint, previews and confirmation-gates bridge deployment,
+prints or create-only writes the selected client configuration, pauses for the
+manual FL Studio action, and runs the doctor. Use `postfader setup --help` for
+explicit paths, non-interactive automation, `--dry-run`, `--json`, and
+`--output NEW_FILE`. A rerun accepts an existing output only when its content
+is identical to the newly rendered configuration. It never overwrites a
+different file.
+
+`postfader-install-bridge` remains available as the lower-level bridge-only
+command. FL Studio cannot list `Universal Bridge` until deployment succeeds.
+
+### Codex-specific installer and upgrades
+
+The Codex installer checks the existing `fl-studio` MCP registration before it
+changes anything. An identical entry is already current. A different entry is
+preserved and reported as a conflict; remove or rename it yourself only after
+reviewing which server it launches. Setup never uses bridge approval as
+permission to replace Codex configuration.
+
+If `codex` is unavailable on `PATH`, PostFader and Universal Bridge remain
+installed and the exact `codex-toml` block is printed for manual setup. The
+Codex package does not bundle Codex, Python, a virtual MIDI driver, or FL
+Studio. Restart or reconnect Codex after registration, then begin with a
+read-only inspection.
 
 ### Claude Desktop extension and upgrades
 
 The release `.mcpb` registers the local MCP server in Claude Desktop. It does
 not deploy `device_UniversalBridge.py`, create a virtual endpoint, or edit FL
 Studio MIDI settings. Install the matching Python distribution or use the
-matching checkout, run `postfader-install-bridge`, and configure the endpoint
+matching checkout, run `postfader setup`, and configure the endpoint
 before connecting the extension. The bundle never enables writes.
 
 Upgrades have one mandatory order on both hosts: close MCP clients and FL
@@ -90,16 +132,47 @@ In **Options → MIDI settings**:
 The expected final line is `ready: MIDI SysEx`. The bridge refuses to become
 ready if output is missing because responses travel over that endpoint.
 
-Postfader endpoint matching is deterministic. A case-insensitive exact match
-wins. If none exists, one unique case-insensitive substring may be used so the
-macOS `IAC Driver` default remains compatible. Zero or multiple matches fail
-with bounded candidates before any ownership lock or endpoint open.
+The setup wizard offers only unique case-insensitive endpoint names present in
+both input and output inventories. It never guesses among partial or ambiguous
+matches. The runtime matcher also fails bounded and deterministic before any
+ownership lock or endpoint open.
+
+### Optional Piano Roll scripting bridge
+
+Piano Roll notes live in FL Studio's separate `.pyscript` runtime, not its MIDI
+controller API. The creative tools therefore use one generated **Postfader
+Apply** script under:
+
+```text
+<FL Studio user-data>/Settings/Piano roll scripts/Postfader/
+```
+
+The directory follows the same Windows Known Documents and
+`FL_STUDIO_USER_DATA_DIR` resolution as the controller-script installer. An
+absolute `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` can override only this generated
+script location.
+
+For each new MCP process, call `piano_roll_bridge(action="prepare")`, open any
+Piano Roll, and run **Scripts → Postfader → Postfader Apply** once. Then call
+`piano_roll_bridge(action="confirm", confirm_user_ran_script=true)`. Automatic
+writes can then target the requested channel and pattern and dispatch FL's
+run-last-script shortcut. They report focus and key dispatch, never fabricated
+note readback; inspect the Piano Roll before issuing another mutation. Set
+`auto_trigger=false` to generate the script for manual execution instead.
 
 ## 4. Generate client configuration
 
-Configuration generation is pure and create-only. For an ordinary live,
-read-only Windows connection, supply absolute paths and the exact endpoint;
-write tools remain independently disabled:
+Guided setup generates the selected format from the exact interpreter,
+user-data folder, and endpoint it just resolved:
+
+```text
+postfader setup
+```
+
+It prints configuration by default. `--output` creates one new file; a rerun
+recognizes identical content as already current and refuses every differing
+file. For advanced scripting, the lower-level generator remains pure and
+create-only. An ordinary live, read-only Windows example is:
 
 ```powershell
 $Port = 'Exact Virtual MIDI Endpoint Name'
@@ -131,6 +204,18 @@ Available formats:
 - `codex-command` emits a PowerShell-safe `codex mcp add` command;
 - `claude-json` emits the `mcpServers` JSON shape.
 
+These formats all configure the same local `stdio` server. The dedicated Codex
+Windows/macOS ZIPs add guided `codex mcp add` registration; the `.mcpb` is a
+Claude Desktop-only convenience. v0.20 does not ship separate Cursor, T3 Code,
+OpenCode, or Grok packages. Cursor, OpenCode, Grok Build, and other hosts must
+place the generated executable, arguments, and environment values into their
+own schemas. Include `cwd` only when that host documents it; Cursor and Grok
+Build do not need it because the interpreter path is absolute. T3 Code users
+configure whichever MCP-capable provider T3 launches. Grok on the web and Grok
+Bot require a remote HTTP MCP server and cannot use PostFader's current local
+packages directly. See the README's
+[client/package matrix](../README.md#works-with-your-ai-client).
+
 Automatic mode emits only `FL_STUDIO_USER_DATA_DIR`. It is an offline,
 fail-closed configuration with no native MIDI transport, not the ordinary live
 FL setup. Live mode requires:
@@ -147,14 +232,20 @@ therefore includes both MIDI environment variables; replace its endpoint and
 absolute-path placeholders before use.
 
 Codex CLI uses the supported `codex mcp add NAME --env KEY=VALUE -- COMMAND`
-shape; inspect registered servers with `codex mcp list`. Codex CLI and the
-Codex desktop/IDE surfaces share the user MCP configuration. Client-specific
-approval and trust prompts still apply.
+shape; inspect registered servers with `codex mcp list`. The dedicated Codex
+installer constructs this call as an argument array, never shell-evaluates
+paths or endpoint names, verifies the saved entry afterward, and refuses a
+different existing registration. Client-specific approval and trust prompts
+still apply.
 
 Only one MCP process may own a selected endpoint pair. Disable duplicate
 project/user registrations before testing.
 
 ## 5. Run the doctor
+
+Interactive guided setup pauses after bridge deployment so you can complete
+FL Studio's MIDI Settings and script reload, then runs this same doctor. It
+returns the first precise corrective action when the connection is incomplete.
 
 ```powershell
 $Port = 'Exact Virtual MIDI Endpoint Name'
@@ -291,6 +382,7 @@ verification detail, warnings, and the project itself.
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
+| `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` | Optional absolute override for the generated Piano Roll script directory. Otherwise it follows `FL_STUDIO_USER_DATA_DIR`. |
 
 ## 8. Hermetic tests
 

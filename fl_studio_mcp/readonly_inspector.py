@@ -36,6 +36,7 @@ from .contracts import (
     SelectedRangeObservation,
     TransportState,
 )
+from .track_b_contracts import normalize_fl_color
 
 
 MIDI_SCRIPTING_DOC = (
@@ -83,6 +84,7 @@ class ReadOnlyGateway:
             "project.info",
             "arrangement.selection",
             "mixer.list",
+            "mixer.peaks",
             "mixer.track",
             "plugin.params",
             # A read, exactly like plugin.params: it walks the same indices
@@ -418,7 +420,7 @@ def _track(raw: dict[str, Any]) -> MixerTrackSummary:
         effect_slots_enabled=_bool(raw.get("slots_enabled")),
         polarity_reversed=_bool(raw.get("polarity_reversed")),
         channels_swapped=_bool(raw.get("channels_swapped")),
-        color_rgba=_int(raw.get("color")),
+        color_rgba=normalize_fl_color(_int(raw.get("color"))),
         peak_left=_float(raw.get("peak_l")),
         peak_right=_float(raw.get("peak_r")),
         plugins=[_plugin(index, item) for item in raw.get("plugins") or []],
@@ -589,7 +591,7 @@ class ReadOnlyInspector:
                         )
                     )
                 ),
-                limitations=["Local MIDI traffic is not authenticated in Phase 1."],
+                limitations=["Local MIDI traffic is not authenticated."],
                 evidence=[
                     CapabilityEvidence(
                         kind=official,
@@ -840,6 +842,11 @@ class ReadOnlyInspector:
             transport=TransportState(
                 playing=_bool(raw.get("playing")),
                 recording=_bool(raw.get("recording")),
+                metronome_enabled=_bool(raw.get("metronome")),
+                precount_enabled=_bool(raw.get("precount")),
+                time_signature_numerator=_int(
+                    raw.get("time_signature_numerator")
+                ),
                 tempo_bpm=_float(raw.get("tempo_bpm")),
                 song_position_normalized=_float(raw.get("song_pos")),
                 song_position_display=str(raw.get("song_pos_hint") or "") or None,

@@ -168,6 +168,27 @@ def render_codex_add_command(facts: ClientConfigurationFacts) -> str:
     return " ".join(pieces) + "\n"
 
 
+def codex_add_argv(
+    facts: ClientConfigurationFacts,
+    *,
+    codex_command: str = "codex",
+) -> tuple[str, ...]:
+    """Return a shell-free ``codex mcp add`` argument vector."""
+
+    pieces = [codex_command, "mcp", "add", facts.server_name]
+    for key in sorted(facts.environment):
+        pieces.extend(["--env", "%s=%s" % (key, facts.environment[key])])
+    pieces.extend(
+        [
+            "--",
+            os.fspath(facts.interpreter),
+            "-m",
+            "fl_studio_mcp.mcp_server",
+        ]
+    )
+    return tuple(pieces)
+
+
 def render_configuration(
     facts: ClientConfigurationFacts, output_format: OutputFormat
 ) -> str:

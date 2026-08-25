@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a producer outcome or workflow, including its evidence and safety boundary
+title: "[feature] "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Producer problem
+      description: Describe the workflow or friction, not only a proposed tool name.
+      placeholder: When I am ..., I need ..., so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Show what a successful user request and response would look like.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Product area
+      options:
+        - Setup and diagnostics
+        - Project inspection
+        - Mixer and plug-ins
+        - Composition and MIDI
+        - Arrangement and Piano Roll
+        - Audio and mix analysis
+        - Safety and verification
+        - Client compatibility
+        - Packaging and distribution
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Verification boundary
+      description: What can FL Studio read back directly, and what should remain labeled dispatch-only, observed indirectly, or unsupported?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe current workarounds or why existing tools do not cover the outcome.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request does not depend on PostFader saving a project automatically or claiming guaranteed rollback.
+          required: true
+        - label: This issue contains no project, audio, preset, path, account, or machine-identifying data.
+          required: true

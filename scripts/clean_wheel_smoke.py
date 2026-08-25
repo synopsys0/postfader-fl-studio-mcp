@@ -84,11 +84,18 @@ def main(argv=None) -> int:
         suffix = ".exe" if os.name == "nt" else ""
         for command in (
             "fl-studio-mcp",
+            "postfader",
             "postfader-install-bridge",
             "postfader-doctor",
             "postfader-plugin-report",
+            "postfader-setup",
         ):
             run([scripts_dir / (command + suffix), "--help"], cwd=root, env=environment)
+        run(
+            [scripts_dir / ("postfader" + suffix), "setup", "--help"],
+            cwd=root,
+            env=environment,
+        )
     print("clean wheel smoke test passed")
     return 0
 

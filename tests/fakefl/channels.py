@@ -33,6 +33,25 @@ def setChannelPan(index, pan, pickupMode=-1, useGlobalIndex=False):
     _c(index).pan = pan
 
 
+def getChannelPitch(index, mode=0, useGlobalIndex=False):
+    channel = _c(index)
+    if mode == 1:
+        return channel.pitch * channel.pitch_range
+    if mode == 2:
+        return channel.pitch_range
+    return channel.pitch
+
+
+def setChannelPitch(index, value, pitchUnit=0, pickupMode=-1, useGlobalIndex=False):
+    channel = _c(index)
+    if pitchUnit == 2:
+        channel.pitch_range = float(value)
+    elif pitchUnit == 1:
+        channel.pitch = float(value) / channel.pitch_range
+    else:
+        channel.pitch = float(value)
+
+
 def isChannelMuted(index, useGlobalIndex=False):
     return _c(index).muted
 
@@ -44,6 +63,11 @@ def muteChannel(index, value=-1, useGlobalIndex=False):
 
 def isChannelSolo(index, useGlobalIndex=False):
     return _c(index).solo
+
+
+def soloChannel(index, value=-1, useGlobalIndex=False):
+    channel = _c(index)
+    channel.solo = (not channel.solo) if value == -1 else bool(value)
 
 
 def isChannelSelected(index, useGlobalIndex=False):
@@ -78,3 +102,7 @@ def selectOneChannel(index, useGlobalIndex=False):
     for c in _state.CHANNELS:
         c.selected = False
     _c(index).selected = True
+
+
+def getRecEventId(index, useGlobalIndex=False):
+    return int(index) * 1024

@@ -1,9 +1,10 @@
 """Reusable, evidence-producing live acceptance harness primitives.
 
 The public MCP registry is the authority for coverage.  The harness derives
-read, session-control, persistent-write, and ephemeral mutation surfaces from
-tool annotations at runtime and rejects scenario drift instead of maintaining
-a second count.
+read, session-control, directly restorable write, specialized workflow, and
+ephemeral mutation surfaces from registered schemas and annotations at runtime.
+It rejects scenario drift without pretending that process-registry reads or
+non-restorable creative workflows belong in the one-step live fixture.
 """
 
 from __future__ import annotations
@@ -71,8 +72,10 @@ class ReadToolInvocationResult:
 class ToolSurface:
     all_tools: tuple[str, ...]
     read_tools: tuple[str, ...]
+    workflow_read_tools: tuple[str, ...]
     session_control_tools: tuple[str, ...]
     persistent_write_tools: tuple[str, ...]
+    specialized_write_tools: tuple[str, ...]
     ephemeral_tools: tuple[str, ...]
     input_schemas: Mapping[str, Mapping[str, Any]]
 
@@ -92,14 +95,29 @@ async def authoritative_tool_surface() -> ToolSurface:
 
     tools = await mcp_server.mcp.list_tools()
     all_names = tuple(sorted(tool.name for tool in tools))
-    reads = tuple(
+    all_reads = tuple(
         sorted(
             tool.name
             for tool in tools
             if tool.annotations and tool.annotations.read_only_hint is True
         )
     )
-    writes = tuple(
+    # A read that needs an opaque process-local registry ID cannot run in the
+    # isolated one-tool acceptance worker: that worker intentionally starts
+    # with fresh process state. Its creating workflow has dedicated tests.
+    workflow_reads = tuple(
+        name
+        for name in all_reads
+        if set(
+            next(tool for tool in tools if tool.name == name).input_schema.get(
+                "required", ()
+            )
+        )
+        & {"watch_id", "plan_id"}
+    )
+    reads = tuple(name for name in all_reads if name not in set(workflow_reads))
+
+    all_writes = tuple(
         sorted(
             tool.name
             for tool in tools
@@ -108,6 +126,34 @@ async def authoritative_tool_surface() -> ToolSurface:
             and tool.annotations.destructive_hint is True
             and tool.annotations.idempotent_hint is False
         )
+    )
+    # The reversible live fixture covers only direct writes that expose both
+    # the bridge-session guard and an independent before-state/digest guard.
+    # Batch, plan, local-file, Piano Roll, marker, and automation workflows
+    # have dedicated acceptance boundaries because a generic inverse cannot
+    # be synthesized safely for them.
+    writes = tuple(
+        name
+        for name in all_writes
+        if (
+            "session_fingerprint"
+            in next(tool for tool in tools if tool.name == name).input_schema.get(
+                "properties", {}
+            )
+            and (
+                "expected_before"
+                in next(tool for tool in tools if tool.name == name).input_schema.get(
+                    "properties", {}
+                )
+                or "expected_digest"
+                in next(tool for tool in tools if tool.name == name).input_schema.get(
+                    "properties", {}
+                )
+            )
+        )
+    )
+    specialized_writes = tuple(
+        name for name in all_writes if name not in set(writes)
     )
     session_controls = tuple(
         sorted(
@@ -128,19 +174,28 @@ async def authoritative_tool_surface() -> ToolSurface:
             and tool.annotations.destructive_hint is False
         )
     )
-    classified = set(reads) | set(session_controls) | set(writes) | set(ephemeral)
+    classified = (
+        set(reads)
+        | set(workflow_reads)
+        | set(session_controls)
+        | set(writes)
+        | set(specialized_writes)
+        | set(ephemeral)
+    )
     if classified != set(all_names):
         raise AcceptanceConfigurationError(
             "public MCP tools have missing or contradictory mutability annotations: %s"
             % sorted(set(all_names) - classified)
         )
     return ToolSurface(
-        all_names,
-        reads,
-        session_controls,
-        writes,
-        ephemeral,
-        {tool.name: tool.input_schema for tool in tools},
+        all_tools=all_names,
+        read_tools=reads,
+        workflow_read_tools=workflow_reads,
+        session_control_tools=session_controls,
+        persistent_write_tools=writes,
+        specialized_write_tools=specialized_writes,
+        ephemeral_tools=ephemeral,
+        input_schemas={tool.name: tool.input_schema for tool in tools},
     )
 
 
@@ -428,6 +483,17 @@ def read_acceptance_arguments(
             "max_plugins": 64,
         },
         "fl_list_channels": {},
+        "fl_list_patterns": {},
+        "fl_find_empty_pattern": {"start_pattern_number": pattern_number},
+        "fl_list_playlist_tracks": {},
+        "fl_get_project_history": {},
+        "fl_get_plugin_preset_count": {
+            "target": {
+                "kind": "mixer_effect",
+                "track_index": plugin_track_index,
+                "slot_index": plugin_slot_index,
+            }
+        },
         "fl_get_step_sequence": {
             "pattern_number": pattern_number,
             "channel_index": channel_index,
@@ -444,6 +510,55 @@ def read_acceptance_arguments(
             "max_seconds": 30.0,
         },
         "audio_find_recent_bounces": {"limit": 200},
+        "mix_doctor": {
+            "candidate_path": os.fspath(candidate),
+            "reference_path": os.fspath(reference),
+            "vocal_path": os.fspath(vocal),
+            "instrumental_path": os.fspath(reference),
+            "max_seconds": 30.0,
+        },
+        "mix_reference_recommendations": {
+            "reference_path": os.fspath(reference),
+            "candidate_path": os.fspath(candidate),
+            "max_seconds": 30.0,
+        },
+        "mix_masking_recommendations": {
+            "vocal_path": os.fspath(vocal),
+            "instrumental_path": os.fspath(reference),
+            "max_seconds": 30.0,
+        },
+        "mix_list_plugin_profiles": {},
+        "mix_inspect_plugin_compatibility": {"only_used": False},
+        "mix_resolve_processing_intent": {
+            "intent": "reduce_mud",
+            "track_index": mixer_track_index,
+            "strength": 0.5,
+        },
+        "mix_finish_assessment": {
+            "candidate_path": os.fspath(candidate),
+            "reference_path": os.fspath(reference),
+            "vocal_path": os.fspath(vocal),
+            "instrumental_path": os.fspath(reference),
+            "max_seconds": 30.0,
+        },
+        "compose_chord_progression": {
+            "progression": ["I", "vi", "IV", "V7"],
+        },
+        "compose_melody": {"bars": 4, "seed": 20},
+        "compose_bassline": {
+            "progression": ["I", "vi", "IV", "V"],
+            "seed": 20,
+        },
+        "compose_drums": {"style": "house", "bars": 4, "seed": 20},
+        "audio_estimate_tempo_and_key": {
+            "path": os.fspath(reference),
+            "max_seconds": 30.0,
+        },
+        "audio_transcribe_melody": {
+            "path": os.fspath(vocal),
+            "tempo_bpm": 120.0,
+            "max_seconds": 30.0,
+        },
     }
 
 
