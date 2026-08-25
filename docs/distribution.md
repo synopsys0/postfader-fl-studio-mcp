@@ -11,38 +11,42 @@ PostFader
 
 ## One-line description
 
-A local, verified-control MCP copilot for FL Studio mixing, plug-ins,
-composition, arrangement, and audio analysis.
+The AI copilot for inspecting, mixing, controlling, composing, and arranging
+inside the FL Studio project already open.
 
 ## Short description
 
-PostFader is a local MCP server for FL Studio. It starts read-only, discovers
-the open project through a Universal Bridge, and supports guarded controls with
-later-update readback for supported setters. It provides 90 tools, 8 live
-resources, guided setup, Windows and macOS packages, deterministic composition,
-and bounded audio-file analysis. PostFader has no hosted service, telemetry, or
-automatic project save.
+PostFader connects Claude, Codex, Cursor, and other local MCP clients to the
+project open in FL Studio. Inspect mixer routing and loaded plug-ins, diagnose
+exported mixes, control the session, generate MIDI parts, and prepare patterns
+and arrangement markers through 90 tools and 8 live resources. Guided packages
+support Windows and macOS. PostFader starts read-only and never saves
+automatically.
 
 ## Long description
 
-PostFader is a local Model Context Protocol (MCP) copilot for producers using
-FL Studio. An AI client launches the server over local `stdio`; the server
-communicates with the open project through a user-selected virtual MIDI
-endpoint and the PostFader Universal Bridge. The v0.20 surface contains 90
-tools and 8 live resources for project inspection, mixer and plug-in control,
-Channel Rack and pattern work, Playlist and transport workflows, composition,
-Piano Roll preparation, Mix Doctor, reference and masking analysis, and
-bounded audio-file measurements.
+PostFader is the local Model Context Protocol (MCP) copilot for producers using
+FL Studio. Connect Claude, Codex, Cursor, or another local MCP host to the
+project already open. The AI can inspect mixer inserts and routing, Channel
+Rack generators, loaded effects, patterns, Playlist tracks, undo/redo history
+state, transport, steps, and plug-in parameters exposed by FL Studio. It can
+control the session and supported loaded plug-ins without assuming every
+producer uses the same chain.
 
-PostFader starts read-only. Session-only write authorization is explicit,
-Master changes require separate protection, and supported direct setters wait
-for a later FL Studio update before reporting readback evidence. Partial,
-unverified, and focus-sensitive workflows say so. The server never saves a
-project automatically, has no hosted PostFader service, and does not collect
-telemetry. Windows and macOS packages, dedicated Codex packages, a Claude
-Desktop MCPB, and Python distributions are published for different setup
-needs. FL Studio, virtual MIDI software, client accounts, and user plug-ins
-remain outside the package boundary.
+PostFader also connects production decisions across tools. Run Mix Doctor on an
+exported bounce, compare loudness and tonal balance with a reference, examine
+synchronized vocal and instrumental renders for likely masking, watch mixer
+peaks during playback, and use your AI to turn selected findings into
+reviewable mix plans. Generate chords, melody, bass, and drums; export
+multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio;
+and prepare patterns, section markers, or Piano Roll transforms.
+
+The v0.20 surface contains 90 tools and 8 live resources. Guided Windows and
+macOS packages, dedicated Codex packages, a Claude Desktop MCPB, and Python
+distributions cover different setup needs. PostFader starts read-only, requires
+session-only authorization for writes, never saves automatically, and reads
+supported direct changes back from FL Studio. It has no hosted PostFader
+service, account, or telemetry.
 
 ## Safe claims to reuse
 
