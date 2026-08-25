@@ -62,11 +62,27 @@ FORBIDDEN_EXACT_PATHS = {
 }
 PUBLIC_DOCUMENT_PATHS = {
     "docs/architecture.md",
+    "docs/code-quality.md",
+    "docs/discussions.md",
+    "docs/distribution.md",
+    "docs/early-access-testing.md",
+    "docs/external-review-scope.md",
     "docs/fl-constraints.md",
+    "docs/future-security-hardening-options.md",
+    "docs/maintainability-plan.md",
     "docs/plugin-matrix.md",
     "docs/plugin-support.md",
+    "docs/releases/v0.20.0.md",
     "docs/setup.md",
+    "docs/supply-chain.md",
     "docs/tool-contracts.md",
+    "docs/tool-surface-evaluation.md",
+}
+# This reviewed public document intentionally contains "plan" in its
+# filename. Keep this exception exact; similarly named working documents must
+# continue to fail the generic internal-document-name check below.
+INTERNAL_DOCUMENT_TOKEN_EXEMPTIONS = {
+    "docs/maintainability-plan.md",
 }
 INTERNAL_DOCUMENT_TOKENS = {
     "acceptance",
@@ -162,7 +178,11 @@ def check_file(relative: Path) -> list[str]:
         token for token in re.split(r"[^a-z0-9]+", relative.stem.casefold()) if token
     }
     internal_tokens = sorted(name_tokens & INTERNAL_DOCUMENT_TOKENS)
-    if relative.suffix.casefold() in PROSE_SUFFIXES and internal_tokens:
+    if (
+        relative.suffix.casefold() in PROSE_SUFFIXES
+        and internal_tokens
+        and relative_folded not in INTERNAL_DOCUMENT_TOKEN_EXEMPTIONS
+    ):
         failures.append(
             "internal working-document name: %s" % internal_tokens[0]
         )

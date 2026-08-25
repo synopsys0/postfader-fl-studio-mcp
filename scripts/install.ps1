@@ -184,7 +184,7 @@ try {
         Invoke-CheckedPython $BootstrapCommand $BootstrapPrefix @("-m", "venv", $VenvRoot)
     }
 
-    Write-Host "Installing Postfader into the checkout virtual environment"
+    Write-Host "Installing PostFader into the checkout virtual environment"
     Invoke-CheckedPython $VenvPython @() @("-m", "pip", "install", "--upgrade", "pip")
     Invoke-CheckedPython $VenvPython @() @("-m", "pip", "install", "--editable", $RepositoryRoot)
 
@@ -204,7 +204,7 @@ try {
     Write-Host "Installation complete. No MCP client configuration was changed."
     Write-Host "Continue with the guided first-time setup:"
     Write-Host "  $GuidedSetupCommand"
-    Write-Host "Postfader never installs or configures a MIDI driver."
+    Write-Host "PostFader never installs or configures a MIDI driver."
 }
 finally {
     Pop-Location

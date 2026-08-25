@@ -1,4 +1,4 @@
-"""Outcome-level workflows built on Postfader's verified mutation kernel.
+"""Outcome-level workflows built on PostFader's verified mutation kernel.
 
 The batch executor deliberately does not add a generic bridge escape hatch.  It
 accepts a closed discriminated union of existing absolute writes, performs one
@@ -10,7 +10,7 @@ never retries an ambiguous mutation and never pretends a rollback occurred.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from pydantic import Field, TypeAdapter, model_validator
 
@@ -455,8 +455,14 @@ class _CachedPingClient:
     def ping(self) -> dict[str, Any]:
         return dict(self._ping)
 
-    def call(self, command: str, **arguments: Any) -> dict[str, Any]:
-        return cast(dict[str, Any], self._client.call(command, **arguments))
+    def call(self, cmd: str, **arguments: Any) -> dict[str, Any]:
+        return cast(dict[str, Any], self._client.call(cmd, **arguments))
+
+
+class _SessionKwargs(TypedDict):
+    """Keyword arguments shared by every verified batch dispatch."""
+
+    session_fingerprint: str
 
 
 def _operation_keys(operation: BatchOperation) -> list[tuple[Any, ...]]:
@@ -661,7 +667,7 @@ class VerifiedBatchExecutor:
         completed = attempted == len(parsed)
         warnings = [
             "This ordered batch is non-atomic. Every attempted item has its own "
-            "later-tick receipt; Postfader never retries an ambiguous mutation.",
+            "later-tick receipt; PostFader never retries an ambiguous mutation.",
             "No rollback or project save was attempted. If execution stopped, "
             "previous verified items remain applied and later items were skipped.",
         ]
@@ -687,7 +693,7 @@ def _dispatch_batch_operation(
     controller: TrackBController,
     session: str,
 ) -> BatchReceipt:
-    common = {"session_fingerprint": session}
+    common: _SessionKwargs = {"session_fingerprint": session}
     if isinstance(operation, BatchMixerVolume):
         return writer.set_mixer_volume(
             track_index=operation.track_index,

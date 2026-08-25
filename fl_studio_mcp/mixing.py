@@ -1,6 +1,6 @@
 """Production-copilot workflows for diagnosis, metering, profiles, and plans.
 
-Audio judgements in this module are derived from Postfader's real decoded-file
+Audio judgements in this module are derived from PostFader's real decoded-file
 measurements. Live peak watches use the documented mixer peak getters. Artistic
 recommendations are labelled as policy recommendations and are never applied by
 the read tools; mutations cross the same verified batch kernel as direct tools.
@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Literal, cast
 
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
 from .advisory import (
     AudioComparison,
@@ -266,7 +266,7 @@ def run_mix_doctor(
     )
     issues = _diagnose_analysis(analysis, target)
     warnings = [
-        "Thresholds are Postfader review policy, not universal mastering rules.",
+        "Thresholds are PostFader review policy, not universal mastering rules.",
         "This report analyses decoded files; FL's MIDI scripting API exposes no live audio bus.",
     ]
     if comparison is not None and not comparison.comparison_ready:
@@ -921,7 +921,7 @@ def inspect_plugin_compatibility(*, only_used: bool = True) -> PluginCompatibili
         profiled_count=profiled,
         unprofiled_count=len(matches) - profiled,
         warnings=list(inventory.warnings) + [
-            "A profile means Postfader knows parameter roles; it does not prove the plug-in version or audible result."
+            "A profile means PostFader knows parameter roles; it does not prove the plug-in version or audible result."
         ],
     )
 

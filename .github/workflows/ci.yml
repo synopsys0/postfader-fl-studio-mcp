@@ -13,6 +13,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Static quality and hermetic coverage
+    # The guided-setup safe tests intentionally support only qualified desktop
+    # hosts. Run coverage on macOS so the complete allowlisted suite executes
+    # without pretending Linux is a supported setup target.
+    runs-on: macos-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    env:
+      FL_BRIDGE_ENABLE_MIDI: "0"
+      FL_BRIDGE_ENABLE_WRITES: "0"
+      FL_BRIDGE_SANDBOXED: "1"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Python
+        id: setup-python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install development quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --editable ".[dev]"
+      - name: Run Ruff lint and import checks
+        run: python -m ruff check fl_studio_mcp scripts
+      - name: Run Pyright baseline
+        run: >-
+          python -m pyright --project pyrightconfig.json
+          --pythonpath "${{ steps.setup-python.outputs.python-path }}"
+      - name: Run hermetic safe suite with coverage
+        run: python scripts/run_coverage.py --artifact-dir coverage-artifacts
+      - name: Upload hermetic coverage report
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: hermetic-coverage
+          path: coverage-artifacts/
+          if-no-files-found: error
+
   sdk-compatibility:
     name: MCP SDK ${{ matrix.label }}
     runs-on: ubuntu-latest

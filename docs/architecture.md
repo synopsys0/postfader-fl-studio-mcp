@@ -1,6 +1,6 @@
 # Architecture
 
-Postfader is a local stdio MCP server connected to an FL Studio MIDI
+PostFader is a local stdio MCP server connected to an FL Studio MIDI
 controller script. The v0.20 public surface contains 90 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.

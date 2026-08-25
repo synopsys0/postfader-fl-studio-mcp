@@ -155,6 +155,8 @@ jobs:
     name: Build verified publishing artifacts
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -240,6 +242,34 @@ jobs:
 
       # These artifacts stay separate by design: the PyPI action below reads
       # dist/ wholesale and must never be handed a .mcpb file.
+      - name: Resolve runtime dependencies for the release SBOM
+        run: |
+          python -m venv "$RUNNER_TEMP/postfader-sbom"
+          "$RUNNER_TEMP/postfader-sbom/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/postfader-sbom/bin/python" -m pip install dist/*.whl
+          "$RUNNER_TEMP/postfader-sbom/bin/python" -m pip inspect --local \
+            > "$RUNNER_TEMP/postfader-pip-inspect.json"
+
+      - name: Generate the release SBOM
+        run: |
+          version="$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")"
+          mkdir -p sbom-dist
+          python scripts/generate_sbom.py \
+            --inspection "$RUNNER_TEMP/postfader-pip-inspect.json" \
+            --output "sbom-dist/PostFader-v${version}-SBOM.cdx.json" \
+            --artifacts \
+            dist/*.whl \
+            dist/*.tar.gz \
+            mcpb-dist/*.mcpb \
+            release-bundles/*.zip
+
+      - name: Upload the release SBOM
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: release-software-bom
+          path: sbom-dist/*.cdx.json
+          if-no-files-found: error
+
       - name: Upload Python distributions for publishing
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
@@ -263,14 +293,84 @@ jobs:
           path: release-bundles/*.zip
           if-no-files-found: error
 
-  publish:
-    name: Publish to PyPI
+  attest-release:
+    name: Attest future release artifacts
     needs: [build, platform-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only ever publishes for a version tag, never for a manual run on a
-    # branch. `workflow_dispatch` above exists to rehearse all verification.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A manual run may be selected against a tag, too.  Keep every external
+    # publication path push-only so workflow_dispatch remains a rehearsal.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Fetch Python distributions
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-python-distributions
+          path: release-assets/
+
+      - name: Fetch Claude Desktop extension
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-desktop-extension
+          path: release-assets/
+
+      - name: Fetch generic and Codex platform setup bundles
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-platform-bundles
+          path: release-assets/
+
+      - name: Fetch the release SBOM
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-software-bom
+          path: release-assets/
+
+      - name: Locate the release SBOM
+        id: sbom
+        shell: bash
+        run: |
+          set -euo pipefail
+          path="$(find release-assets -maxdepth 1 -type f -name '*.cdx.json' -print -quit)"
+          test -n "$path"
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+
+      # Provenance binds every byte that the later GitHub Release job will
+      # upload, including the SBOM itself. The tag-only job has no release
+      # write permission and does not mutate v0.20.0 or any existing asset.
+      - name: Generate signed build-provenance attestations
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.whl
+            release-assets/*.tar.gz
+            release-assets/*.mcpb
+            release-assets/*.zip
+            release-assets/*.cdx.json
+
+      - name: Generate a signed SBOM attestation for release packages
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release-assets/*.whl
+            release-assets/*.tar.gz
+            release-assets/*.mcpb
+            release-assets/*.zip
+          sbom-path: ${{ steps.sbom.outputs.path }}
+
+  publish:
+    name: Publish to PyPI
+    needs: [build, platform-verify, attest-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only ever publishes for a tag push, never for a manual run on a branch
+    # or a manually selected tag. `workflow_dispatch` above exists to rehearse
+    # all verification.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment:
       name: pypi
       url: https://pypi.org/p/postfader-fl-studio-mcp
@@ -290,10 +390,10 @@ jobs:
 
   github-release:
     name: Attach verified artifacts to GitHub Release
-    needs: [build, publish]
+    needs: [build, publish, attest-release]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
@@ -313,6 +413,12 @@ jobs:
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: release-platform-bundles
+          path: release-assets/
+
+      - name: Fetch the release SBOM
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: release-software-bom
           path: release-assets/
 
       - name: Publish SHA-256 checksums for every downloadable artifact
@@ -356,7 +462,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: read
       id-token: write

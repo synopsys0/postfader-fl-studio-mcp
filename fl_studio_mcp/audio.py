@@ -400,11 +400,11 @@ def measure_dynamics(a: Loaded) -> dict:
 def measure_stereo(a: Loaded) -> dict:
     if a.stereo is None:
         return {"channels": a.channels, "note": "mono file"}
-    l, r = a.stereo[:, 0], a.stereo[:, 1]
-    denom = float(np.sqrt(np.sum(l ** 2) * np.sum(r ** 2)))
-    corr = float(np.sum(l * r) / denom) if denom > 0 else 1.0
-    mid = (l + r) / 2
-    side = (l - r) / 2
+    left, right = a.stereo[:, 0], a.stereo[:, 1]
+    denom = float(np.sqrt(np.sum(left ** 2) * np.sum(right ** 2)))
+    corr = float(np.sum(left * right) / denom) if denom > 0 else 1.0
+    mid = (left + right) / 2
+    side = (left - right) / 2
     m_e = float(np.sum(mid ** 2))
     s_e = float(np.sum(side ** 2))
     width = s_e / (m_e + 1e-20)
@@ -413,9 +413,9 @@ def measure_stereo(a: Loaded) -> dict:
         "correlation": round(corr, 4),
         "mid_side_ratio": round(width, 4),
         "mono_compatible": bool(corr > 0.3),
-        "balance_db": round(_to_db(float(np.sqrt(np.mean(r ** 2))))
-                            - _to_db(float(np.sqrt(np.mean(l ** 2)))), 2)
-        if np.any(l) and np.any(r) else 0.0,
+        "balance_db": round(_to_db(float(np.sqrt(np.mean(right ** 2))))
+                             - _to_db(float(np.sqrt(np.mean(left ** 2)))), 2)
+        if np.any(left) and np.any(right) else 0.0,
     }
 
 

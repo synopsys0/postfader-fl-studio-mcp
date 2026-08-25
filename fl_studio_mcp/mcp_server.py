@@ -240,7 +240,7 @@ SessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-Postfader 0.20 is a local FL Studio 2026 production copilot with 90 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 90 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -252,7 +252,7 @@ open project. The authorization is session-only. Direct setters are bounded,
 Master-protected, never automatically replayed after an ambiguous outcome, and
 read FL back on a later idle tick. Treat verified=false as the headline: the
 requested state was not proven. False or null undo evidence means Ctrl+Z may
-not recover the change. Postfader never saves the project.
+not recover the change. PostFader never saves the project.
 
 fl_apply_verified_batch performs one preflight and ordered direct operations
 with per-item receipts. It is non-atomic: successful earlier items are not
@@ -3250,7 +3250,7 @@ async def automation_record_value(
 
 
 USAGE = """\
-Postfader - unofficial local MCP server for FL Studio 2026
+PostFader - unofficial local MCP server for FL Studio 2026
 
 Usage:
   fl-studio-mcp              Serve the Model Context Protocol over stdio.
@@ -3266,7 +3266,7 @@ From a source checkout, generate a Codex command, Codex TOML, or Claude JSON:
 
 The generator keeps automatic local-file mode read-only by default. Select
 --transport midi and provide --midi-port only after configuring the same exact
-virtual endpoint in FL Studio. Postfader never installs a virtual MIDI driver.
+virtual endpoint in FL Studio. PostFader never installs a virtual MIDI driver.
 
 Writes start off. Ask the connected AI client to enable write mode for the
 current session; explicit user-present confirmation is required and FL Studio
