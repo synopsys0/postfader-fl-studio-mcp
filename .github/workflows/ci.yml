@@ -27,6 +27,7 @@ jobs:
       - name: Check out source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Set up Python
+        id: setup-python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -39,7 +40,9 @@ jobs:
       - name: Run Ruff lint and import checks
         run: python -m ruff check fl_studio_mcp scripts
       - name: Run Pyright baseline
-        run: python -m pyright --project pyrightconfig.json --pythonpath python
+        run: >-
+          python -m pyright --project pyrightconfig.json
+          --pythonpath "${{ steps.setup-python.outputs.python-path }}"
       - name: Run hermetic safe suite with coverage
         run: python scripts/run_coverage.py --artifact-dir coverage-artifacts
       - name: Upload hermetic coverage report
