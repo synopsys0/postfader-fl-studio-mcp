@@ -2,7 +2,7 @@
 
 ## What can be reached at all
 
-Postfader has two explicit plug-in target kinds:
+PostFader has two explicit plug-in target kinds:
 
 - `mixer_effect` names a mixer track plus effect slot 0–9. Mixer track 0
   requires `allow_master: true` for a write.
@@ -26,11 +26,16 @@ exact plug-in version remains unknown.
 
 ## How support works for what can be reached
 
-There is no list of supported plug-ins, and no per-plug-in profiles. The
-connector never models a plug-in; it discovers one at runtime. So there is
-nothing to add for a plug-in it has not seen: it will attempt any VST, VST3,
-AU, or native FL plug-in that FL exposes through a mixer-effect or Channel Rack
-generator target.
+Generic plug-in discovery is identity-independent: there is no allowlist that a
+plug-in must enter before the connector can inspect it. PostFader v0.20 also
+ships a small set of optional processing-intent adapter profiles. The profiles
+describe parameter roles for selected reported names so the `mix_*` planning
+tools can resolve intents such as dynamics, EQ, reverb, or delay. They do not
+gate generic discovery, enable a plug-in, assert an exact plug-in version, or
+certify every parameter or audible result. Use `mix_list_plugin_profiles` and
+`mix_inspect_plugin_compatibility` to see the current profile catalog and the
+observed matches; an unprofiled plug-in remains eligible for the same runtime
+scans and parameter setters.
 
 Attempt is the honest verb. What you get back depends on what FL chooses to
 report for that plug-in and on the scan bounds below, and a write is reported
@@ -38,9 +43,10 @@ as `verified: false` when FL accepts it and ignores it. The guarantee is not
 that every plug-in works — it is that you are told what was found and what did
 not land.
 
-That is the whole compatibility story for reading and writing parameters. What
-follows is about the places where discovery is bounded, because those bounds
-are where an untested plug-in can surprise you.
+That is the generic compatibility story for reading and writing parameters;
+optional profiles affect intent planning only. What follows is about the
+places where discovery is bounded, because those bounds are where an untested
+plug-in can surprise you.
 
 ## Addressing a parameter three ways
 

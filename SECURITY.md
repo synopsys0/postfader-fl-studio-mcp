@@ -1,6 +1,6 @@
 # Security policy
 
-Postfader is intended for a trusted, single-user macOS or Windows workstation.
+PostFader is intended for a trusted, single-user macOS or Windows workstation.
 It is not designed as a remote service, a multi-user control plane, or a
 security boundary between mutually untrusted local processes.
 
@@ -45,7 +45,7 @@ The intended deployment contains four components:
 The server and bridge implement no hosted service and no telemetry. Test
 transports can use loopback or a local file mailbox; production FL Studio
 communication uses MIDI SysEx over the explicitly selected virtual endpoint.
-Postfader does not install, configure, authenticate, or endorse a virtual MIDI
+PostFader does not install, configure, authenticate, or endorse a virtual MIDI
 provider.
 
 The MCP client is outside this repository's trust boundary. It may send tool
@@ -255,7 +255,7 @@ creates or materially worsens the vulnerability.
 
 ## Non-affiliation
 
-FL Studio is a trademark of Image-Line Software. Postfader is an
+FL Studio is a trademark of Image-Line Software. PostFader is an
 independent, unofficial project and is not affiliated with, endorsed by, or
 sponsored by Image-Line Software. FL Studio is not distributed with this
 repository.
