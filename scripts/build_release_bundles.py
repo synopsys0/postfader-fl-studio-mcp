@@ -15,7 +15,7 @@ from pathlib import Path, PurePosixPath
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10
-    import tomli as tomllib
+    import tomli as tomllib  # pyright: ignore[reportMissingImports]
 
 
 ROOT = Path(__file__).resolve().parents[1]

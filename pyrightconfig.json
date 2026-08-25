@@ -1,0 +1,17 @@
+{
+  "include": [
+    "fl_studio_mcp/setup_wizard.py",
+    "fl_studio_mcp/client_config.py",
+    "fl_studio_mcp/bridge_install.py",
+    "fl_studio_mcp/contracts.py",
+    "fl_studio_mcp/evidence.py",
+    "fl_studio_mcp/workflows.py",
+    "scripts/build_release_bundles.py"
+  ],
+  "exclude": [
+    "fl_studio_mcp/_bridge",
+    "tests"
+  ],
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.10"
+}
