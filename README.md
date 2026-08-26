@@ -4,6 +4,13 @@
 
 **The AI copilot for FL Studio**
 
+<p>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/synopsys0/postfader-fl-studio-mcp?style=flat-square&amp;label=release"></a>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/synopsys0/postfader-fl-studio-mcp/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
+  <a href="https://pypi.org/project/postfader-fl-studio-mcp/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/postfader-fl-studio-mcp?style=flat-square"></a>
+  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/github/license/synopsys0/postfader-fl-studio-mcp?style=flat-square"></a>
+</p>
+
 ## Your AI can finally work inside FL Studio.
 
 PostFader connects Claude, Codex, Cursor, and other local MCP-compatible AI
@@ -12,21 +19,29 @@ session, diagnose a mix, control loaded plug-ins, clean up routing, build MIDI
 parts, organize patterns and Playlist tracks, add section markers, or make
 supported changes from natural language.
 
-[**Download for Windows**](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
-·
-[**Download for macOS**](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
-·
-[Explore what PostFader can do](#not-just-another-note-sender)
+<p>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
+</p>
+
+[All release assets](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
+· [Setup guide](docs/setup.md)
+· [Explore what PostFader can do](#not-just-another-note-sender)
 
 **90 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
-</div>
+[What it can do](#not-just-another-note-sender) ·
+[Workflows](#four-ways-to-work-with-postfader) ·
+[Feature depth](#feature-depth) ·
+[Install](#quick-installation) ·
+[AI clients](#supported-ai-clients) ·
+[Documentation](#documentation)
 
-> [!NOTE]
-> PostFader is an unofficial community project. It is not made by or affiliated
-> with Image-Line.
+<sub>Unofficial community project; not made by or affiliated with Image-Line.</sub>
+
+</div>
 
 ## Not just another note sender
 
@@ -36,24 +51,15 @@ is open now, plus tools to analyze exported audio, work with loaded plug-ins,
 compose musical parts, and carry separately requested supported changes back
 into the session.
 
-- **Understand the project.** Inspect mixer inserts and routing, Channel Rack
-  generators, loaded effects, patterns, Playlist tracks, transport, undo/redo
-  history position, step sequences, and plug-in parameters exposed by FL
-  Studio.
-- **Diagnose the mix.** Measure an exported bounce, compare it with a reference,
-  examine vocal-versus-instrument masking, monitor peaks during playback, and
-  surface severity, confidence, and scored evidence so your AI can prioritize
-  the next moves.
-- **Control the session.** Rename and color tracks, adjust levels and panning,
-  manage sends and routing, control transport, organize channels and patterns,
-  edit steps, and change supported parameters on plug-ins already loaded.
-- **Create and transform music.** Generate chords, melody, bass, and drums;
-  export multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic
-  audio; and prepare or transform Piano Roll material.
+| 🔎 Understand your project | 🩺 Diagnose the mix |
+| --- | --- |
+| Inspect mixer routing, Channel Rack generators, loaded effects, patterns, Playlist tracks, transport, undo/redo history position, step sequences, and parameters exposed by loaded plug-ins. | Measure an exported bounce, compare it with a reference, examine vocal-versus-instrument masking, monitor peaks during playback, and surface evidence your AI can prioritize. |
+| **🎛️ Control the session** | **🎹 Create and transform music** |
+| Rename and color tracks, adjust levels and panning, manage sends and routing, control transport, organize channels and patterns, edit steps, and change supported loaded plug-in parameters. | Generate chords, melody, bass, and drums; export multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio; and prepare or transform Piano Roll material. |
 
 ## Four ways to work with PostFader
 
-### Understand the project already open
+### 🔎 Understand the project already open
 
 > “Show me every instrument that is not routed to the mixer.”
 >
@@ -67,7 +73,7 @@ transport, undo/redo history bounds, the current step grid, and exposed plug-in
 parameters. Your AI can answer from the actual session instead of relying on a
 project description pasted into chat.
 
-### Diagnose an exported mix and decide what to improve
+### 🩺 Diagnose an exported mix and decide what to improve
 
 > “What are the three highest-impact problems in this bounce?”
 >
@@ -88,7 +94,7 @@ pass that fits the window rather than a single instant. These are sampled
 observations, so they do not prove that every transient was captured. Your AI
 can use other reported findings to create a separate, reviewable mix plan.
 
-### Control the session and the plug-ins you already use
+### 🎛️ Control the session and the plug-ins you already use
 
 > “Rename insert 4 to Lead Vocal, color it purple, pan it 10% left, and confirm
 > the changes.”
@@ -119,7 +125,7 @@ PostFader works with the chain already in the session. It does not currently
 insert, remove, or reorder plug-ins, and FL Studio does not expose reliable
 effect-slot bypass or wet/dry control here.
 
-### Compose, transform, and organize musical ideas
+### 🎹 Compose, transform, and organize musical ideas
 
 > “Create an eight-bar D Dorian melody with a bassline and drum pattern.”
 >
@@ -145,10 +151,9 @@ instead of claiming controller-side note readback.
 
 ## From one request to a complete production workflow
 
-### You ask
-
-> “The vocal feels buried. Find the most likely cause, show me what you would
-> change, and fix only the highest-confidence problem.”
+> [!TIP]
+> **You ask:** “The vocal feels buried. Find the most likely cause, show me what
+> you would change, and fix only the highest-confidence problem.”
 
 ### PostFader workflow
 
@@ -163,11 +168,12 @@ instead of claiming controller-side note readback.
    sends the separate apply request.
 7. Reports the observed result and any evidence limitation.
 
-**Read the project → analyze the bounce → identify the problem → propose a plan
-→ choose the change → make a separate apply request → report the result**
+<p align="center">
+  <strong>Read the project → analyze the bounce → identify the problem → propose a plan → choose the change → apply → report</strong>
+</p>
 
-A narrow remote control stops at individual commands. PostFader connects those
-commands into a production workflow.
+> **A narrow remote control stops at individual commands. PostFader connects
+> those commands into a production workflow.**
 
 ## Feature depth
 
@@ -209,13 +215,13 @@ commands into a production workflow.
 
 ### Bring your own AI
 
-- Claude Desktop and Claude Code
-- Codex CLI, IDE extension, and desktop Codex
-- Cursor IDE and Cursor CLI
-- OpenCode
-- Grok Build
-- T3 Code through an MCP-capable provider
-- Other compatible local `stdio` MCP hosts
+- **Claude:** Claude Desktop and Claude Code
+- **Codex:** CLI, IDE extension, and desktop Codex
+- **Cursor:** IDE and CLI
+- **OpenCode**
+- **Grok Build**
+- **T3 Code** through an MCP-capable provider
+- **Other local hosts** compatible with `stdio` MCP servers
 
 ## More than a basic FL Studio MCP
 
@@ -224,41 +230,46 @@ as a local MCP with transport commands, individual controls, point-in-time
 reads, predefined parameter mappings, and note dispatch. It is not a survey of
 every other project.
 
-| Capability | Narrow baseline used here | PostFader |
+| Capability | Narrow baseline used here | PostFader v0.20 |
 | --- | --- | --- |
-| Play, stop, and change individual controls | Transport and individual controls | Yes, plus wider session workflows |
-| Read the open project | Selected state only | Mixer, channels, loaded plug-ins, patterns, Playlist tracks, undo/redo history, steps, and transport |
-| Diagnose exported audio | Not part of the baseline | Mix Doctor, peaks, loudness, tonal balance, stereo analysis, masking, and references |
-| Monitor levels through playback | Point-in-time meter reads | Process-local per-insert peak watches sample across a chosen observation window |
-| Move from diagnosis to a separate apply request | Not part of the baseline | Diagnose → propose → review → apply → report |
-| Work with loaded plug-ins | Predefined controls | Runtime parameter discovery, exact controls, named options, and selected stock-effect profiles |
-| Generate musical parts | Individual note dispatch | Chords, melody, bass, drums, transcription, and Type-1 MIDI export |
-| Transform Piano Roll content | Not part of the baseline | Append, replace, quantize, transpose, humanize, duplicate, delete, and clear |
-| Help organize an arrangement | Not part of the baseline | Pattern preparation, markers, Playlist track tools, and automation helpers |
-| Install on Windows and macOS | Not part of the baseline | Guided platform packages for both |
-| Work across AI clients | Single-host setup | Claude, Codex, Cursor, OpenCode, Grok Build, and other local MCP hosts |
-| Check supported changes | Command dispatch only | Reads supported controls back from FL Studio after the change |
+| **Play, stop, and change individual controls** | Transport and individual controls | Yes, plus wider session workflows |
+| **Read the open project** | Selected state only | Mixer, channels, loaded plug-ins, patterns, Playlist tracks, undo/redo history, steps, and transport |
+| **Diagnose exported audio** | Not part of the baseline | Mix Doctor, peaks, loudness, tonal balance, stereo analysis, masking, and references |
+| **Monitor levels through playback** | Point-in-time meter reads | Process-local per-insert peak watches sample across a chosen observation window |
+| **Move from diagnosis to a separate apply request** | Not part of the baseline | Diagnose → propose → review → apply → report |
+| **Work with loaded plug-ins** | Predefined controls | Runtime parameter discovery, exact controls, named options, and selected stock-effect profiles |
+| **Generate musical parts** | Individual note dispatch | Chords, melody, bass, drums, transcription, and Type-1 MIDI export |
+| **Transform Piano Roll content** | Not part of the baseline | Append, replace, quantize, transpose, humanize, duplicate, delete, and clear |
+| **Help organize an arrangement** | Not part of the baseline | Pattern preparation, markers, Playlist track tools, and automation helpers |
+| **Install on Windows and macOS** | Not part of the baseline | Guided platform packages for both |
+| **Work across AI clients** | Single-host setup | Claude, Codex, Cursor, OpenCode, Grok Build, and other local MCP hosts |
+| **Check supported changes** | Command dispatch only | Reads supported controls back from FL Studio after the change |
+
+---
 
 ## Quick installation
 
-Download the Windows or macOS package, extract it to a stable writable folder,
-run the guided installer, select your virtual MIDI endpoint, complete the
-documented FL Studio MIDI Settings stage, and connect your AI client.
+1. Download and extract the matching platform package.
+2. Run the guided installer and select your virtual MIDI endpoint.
+3. Complete the documented FL Studio MIDI Settings stage.
+4. Connect your local AI client.
 
-- [Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
-- [Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
+- **[Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)**
+- **[Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)**
 - [Open the complete setup and troubleshooting guide](docs/setup.md)
 - [See every v0.20.0 release asset](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v0.20.0)
 
 Codex users can choose the dedicated Codex ZIP for guided `codex mcp add`
 registration. Claude Desktop users can add the `.mcpb` after completing the
 same platform setup. Advanced users can install the wheel or source archive.
-None of those formats replaces the Universal Bridge, virtual MIDI endpoint, or
-FL Studio MIDI configuration described in the setup guide.
 
-PostFader does not install virtual MIDI software. Python 3.10–3.14 is required,
-and Python 3.13/3.14 or Windows ARM64 may require a native compiler for
-`python-rtmidi`.
+> [!NOTE]
+> Codex ZIPs, the Claude Desktop MCPB, wheel, and source archive still use the
+> Universal Bridge, a virtual MIDI endpoint, and the documented FL Studio
+> setup. PostFader does not install virtual MIDI software.
+
+Python 3.10–3.14 is required. Python 3.13/3.14 or Windows ARM64 may require a
+native compiler for `python-rtmidi`.
 
 ## Supported AI clients
 
@@ -311,6 +322,8 @@ The AI client calls PostFader's named MCP tools. Live FL Studio communication
 travels over a local virtual MIDI endpoint to the Universal Bridge controller
 script. Audio tools analyze files you select because FL Studio's scripting API
 does not expose its live audio buffer.
+
+---
 
 ## Built for real projects without pretending FL Studio exposes more than it does
 
@@ -380,6 +393,8 @@ measurements, but never audio samples. Your AI client is separate software and
 may send tool arguments and results to its model provider; review that client's
 privacy policy before using sensitive projects.
 
+---
+
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow. To help
@@ -392,8 +407,9 @@ belong in [GitHub Discussions](https://github.com/synopsys0/postfader-fl-studio-
 
 ## Security reporting
 
-Do not open a public issue for a suspected vulnerability. Follow the private
-reporting instructions in [SECURITY.md](SECURITY.md#reporting-a-vulnerability).
+> [!IMPORTANT]
+> Do not open a public issue for a suspected vulnerability. Follow the private
+> reporting instructions in [SECURITY.md](SECURITY.md#reporting-a-vulnerability).
 
 ## License
 
