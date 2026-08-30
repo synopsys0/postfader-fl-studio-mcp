@@ -24,13 +24,30 @@ class MCPCompatibilityTests(unittest.TestCase):
 
     def test_all_tools_register_with_strict_top_level_input_schemas(self) -> None:
         tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 90)
+        self.assertEqual(len(tools), 95)
         non_strict = [
             tool.name
             for tool in tools
             if tool.input_schema.get("additionalProperties") is not False
         ]
         self.assertEqual(non_strict, [])
+
+    def test_production_validate_run_nested_contracts_are_strict(self) -> None:
+        tool = next(
+            tool
+            for tool in asyncio.run(mcp.list_tools())
+            if tool.name == "postfader_validate_run"
+        )
+        schema = tool.input_schema
+        definitions = schema.get("$defs", {})
+        for field_name in ("request", "plan"):
+            with self.subTest(field=field_name):
+                field_schema = schema["properties"][field_name]
+                reference = field_schema.get("$ref")
+                if reference is not None:
+                    field_schema = definitions[reference.rsplit("/", 1)[-1]]
+                self.assertEqual(field_schema.get("type"), "object")
+                self.assertIs(field_schema.get("additionalProperties"), False)
 
     def test_all_live_resources_register_through_the_sdk(self) -> None:
         resources = asyncio.run(mcp.list_resources())

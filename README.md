@@ -28,7 +28,7 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**90 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**95 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
@@ -174,6 +174,26 @@ instead of claiming controller-side note readback.
 
 > **A narrow remote control stops at individual commands. PostFader connects
 > those commands into a production workflow.**
+
+## Production Runs: task-scoped autonomy
+
+Production Runs let your connected AI turn one outcome-oriented request into a
+bounded, multi-stage plan. Ask it to finish a track, build around a loop,
+transform a genre while preserving a vocal, work only on one section, or mix
+without changing notes. The AI submits the structured plan; PostFader validates
+scope, resolves references, applies supported operations, and records truthful
+receipts.
+
+Autonomy belongs to that request only—there is no permanent autonomous-mode
+toggle. A plan-only request never changes FL Studio. An authorized execution
+run enables the existing session write gate once, then continues until the
+submitted plan completes or reaches a real blocker. Earlier verified changes
+remain visible if a later operation fails; PostFader never claims rollback,
+replays an ambiguous mutation, or saves the project automatically.
+
+See the [Production Runs guide](docs/production-runs.md) for chat examples,
+the supported MVP operation set, continuation and stop behavior, process-local
+run lifetime, and FL Studio limitations.
 
 ## Feature depth
 
@@ -357,7 +377,7 @@ first write test, and disable write mode when you are done.
 | Guide | What it covers |
 | --- | --- |
 | [Setup and troubleshooting](docs/setup.md) | Full installation, virtual MIDI, bridge, client configuration, upgrades, and diagnostics |
-| [Tool contracts](docs/tool-contracts.md) | All 90 tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
+| [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |

@@ -72,6 +72,7 @@ PUBLIC_DOCUMENT_PATHS = {
     "docs/maintainability-plan.md",
     "docs/plugin-matrix.md",
     "docs/plugin-support.md",
+    "docs/production-runs.md",
     "docs/releases/v0.20.0.md",
     "docs/setup.md",
     "docs/supply-chain.md",

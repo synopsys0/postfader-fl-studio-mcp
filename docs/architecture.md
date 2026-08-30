@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The v0.20 public surface contains 90 tools and 8 resources.
+controller script. The current public surface contains 95 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -14,6 +14,7 @@ fl_studio_mcp/mcp_server.py
         ├── verified_writer.py ────┤
         ├── performance.py ────────┼── bridge_client.py
         ├── workflows.py ──────────┤
+        ├── production_runs.py ────┤
         ├── mixing.py ─────────────┤
         ├── creative.py ───────────┤
         │                          │        │
@@ -36,7 +37,7 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 90 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 95 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
@@ -103,6 +104,13 @@ Mix Doctor, gain-staging, actual-bounce reference/masking recommendations,
 processing intents, plug-in profiles, and finish assessment. Analysis creates
 recommendations or plans; only the explicit apply surface mutates FL. Registry
 IDs are intentionally process-lifetime objects.
+
+`fl_studio_mcp/production_runs.py` adds the task-scoped Production Run
+contracts, closed operation union, dependency and scope validation, bounded
+process-local registry, and ordered executor. It delegates composition and
+Piano Roll work to `creative.py` and direct project mutations to the existing
+verified writers and batch executor. The connected AI remains the creative
+planner; PostFader never embeds a model or interprets arbitrary chat itself.
 
 ### Creative pack
 

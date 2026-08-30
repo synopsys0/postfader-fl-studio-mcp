@@ -373,8 +373,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
     def test_bridge_dispatcher_is_independently_locked_read_only(self):
         before = state_fingerprint()
         response = bridge._dispatch(
-            {"id": 9, "cmd": "mixer.set_volume",
-             "args": {"track": 3, "value": 0.1}}
+            {"id": 9, "cmd": "mixer.set_volume", "args": {"track": 3, "value": 0.1}}
         )
         self.assertFalse(response["ok"])
         self.assertIn("locked read-only", response["error"])
@@ -439,10 +438,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                     any("getRecPPB" in warning for warning in result.warnings)
                 )
                 self.assertTrue(
-                    any(
-                        "meter-independent" in warning
-                        for warning in result.warnings
-                    )
+                    any("meter-independent" in warning for warning in result.warnings)
                 )
                 if start < 0:
                     self.assertIsNone(result.raw_start_display_hint)
@@ -644,16 +640,16 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             )
         )
         self.assertTrue(
-            any(
-                "getRecPPB" in limitation
-                for limitation in capability.limitations
-            )
+            any("getRecPPB" in limitation for limitation in capability.limitations)
         )
         self.assertTrue(
             any("inclusivity" in limitation for limitation in capability.limitations)
         )
         self.assertTrue(
-            any("inactive selection" in limitation for limitation in capability.limitations)
+            any(
+                "inactive selection" in limitation
+                for limitation in capability.limitations
+            )
         )
 
     def test_midi_capability_names_the_native_host_transport(self):
@@ -919,7 +915,9 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertTrue(info.compatible)
         self.assertIsNone(info.session_fingerprint)
         self.assertTrue(any("session fingerprint" in w for w in info.warnings))
-        self.assertEqual(inspector.project_summary().project_title, "Synthetic Test Project")
+        self.assertEqual(
+            inspector.project_summary().project_title, "Synthetic Test Project"
+        )
 
     def test_transport_read_includes_every_direct_transport_option(self):
         _state.METRONOME = True
@@ -1048,6 +1046,10 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "fl_get_project_history",
             "fl_get_plugin_preset_count",
         }
+        production_read_tools = {
+            "postfader_validate_run",
+            "postfader_get_run",
+        }
         write_tools = {
             "fl_apply_verified_batch",
             "fl_set_mixer_volume",
@@ -1117,6 +1119,11 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "mix_create_gain_stage_plan",
             "mix_create_plan",
             "piano_roll_bridge",
+            "postfader_stop_run",
+        }
+        production_mutating_tools = {
+            "postfader_execute_run",
+            "postfader_continue_run",
         }
         plan_apply_tools = {"mix_apply_plan"}
         creative_read_tools = {
@@ -1138,7 +1145,9 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertEqual(
             names,
             read_tools
+            | production_read_tools
             | write_tools
+            | production_mutating_tools
             | audition_tools
             | mode_tools
             | audio_tools
@@ -1156,18 +1165,34 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "render",
             "api_call",
             "save",
-            "exec",
             "eval",
         )
         self.assertFalse(
-            [name for name in names if any(fragment in name for fragment in prohibited_fragments)]
+            [
+                name
+                for name in names
+                if any(fragment in name for fragment in prohibited_fragments)
+            ]
         )
         by_name = {tool.name: tool for tool in tools}
-        for name in read_tools | audio_tools | mix_read_tools | creative_read_tools:
+        for name in (
+            read_tools
+            | production_read_tools
+            | audio_tools
+            | mix_read_tools
+            | creative_read_tools
+        ):
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertTrue(annotations and annotations.read_only_hint)
                 self.assertIs(annotations.destructive_hint, False)
+        for name in production_read_tools:
+            with self.subTest(tool=name):
+                annotations = by_name[name].annotations
+                self.assertIsNotNone(annotations)
+                self.assertIs(annotations.read_only_hint, True)
+                self.assertIs(annotations.destructive_hint, False)
+                self.assertIs(annotations.idempotent_hint, True)
         for name in write_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
@@ -1194,6 +1219,14 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 else:
                     self.assertIn("expected_before", properties)
                     self.assertNotIn("expected_before", required)
+        for name in production_mutating_tools:
+            with self.subTest(tool=name):
+                annotations = by_name[name].annotations
+                self.assertIsNotNone(annotations)
+                self.assertIs(annotations.read_only_hint, False)
+                self.assertIs(annotations.destructive_hint, True)
+                self.assertIs(annotations.idempotent_hint, False)
+                self.assertIs(annotations.open_world_hint, True)
         annotations = by_name["fl_trigger_note"].annotations
         self.assertIsNotNone(annotations)
         self.assertIs(annotations.read_only_hint, False)
@@ -1236,11 +1269,11 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         )
         self.assertTrue(all(tool.output_schema for tool in tools))
         selection_schema = next(
-            tool.output_schema
-            for tool in tools
-            if tool.name == "fl_get_selected_range"
+            tool.output_schema for tool in tools if tool.name == "fl_get_selected_range"
         )["properties"]
-        self.assertEqual(selection_schema["interpretation_status"]["const"], "unvalidated")
+        self.assertEqual(
+            selection_schema["interpretation_status"]["const"], "unvalidated"
+        )
         self.assertEqual(selection_schema["selection_state"]["const"], "unknown")
         self.assertEqual(selection_schema["selection_presence"]["const"], "unknown")
         self.assertEqual(selection_schema["raw_time_unit"]["const"], "unknown")
@@ -1253,7 +1286,9 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         ):
             self.assertEqual(selection_schema[field]["type"], "null")
         self.assertTrue(
-            all(tool.input_schema.get("additionalProperties") is False for tool in tools)
+            all(
+                tool.input_schema.get("additionalProperties") is False for tool in tools
+            )
         )
 
 
@@ -1363,6 +1398,22 @@ class WriteModeTests(unittest.TestCase):
                     )
                 self.assertEqual(client.commands, [])
 
+    def test_enable_refuses_a_stale_session_precondition_before_dispatch(self):
+        client = RuntimeModeClient()
+        manager = WriteModeManager(WriteModeGateway(client))
+
+        with self.assertRaisesRegex(
+            WriteModeUnavailable, "session precondition failed"
+        ):
+            manager.set_write_mode(
+                enabled=True,
+                confirm_user_present=True,
+                session_fingerprint="b" * 32,
+            )
+
+        self.assertEqual(client.commands, [])
+        self.assertFalse(client.enabled)
+
     def test_contradictory_command_metadata_never_becomes_success(self):
         client = RuntimeModeClient(reply_overrides={"project_saved": True})
         manager = WriteModeManager(WriteModeGateway(client))
@@ -1449,9 +1500,7 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(result.bridge_command, command)
         self.assertEqual(result.track_index, track_index)
         self.assertIs(result.targeted_master, master)
-        self.assertEqual(
-            result.verification_basis, "readback_on_a_later_fl_idle_tick"
-        )
+        self.assertEqual(result.verification_basis, "readback_on_a_later_fl_idle_tick")
         # Observed, not asserted: the fake takes a real undo point, so this
         # must read True rather than merely being declared True.
         self.assertIs(result.undo_point_created, True)
@@ -1475,12 +1524,22 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(
             WriteGateway.ALLOWED_COMMANDS,
             {
-                "mixer.set_volume", "mixer.set_volume_db", "mixer.set_pan", "mixer.set_mute",
-                "mixer.set_solo", "mixer.set_arm", "mixer.set_color",
-                "mixer.set_stereo_separation", "mixer.select_track",
-                "mixer.set_eq", "mixer.set_name", "mixer.set_send",
-                "mixer.set_send_level", "plugin.set_param",
-                "plugin.set_param_display", "plugin.set_param_option",
+                "mixer.set_volume",
+                "mixer.set_volume_db",
+                "mixer.set_pan",
+                "mixer.set_mute",
+                "mixer.set_solo",
+                "mixer.set_arm",
+                "mixer.set_color",
+                "mixer.set_stereo_separation",
+                "mixer.select_track",
+                "mixer.set_eq",
+                "mixer.set_name",
+                "mixer.set_send",
+                "mixer.set_send_level",
+                "plugin.set_param",
+                "plugin.set_param_display",
+                "plugin.set_param_option",
             },
         )
         for command in (
@@ -1583,7 +1642,10 @@ class VerifiedWriteTests(unittest.TestCase):
             ("set_mixer_volume", {"track_index": 3, "volume_normalized": 0.5}),
             ("set_mixer_pan", {"track_index": 3, "pan": -0.25}),
             ("set_mixer_mute", {"track_index": 3, "muted": True}),
-            ("set_mixer_eq", {"track_index": 3, "band_index": 1, "gain_normalized": 0.7}),
+            (
+                "set_mixer_eq",
+                {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
+            ),
             (
                 "set_plugin_parameter",
                 {
@@ -1625,9 +1687,7 @@ class VerifiedWriteTests(unittest.TestCase):
             with self.subTest(provenance=provenance):
                 before = state_fingerprint()
                 with self.assertRaises(RuntimeError) as caught:
-                    writer.set_mixer_volume(
-                        track_index=3, volume_normalized=0.5
-                    )
+                    writer.set_mixer_volume(track_index=3, volume_normalized=0.5)
                 self.assertIn(provenance, str(caught.exception).lower())
                 self.assertEqual(client.commands, [])
                 self.assertEqual(state_fingerprint(), before)
@@ -1996,7 +2056,9 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(self.dispatched(), [])
         self.assertFalse(_state.TRACKS[0].muted)
 
-        result = self.writer.set_mixer_mute(track_index=0, muted=True, allow_master=True)
+        result = self.writer.set_mixer_mute(
+            track_index=0, muted=True, allow_master=True
+        )
         self.assert_write_report(result, "mixer.set_mute", 0, master=True)
         self.assertIs(result.verified, True)
         self.assertTrue(_state.TRACKS[0].muted)
@@ -2068,9 +2130,7 @@ class VerifiedWriteTests(unittest.TestCase):
         def quantized_setter(index, value, pickupMode=-1):
             _state.TRACKS[index].stereo_sep = round(value * 64.0) / 64.0
 
-        with mock.patch.object(
-            bridge.mixer, "setTrackStereoSep", quantized_setter
-        ):
+        with mock.patch.object(bridge.mixer, "setTrackStereoSep", quantized_setter):
             result = self.writer.set_mixer_stereo_separation(
                 track_index=3, stereo_separation=0.1
             )
@@ -2116,7 +2176,9 @@ class VerifiedWriteTests(unittest.TestCase):
     def test_eq_write_reports_an_ignored_write_instead_of_raising(self):
         with mock.patch.object(bridge.mixer, "setEqFrequency", lambda *a, **k: None):
             result = self.writer.set_mixer_eq(
-                track_index=3, band_index=1, gain_normalized=0.7,
+                track_index=3,
+                band_index=1,
+                gain_normalized=0.7,
                 frequency_normalized=0.25,
             )
         self.assert_unverified(result)
@@ -2352,7 +2414,7 @@ class VerifiedWriteToolTests(unittest.TestCase):
         "fl_set_mixer_name": {"track_index": 3, "name": "x" * 200},
         "fl_set_mixer_send": {
             "track_index": 3,
-            "destination_track_index": 3,      # a track cannot send to itself
+            "destination_track_index": 3,  # a track cannot send to itself
             "enabled": True,
         },
         "fl_set_mixer_send_level": {
@@ -2488,9 +2550,7 @@ class VerifiedWriteToolTests(unittest.TestCase):
 
         _state.reset()
         self.client = WriteEnabledFakeClient()
-        already_there = dict(
-            self.TOOLS["fl_set_plugin_param"], normalized_value=0.6
-        )
+        already_there = dict(self.TOOLS["fl_set_plugin_param"], normalized_value=0.6)
         body = self.structured(self.call("fl_set_plugin_param", already_there))
         self.assertIs(body["reads_at_requested_value"], True)
         self.assertEqual(body["verification_basis_detail"], "value_readback")

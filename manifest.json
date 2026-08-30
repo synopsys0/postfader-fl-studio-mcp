@@ -4,7 +4,7 @@
   "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 90-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, diagnose exported mixes, work with loaded plug-ins, build reviewable mix plans, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "long_description": "A local 95-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -356,6 +356,26 @@
     {
       "name": "mix_finish_assessment",
       "description": "Run the end-to-end read-only finish assessment and stop at user export."
+    },
+    {
+      "name": "postfader_validate_run",
+      "description": "Validate a bounded Production Run and current capabilities without changing FL."
+    },
+    {
+      "name": "postfader_execute_run",
+      "description": "Create and execute one task-scoped run until its plan completes or blocks."
+    },
+    {
+      "name": "postfader_get_run",
+      "description": "Read current process-local run state and its truthful operation receipts."
+    },
+    {
+      "name": "postfader_continue_run",
+      "description": "Continue or replace only a run's unexecuted remainder after a follow-up."
+    },
+    {
+      "name": "postfader_stop_run",
+      "description": "Stop future run operations without undoing completed project changes."
     },
     {
       "name": "piano_roll_bridge",

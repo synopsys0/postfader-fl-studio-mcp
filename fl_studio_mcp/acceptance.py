@@ -151,9 +151,7 @@ async def authoritative_tool_surface() -> ToolSurface:
             )
         )
     )
-    specialized_writes = tuple(
-        name for name in all_writes if name not in set(writes)
-    )
+    specialized_writes = tuple(name for name in all_writes if name not in set(writes))
     session_controls = tuple(
         sorted(
             tool.name
@@ -423,10 +421,16 @@ def tool_payload(result: Any) -> Any:
             for block in getattr(result, "content", [])
             if getattr(block, "type", None) == "text"
         ]
-        raise RuntimeError("; ".join(value for value in messages if value) or "tool failed")
+        raise RuntimeError(
+            "; ".join(value for value in messages if value) or "tool failed"
+        )
     structured = getattr(result, "structured_content", None)
     if structured is not None:
-        return structured.get("result", structured) if isinstance(structured, dict) else structured
+        return (
+            structured.get("result", structured)
+            if isinstance(structured, dict)
+            else structured
+        )
     for block in getattr(result, "content", []):
         if getattr(block, "type", None) == "text":
             return json.loads(block.text)
@@ -540,6 +544,31 @@ def read_acceptance_arguments(
             "instrumental_path": os.fspath(reference),
             "max_seconds": 30.0,
         },
+        "postfader_validate_run": {
+            "request": {
+                "brief": "Generate a bounded read-only melody proposal.",
+                "scope": {
+                    "kind": "whole_project",
+                    "description": "Proposal only; do not change the project.",
+                },
+                "allowed_changes": ["composition"],
+                "completion_target": "One structured melody option.",
+                "interaction_policy": "plan_only",
+                "authorized_to_modify": False,
+            },
+            "plan": {
+                "plan_id": "acceptance-read-plan",
+                "operations": [
+                    {
+                        "operation_id": "acceptance-melody",
+                        "operation": "generate_melody",
+                        "bars": 1,
+                        "seed": 20,
+                    }
+                ],
+            },
+        },
+        "postfader_get_run": {"run_id": "0" * 32},
         "compose_chord_progression": {
             "progression": ["I", "vi", "IV", "V7"],
         },
@@ -569,16 +598,29 @@ def _validate_read_coverage(
     if actual != expected:
         raise AcceptanceConfigurationError(
             "read harness arguments do not match the authoritative read surface; "
-            "missing=%s extra=%s" % (sorted(expected - actual), sorted(actual - expected))
+            "missing=%s extra=%s"
+            % (sorted(expected - actual), sorted(actual - expected))
         )
     large_read_requirements = {
-        "fl_list_mixer_tracks": arguments["fl_list_mixer_tracks"].get("only_used") is False
+        "fl_list_mixer_tracks": arguments["fl_list_mixer_tracks"].get("only_used")
+        is False
         and arguments["fl_list_mixer_tracks"].get("max_tracks") is None,
-        "plugins_inspect_parameter_map": arguments["plugins_inspect_parameter_map"].get("limit") == 128,
-        "plugins_scan_parameters": arguments["plugins_scan_parameters"].get("max_indices") == 8192,
-        "plugins_scan_loaded_plugins": arguments["plugins_scan_loaded_plugins"].get("include_channel_generators") is True,
+        "plugins_inspect_parameter_map": arguments["plugins_inspect_parameter_map"].get(
+            "limit"
+        )
+        == 128,
+        "plugins_scan_parameters": arguments["plugins_scan_parameters"].get(
+            "max_indices"
+        )
+        == 8192,
+        "plugins_scan_loaded_plugins": arguments["plugins_scan_loaded_plugins"].get(
+            "include_channel_generators"
+        )
+        is True,
     }
-    missing = [name for name, satisfied in large_read_requirements.items() if not satisfied]
+    missing = [
+        name for name, satisfied in large_read_requirements.items() if not satisfied
+    ]
     if missing:
         raise AcceptanceConfigurationError(
             "bounded large-read coverage is incomplete for %s" % missing
@@ -756,9 +798,7 @@ async def run_read_acceptance(
                 effective_timeout = per_tool_timeout
                 timeout_kind = "per_tool"
                 if overall_timeout is not None:
-                    remaining = overall_timeout - (
-                        time.monotonic() - clock_started
-                    )
+                    remaining = overall_timeout - (time.monotonic() - clock_started)
                     if remaining < effective_timeout:
                         effective_timeout = max(remaining, 0.000001)
                         timeout_kind = "overall_during_invocation"
@@ -783,7 +823,9 @@ async def run_read_acceptance(
                         "program_title": connection.get("program_title"),
                         "fl_version": connection.get("fl_app_version"),
                         "fl_build": connection.get("fl_build"),
-                        "midi_scripting_api": connection.get("midi_scripting_api_version"),
+                        "midi_scripting_api": connection.get(
+                            "midi_scripting_api_version"
+                        ),
                         "bridge_protocol": connection.get("bridge_protocol_version"),
                         "bridge_hash": connection.get("bridge_source_sha256"),
                         "session_fingerprint": connection.get("session_fingerprint"),
@@ -896,8 +938,7 @@ def _select_unique(value: Any, selector: Any) -> Any:
     allowed = {"path", "where", "value"}
     if set(selector) - allowed:
         raise AcceptanceConfigurationError(
-            "$select contains unsupported fields: %s"
-            % sorted(set(selector) - allowed)
+            "$select contains unsupported fields: %s" % sorted(set(selector) - allowed)
         )
     path = selector.get("path")
     where = selector.get("where")
@@ -968,7 +1009,10 @@ def _resolve_restore_templates(
     """Resolve restoration values that can be proven before mutation starts."""
 
     if isinstance(value, dict) and set(value) == {"$after_step_digest"}:
-        if value["$after_step_digest"] is not True or mutation_tool != "fl_set_step_sequence":
+        if (
+            value["$after_step_digest"] is not True
+            or mutation_tool != "fl_set_step_sequence"
+        ):
             raise AcceptanceConfigurationError(
                 "$after_step_digest is only valid for fl_set_step_sequence restoration"
             )
@@ -1067,7 +1111,9 @@ def _validate_tool_arguments(
 ) -> None:
     schema = surface.input_schemas.get(tool)
     if schema is None:
-        raise AcceptanceConfigurationError("%s references unknown tool %r" % (label, tool))
+        raise AcceptanceConfigurationError(
+            "%s references unknown tool %r" % (label, tool)
+        )
     errors = sorted(
         Draft202012Validator(schema).iter_errors(dict(arguments)),
         key=lambda error: list(error.absolute_path),
@@ -1090,7 +1136,9 @@ def _with_session(arguments: Mapping[str, Any], session: str) -> dict[str, Any]:
 def validate_write_scenario(surface: ToolSurface, scenario: Mapping[str, Any]) -> None:
     operations = scenario.get("operations")
     if not isinstance(operations, list):
-        raise AcceptanceConfigurationError("write scenario must contain an operations list")
+        raise AcceptanceConfigurationError(
+            "write scenario must contain an operations list"
+        )
     names = [item.get("tool") for item in operations if isinstance(item, dict)]
     expected = set(surface.persistent_write_tools)
     actual = set(names)
@@ -1098,7 +1146,14 @@ def validate_write_scenario(surface: ToolSurface, scenario: Mapping[str, Any]) -
         raise AcceptanceConfigurationError(
             "write scenario does not cover the authoritative persistent-write surface exactly once; "
             "missing=%s extra_or_duplicate=%s"
-            % (sorted(expected - actual), sorted(name for name in names if names.count(name) > 1 or name not in expected))
+            % (
+                sorted(expected - actual),
+                sorted(
+                    name
+                    for name in names
+                    if names.count(name) > 1 or name not in expected
+                ),
+            )
         )
     if set(surface.ephemeral_tools) & actual:
         raise AcceptanceConfigurationError(
@@ -1288,8 +1343,7 @@ def prepare_write_scenario(
             restore_actions.append((restore_tool, restore_arguments))
         verify_specs = tuple(operation["verify_paths"])
         verify_expected = tuple(
-            resolve_evidence_reference(reference, before)
-            for reference in verify_specs
+            resolve_evidence_reference(reference, before) for reference in verify_specs
         )
         if tool == "fl_set_playing" and mutation_arguments.get("playing") is True:
             captured_playing = _path(before, "playing")
@@ -1303,14 +1357,16 @@ def prepare_write_scenario(
                 or restore_actions[0][0] != "fl_set_playing"
                 or restore_actions[0][1].get("playing") is not False
                 or restore_actions[1][0] != "fl_set_song_position"
-                or restore_actions[1][1].get("position_normalized")
-                != captured_position
+                or restore_actions[1][1].get("position_normalized") != captured_position
             ):
                 raise AcceptanceConfigurationError(
                     "fl_set_playing=true must restore playing=false first and "
                     "then restore captured song_position_normalized"
                 )
-            if "playing" not in verify_specs or "song_position_normalized" not in verify_specs:
+            if (
+                "playing" not in verify_specs
+                or "song_position_normalized" not in verify_specs
+            ):
                 raise AcceptanceConfigurationError(
                     "fl_set_playing=true must independently verify playing and "
                     "song_position_normalized"
@@ -1443,9 +1499,7 @@ async def run_write_acceptance(
         "project": project,
         "transport": transport,
     }
-    if not save_checkpoint(
-        "preflight_result", status="completed", writes_attempted=0
-    ):
+    if not save_checkpoint("preflight_result", status="completed", writes_attempted=0):
         return report
     if not isinstance(project, dict) or not isinstance(transport, dict):
         report["overall"] = "fail"
@@ -1473,21 +1527,33 @@ async def run_write_acceptance(
     if not isinstance(connection, dict):
         report["overall"] = "fail"
         report["failures"].append(
-            {"stage": "preflight", "reason": "project summary has no connection evidence", "writes_attempted": 0}
+            {
+                "stage": "preflight",
+                "reason": "project summary has no connection evidence",
+                "writes_attempted": 0,
+            }
         )
         save_checkpoint("preflight_validation", status="failed", writes_attempted=0)
         return report
     if connection.get("bridge_provenance_verified") is not True:
         report["overall"] = "fail"
         report["failures"].append(
-            {"stage": "preflight", "reason": "bridge provenance is not verified", "writes_attempted": 0}
+            {
+                "stage": "preflight",
+                "reason": "bridge provenance is not verified",
+                "writes_attempted": 0,
+            }
         )
         save_checkpoint("preflight_validation", status="failed", writes_attempted=0)
         return report
     if connection.get("verified_writes_enabled") is not True:
         report["overall"] = "fail"
         report["failures"].append(
-            {"stage": "preflight", "reason": "the running bridge has verified writes disabled", "writes_attempted": 0}
+            {
+                "stage": "preflight",
+                "reason": "the running bridge has verified writes disabled",
+                "writes_attempted": 0,
+            }
         )
         save_checkpoint("preflight_validation", status="failed", writes_attempted=0)
         return report
@@ -1495,7 +1561,11 @@ async def run_write_acceptance(
     if not isinstance(session, str) or not session:
         report["overall"] = "fail"
         report["failures"].append(
-            {"stage": "preflight", "reason": "the running bridge has no session fingerprint", "writes_attempted": 0}
+            {
+                "stage": "preflight",
+                "reason": "the running bridge has no session fingerprint",
+                "writes_attempted": 0,
+            }
         )
         save_checkpoint("preflight_validation", status="failed", writes_attempted=0)
         return report
@@ -1508,9 +1578,7 @@ async def run_write_acceptance(
             "session_fingerprint": session,
         }
     )
-    if not save_checkpoint(
-        "preflight_validation", status="passed", writes_attempted=0
-    ):
+    if not save_checkpoint("preflight_validation", status="passed", writes_attempted=0):
         return report
     before_values: list[Any] = []
     report["before_state_captures"] = []
@@ -1587,9 +1655,7 @@ async def run_write_acceptance(
         save_checkpoint("scenario_preparation", status="failed", writes_attempted=0)
         return report
 
-    if not save_checkpoint(
-        "scenario_preparation", status="passed", writes_attempted=0
-    ):
+    if not save_checkpoint("scenario_preparation", status="passed", writes_attempted=0):
         return report
     for operation_index, operation in enumerate(prepared):
         tool = operation.tool
@@ -1630,7 +1696,11 @@ async def run_write_acceptance(
                 }
             )
             report["failures"].append(
-                {"stage": "mutation", "tool": tool, "reason": "AMBIGUOUS MUTATION OUTCOME; restoration not attempted; manual inspection required"}
+                {
+                    "stage": "mutation",
+                    "tool": tool,
+                    "reason": "AMBIGUOUS MUTATION OUTCOME; restoration not attempted; manual inspection required",
+                }
             )
             report["overall"] = "fail"
             save_checkpoint(
@@ -1680,7 +1750,10 @@ async def run_write_acceptance(
                     restore_tool=restore_tool,
                     status="completed",
                 )
-                if not isinstance(restored, dict) or restored.get("verified") is not True:
+                if (
+                    not isinstance(restored, dict)
+                    or restored.get("verified") is not True
+                ):
                     restore_record["status"] = "unverified"
                     save_checkpoint(
                         "restoration_result",
@@ -1708,7 +1781,11 @@ async def run_write_acceptance(
             entry["status"] = "restore_unverified"
             entry["restoration_status"] = "uncertain"
             report["failures"].append(
-                {"stage": "restoration", "tool": tool, "reason": "RESTORE UNVERIFIED; stop and inspect the disposable project"}
+                {
+                    "stage": "restoration",
+                    "tool": tool,
+                    "reason": "RESTORE UNVERIFIED; stop and inspect the disposable project",
+                }
             )
             report["overall"] = "fail"
             save_checkpoint(
@@ -1719,9 +1796,7 @@ async def run_write_acceptance(
             )
             return report
         before_spec = next(
-            item["before"]
-            for item in scenario["operations"]
-            if item["tool"] == tool
+            item["before"] for item in scenario["operations"] if item["tool"] == tool
         )
         save_checkpoint(
             "independent_restoration_reread_attempt",
@@ -1775,13 +1850,13 @@ async def run_write_acceptance(
                 actual = resolve_evidence_reference(reference, after_restore)
             except AcceptanceConfigurationError as exc:
                 mismatches.append(reference)
-                selector_errors.append(
-                    {"reference": reference, "error": str(exc)}
-                )
+                selector_errors.append({"reference": reference, "error": str(exc)})
                 continue
             if expected != actual:
                 mismatches.append(reference)
-        mutation_verified = isinstance(mutation, dict) and mutation.get("verified") is True
+        mutation_verified = (
+            isinstance(mutation, dict) and mutation.get("verified") is True
+        )
         if mismatches or not mutation_verified:
             entry["status"] = "failed"
             entry["restoration_mismatches"] = mismatches
@@ -1790,8 +1865,12 @@ async def run_write_acceptance(
             report["failures"].append(
                 {
                     "tool": tool,
-                    "stage": "mutation_verification" if not mutation_verified else "independent_restoration_reread",
-                    "reason": "mutation unverified" if not mutation_verified else "independent restoration mismatch",
+                    "stage": "mutation_verification"
+                    if not mutation_verified
+                    else "independent_restoration_reread",
+                    "reason": "mutation unverified"
+                    if not mutation_verified
+                    else "independent restoration mismatch",
                 }
             )
             report["overall"] = "fail"
