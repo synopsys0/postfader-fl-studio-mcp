@@ -65,6 +65,7 @@ SAFE_TESTS = (
     "tests/test_workflows.py",
     "tests/test_mixing.py",
     "tests/test_creative.py",
+    "tests/test_production_runs.py",
 )
 
 

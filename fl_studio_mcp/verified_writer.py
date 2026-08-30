@@ -217,15 +217,15 @@ def _precondition_result(
 ) -> dict[str, Any]:
     """Validate bridge proof metadata instead of coercing it into success."""
     echoed = payload.get("session_fingerprint")
-    if (
-        not isinstance(echoed, str)
-        or SESSION_FINGERPRINT_RE.fullmatch(echoed) is None
-    ):
+    if not isinstance(echoed, str) or SESSION_FINGERPRINT_RE.fullmatch(echoed) is None:
         raise ValueError(
             "FL bridge did not echo a valid session fingerprint, so this write's "
             "session is unknown"
         )
-    if connection.session_fingerprint is None or echoed != connection.session_fingerprint:
+    if (
+        connection.session_fingerprint is None
+        or echoed != connection.session_fingerprint
+    ):
         raise ValueError(
             "FL bridge session changed between the pre-write handshake and the "
             "write reply; re-read project state before deciding what happened"
@@ -383,9 +383,7 @@ class WriteModeGateway:
             )
         result = self._client.call(command, **arguments)
         if not isinstance(result, dict):
-            raise ValueError(
-                f"FL bridge returned a malformed reply to {command!r}"
-            )
+            raise ValueError(f"FL bridge returned a malformed reply to {command!r}")
         return result
 
 
@@ -441,10 +439,12 @@ class WriteModeManager:
         *,
         enabled: bool,
         confirm_user_present: bool = False,
+        session_fingerprint: str | None = None,
     ) -> WriteModeChange:
         """Apply one absolute session capability state and verify via a new ping."""
         requested = _boolean(enabled, "enabled")
         confirmed = _boolean(confirm_user_present, "confirm_user_present")
+        expected_session = _session_precondition(session_fingerprint)
         if requested and not confirmed:
             raise WriteModeConfirmationRequired(
                 "enabling write mode requires confirm_user_present=true after an "
@@ -453,6 +453,10 @@ class WriteModeManager:
 
         before = self._connection()
         session = self._require_control_ready(before)
+        if expected_session is not None and session != expected_session:
+            raise WriteModeUnavailable(
+                "write-mode session precondition failed before the capability transition"
+            )
         raw: dict[str, Any] | None = None
         transition_error: Exception | None = None
         try:
@@ -522,9 +526,8 @@ class WriteModeManager:
                 "project_saved": False,
             }
             for field, expected in expected_echoes.items():
-                if (
-                    raw.get(field) != expected
-                    or type(raw.get(field)) is not type(expected)
+                if raw.get(field) != expected or type(raw.get(field)) is not type(
+                    expected
                 ):
                     raise WriteModeUnavailable(
                         "write mode is %s, but the bridge returned contradictory %s "
@@ -755,9 +758,7 @@ class VerifiedWriter:
         )
         verified = _strict_bool(raw, "verified")
         after_db = _optional_float(raw.get("after_db"))
-        if verified and (
-            after_db is None or abs(after_db - wanted) > tolerance + 1e-9
-        ):
+        if verified and (after_db is None or abs(after_db - wanted) > tolerance + 1e-9):
             raise ValueError(
                 "FL bridge marked the dB fader write verified but its readback "
                 "is outside the requested tolerance"
@@ -848,9 +849,7 @@ class VerifiedWriter:
         if not isinstance(name, str):
             raise ValueError("name must be a string")
         if len(name) > MAX_TRACK_NAME_LENGTH:
-            raise ValueError(
-                f"name must be at most {MAX_TRACK_NAME_LENGTH} characters"
-            )
+            raise ValueError(f"name must be at most {MAX_TRACK_NAME_LENGTH} characters")
         if expected_before is not None:
             if not isinstance(expected_before, str):
                 raise ValueError("expected_before must be a string")
@@ -908,9 +907,7 @@ class VerifiedWriter:
         source = self._target(track_index, allow_master)
         destination = _index(destination_track_index, "destination_track_index", low=0)
         if destination == source:
-            raise ValueError(
-                f"a mixer track cannot send to itself (track {source})"
-            )
+            raise ValueError(f"a mixer track cannot send to itself (track {source})")
         return source, destination
 
     def set_mixer_send(
@@ -1066,9 +1063,7 @@ class VerifiedWriter:
             _index(parameter, "parameter", low=0)
         elif not parameter.strip():
             raise ValueError("parameter name must not be empty")
-        target = _normalized(
-            target_value, "target_value", low=-1e6, high=1e6
-        )
+        target = _normalized(target_value, "target_value", low=-1e6, high=1e6)
         if tolerance is not None:
             tolerance = _normalized(tolerance, "tolerance", low=0.0, high=1e6)
         if expected_before is not None:
@@ -1200,9 +1195,8 @@ class VerifiedWriter:
                 "FL bridge selected an option that does not exactly match the request"
             )
         options_raw = raw.get("options")
-        if (
-            not isinstance(options_raw, list)
-            or any(not isinstance(item, str) for item in options_raw)
+        if not isinstance(options_raw, list) or any(
+            not isinstance(item, str) for item in options_raw
         ):
             raise ValueError("FL bridge returned malformed enumerated options")
         options = cast(list[str], options_raw)
@@ -1264,7 +1258,9 @@ class VerifiedWriter:
         allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
         if not isinstance(muted, bool):
-            raise ValueError("muted must be true or false; this is a state, not a toggle")
+            raise ValueError(
+                "muted must be true or false; this is a state, not a toggle"
+            )
         if expected_before is not None and not isinstance(expected_before, bool):
             raise ValueError("expected_before must be true or false")
         raw, connection, metadata = self._call_guarded(
@@ -1322,8 +1318,8 @@ class VerifiedWriter:
         verified = _strict_bool(raw, "verified")
         after = _optional_bool(raw.get("after"))
         requested_text = "soloed" if wanted else "not soloed"
-        observed_text = "unknown" if after is None else (
-            "soloed" if after else "not soloed"
+        observed_text = (
+            "unknown" if after is None else ("soloed" if after else "not soloed")
         )
         summary, warnings = _verification(
             verified,
@@ -1370,8 +1366,8 @@ class VerifiedWriter:
         verified = _strict_bool(raw, "verified")
         after = _optional_bool(raw.get("after"))
         requested_text = "armed" if wanted else "disarmed"
-        observed_text = "unknown" if after is None else (
-            "armed" if after else "disarmed"
+        observed_text = (
+            "unknown" if after is None else ("armed" if after else "disarmed")
         )
         summary, warnings = _verification(
             verified,
@@ -1408,7 +1404,9 @@ class VerifiedWriter:
         index = self._target(track_index, allow_master)
         wanted = _color(color, "color")
         expected = (
-            None if expected_before is None else _color(expected_before, "expected_before")
+            None
+            if expected_before is None
+            else _color(expected_before, "expected_before")
         )
         raw, connection, metadata = self._call_guarded(
             "mixer.set_color",
@@ -1460,9 +1458,7 @@ class VerifiedWriter:
         """Set one track's stereo separation in FL's -1..1 units."""
         allow_master = _boolean(allow_master, "allow_master")
         index = self._target(track_index, allow_master)
-        wanted = _normalized(
-            stereo_separation, "stereo_separation", low=-1.0, high=1.0
-        )
+        wanted = _normalized(stereo_separation, "stereo_separation", low=-1.0, high=1.0)
         expected = (
             None
             if expected_before is None

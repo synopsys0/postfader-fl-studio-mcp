@@ -44,7 +44,11 @@ from .track_b_contracts import (
     VerifiedPatternLengthWrite,
     VerifiedPatternSelectionWrite,
 )
-from .verified_writer import PROVENANCE_REFUSAL, WRITES_DISABLED_HELP, VerifiedWritesUnavailable
+from .verified_writer import (
+    PROVENANCE_REFUSAL,
+    WRITES_DISABLED_HELP,
+    VerifiedWritesUnavailable,
+)
 
 
 MAX_CREATIVE_NOTES = 4096
@@ -70,6 +74,22 @@ _PIANO_ROLL_DISPATCH_LOCK = threading.Lock()
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _session_precondition(value: str | None) -> str | None:
+    """Validate an optional bridge-lifetime guard before any side effect."""
+
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or len(value) != 32
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(
+            "session_fingerprint must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
 
 
 class CreativeModel(ContractModel):
@@ -248,7 +268,9 @@ def resolve_root(root: str | int) -> int:
         raise ValueError("root must be a note name or pitch class")
     spelling = root.strip().upper().replace("♯", "#").replace("♭", "B")
     if spelling not in _ROOT_NAMES:
-        raise ValueError("root must be C, C#/Db, D, D#/Eb, E, F, F#/Gb, G, G#/Ab, A, A#/Bb, or B")
+        raise ValueError(
+            "root must be C, C#/Db, D, D#/Eb, E, F, F#/Gb, G, G#/Ab, A, A#/Bb, or B"
+        )
     return _ROOT_NAMES[spelling]
 
 
@@ -260,8 +282,12 @@ def resolve_pitch_collection(
         if not custom_intervals:
             raise ValueError("custom pitch collection needs custom_intervals")
         intervals = tuple(sorted(set(custom_intervals)))
-        if any(type(value) is not int or value < 0 or value > 11 for value in intervals):
-            raise ValueError("custom intervals must be unique pitch classes within 0..11")
+        if any(
+            type(value) is not int or value < 0 or value > 11 for value in intervals
+        ):
+            raise ValueError(
+                "custom intervals must be unique pitch classes within 0..11"
+            )
         if 0 not in intervals:
             raise ValueError("custom intervals must include root interval 0")
         return intervals
@@ -345,7 +371,9 @@ def compose_chord_progression(
     root_pc = resolve_root(root)
     intervals = resolve_pitch_collection(collection, custom_intervals)
     if len(intervals) < 5:
-        raise ValueError("chord generation needs at least five pitch-collection degrees")
+        raise ValueError(
+            "chord generation needs at least five pitch-collection degrees"
+        )
     anchor = (octave + 1) * 12 + root_pc
     notes: list[CreativeNote] = []
     previous: list[int] | None = None
@@ -354,10 +382,15 @@ def compose_chord_progression(
         degrees = [degree - 1, degree + 1, degree + 3]
         if seventh:
             degrees.append(degree + 5)
-        pitches = [anchor + (_scale_pitch(0, intervals, item) - intervals[0]) for item in degrees]
+        pitches = [
+            anchor + (_scale_pitch(0, intervals, item) - intervals[0])
+            for item in degrees
+        ]
         if voicing == "open" and len(pitches) >= 3:
             pitches[1] += 12
-        voiced = _voice_chord(pitches, previous, max(0, anchor - 24), min(131, anchor + 31))
+        voiced = _voice_chord(
+            pitches, previous, max(0, anchor - 24), min(131, anchor + 31)
+        )
         if voicing == "drop2" and len(voiced) >= 4:
             voiced[-2] -= 12
             voiced.sort()
@@ -506,7 +539,9 @@ def compose_bassline(
                 for offset in range(int(round(beats_per_chord * 2)))
             ]
         else:
-            next_degree, _ = _roman_degree(progression[(chord_index + 1) % len(progression)])
+            next_degree, _ = _roman_degree(
+                progression[(chord_index + 1) % len(progression)]
+            )
             next_root = anchor + _scale_pitch(0, intervals, next_degree - 1)
             steps = max(1, int(round(beats_per_chord)))
             events = []
@@ -518,7 +553,11 @@ def compose_bassline(
                     for pitch in range(target - 3, target + 4)
                     if (pitch - root_pc) % 12 in intervals
                 ]
-                pitch = min(candidates, key=lambda item: abs(item - target)) if candidates else chord_root
+                pitch = (
+                    min(candidates, key=lambda item: abs(item - target))
+                    if candidates
+                    else chord_root
+                )
                 if offset not in (0, steps - 1) and rng.random() < 0.2:
                     pitch += rng.choice((-12, 12))
                 events.append((float(offset), 0.88, pitch))
@@ -617,7 +656,9 @@ def compose_drums(
         tempo_bpm=tempo_bpm,
         numerator=beats_per_bar,
         seed=seed,
-        warnings=["Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed."],
+        warnings=[
+            "Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed."
+        ],
     )
 
 
@@ -670,7 +711,9 @@ def _meta(kind: int, payload: bytes) -> bytes:
 def _track_chunk(events: Sequence[tuple[int, int, bytes]]) -> bytes:
     body = bytearray()
     previous = 0
-    for absolute, order, event in sorted(events, key=lambda item: (item[0], item[1], item[2])):
+    for absolute, order, event in sorted(
+        events, key=lambda item: (item[0], item[1], item[2])
+    ):
         if absolute < previous:
             raise ValueError("MIDI events are not monotonic")
         body.extend(_vlq(absolute - previous))
@@ -718,7 +761,9 @@ def _midi_bytes(
             duration = max(1, int(round(note.duration_beats * ppq)))
             end = start + duration
             velocity = max(1, min(127, int(round(note.velocity * 127.0))))
-            events.append((start, 2, bytes((0x90 | spec.channel, note.pitch, velocity))))
+            events.append(
+                (start, 2, bytes((0x90 | spec.channel, note.pitch, velocity)))
+            )
             events.append((end, 1, bytes((0x80 | spec.channel, note.pitch, 0))))
             note_count += 1
         chunks.append(_track_chunk(events))
@@ -747,9 +792,9 @@ def _inspect_midi(data: bytes) -> tuple[int, int, int, int]:
     note_ons = 0
     parsed_tracks = 0
     for _ in range(track_count):
-        if data[offset:offset + 4] != b"MTrk" or offset + 8 > len(data):
+        if data[offset : offset + 4] != b"MTrk" or offset + 8 > len(data):
             raise ValueError("written file has a malformed MIDI track chunk")
-        length = struct.unpack(">I", data[offset + 4:offset + 8])[0]
+        length = struct.unpack(">I", data[offset + 4 : offset + 8])[0]
         pos = offset + 8
         end = pos + length
         if end > len(data):
@@ -816,7 +861,9 @@ def export_type1_midi(
         raise ValueError("MIDI output parent directory does not exist")
     initially_existed = target.exists()
     if initially_existed and not overwrite:
-        raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
+        raise FileExistsError(
+            "MIDI output already exists; pass overwrite=true explicitly"
+        )
     if initially_existed and not target.is_file():
         raise ValueError("MIDI output target exists but is not a regular file")
     data, expected_notes = _midi_bytes(
@@ -832,14 +879,20 @@ def export_type1_midi(
         # destination while this request was building its bytes.
         existed = target.exists()
         if existed and not overwrite:
-            raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
+            raise FileExistsError(
+                "MIDI output already exists; pass overwrite=true explicitly"
+            )
         if existed and not target.is_file():
             raise ValueError("MIDI output target exists but is not a regular file")
 
         temporary_name: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=".postfader-midi-", suffix=".tmp", dir=target.parent, delete=False
+                mode="wb",
+                prefix=".postfader-midi-",
+                suffix=".tmp",
+                dir=target.parent,
+                delete=False,
             ) as handle:
                 temporary_name = handle.name
                 handle.write(data)
@@ -875,9 +928,7 @@ def export_type1_midi(
     readback_digest = hashlib.sha256(readback).hexdigest()
     midi_format, track_count, observed_ppq, observed_notes = _inspect_midi(readback)
     header_verified = (
-        midi_format == 1
-        and track_count == len(tracks) + 1
-        and observed_ppq == ppq
+        midi_format == 1 and track_count == len(tracks) + 1 and observed_ppq == ppq
     )
     note_events_verified = observed_notes == expected_notes
     return MidiExportReceipt(
@@ -893,7 +944,9 @@ def export_type1_midi(
         readback_sha256=readback_digest,
         header_verified=header_verified,
         note_events_verified=note_events_verified,
-        verified=(digest == readback_digest and header_verified and note_events_verified),
+        verified=(
+            digest == readback_digest and header_verified and note_events_verified
+        ),
         overwritten_existing_file=existed,
     )
 
@@ -956,7 +1009,9 @@ class PianoRollDispatch(CreativeModel):
     mode: str | None = None
     script_path: str
     script_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    requested_note_count: int | None = Field(default=None, ge=0, le=MAX_PIANO_ROLL_NOTES)
+    requested_note_count: int | None = Field(
+        default=None, ge=0, le=MAX_PIANO_ROLL_NOTES
+    )
     requested_note_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     target: PianoRollTargetReceipt | None = None
     trigger: HotkeyDispatch | None = None
@@ -972,7 +1027,9 @@ class PianoRollDispatch(CreativeModel):
 
 
 class PianoRollTransform(CreativeModel):
-    operation: Literal["quantize", "transpose", "humanize", "duplicate", "delete", "clear"]
+    operation: Literal[
+        "quantize", "transpose", "humanize", "duplicate", "delete", "clear"
+    ]
     scope: Literal["selected", "all"] = "selected"
     grid_beats: float | None = Field(default=None, gt=0.0, le=16.0)
     quantize_lengths: bool = False
@@ -989,7 +1046,11 @@ class PianoRollTransform(CreativeModel):
             raise ValueError("quantize needs grid_beats")
         if self.operation == "transpose" and self.semitones is None:
             raise ValueError("transpose needs semitones")
-        if self.operation == "humanize" and self.timing_beats is None and self.velocity_amount is None:
+        if (
+            self.operation == "humanize"
+            and self.timing_beats is None
+            and self.velocity_amount is None
+        ):
             raise ValueError("humanize needs timing_beats and/or velocity_amount")
         if self.operation == "duplicate" and self.offset_beats is None:
             raise ValueError("duplicate needs offset_beats")
@@ -1015,10 +1076,7 @@ def piano_roll_scripts_directory() -> Path:
             )
         return path.resolve()
     return (
-        fl_studio_user_data_dir()
-        / "Settings"
-        / "Piano roll scripts"
-        / "Postfader"
+        fl_studio_user_data_dir() / "Settings" / "Piano roll scripts" / "Postfader"
     ).resolve()
 
 
@@ -1028,7 +1086,11 @@ def _atomic_text(path: Path, content: str) -> str:
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb", prefix=".postfader-pyscript-", suffix=".tmp", dir=path.parent, delete=False
+            mode="wb",
+            prefix=".postfader-pyscript-",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
         ) as handle:
             temporary_name = handle.name
             handle.write(encoded)
@@ -1045,16 +1107,18 @@ def _atomic_text(path: Path, content: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-_BOOTSTRAP_SCRIPT = '''# Script.Name = "Postfader Apply"
+_BOOTSTRAP_SCRIPT = """# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED. Run once from the Piano Roll Scripts menu, then use the
 # run-last-script shortcut for subsequent PostFader requests.
 import flpianoroll as flp
 POSTFADER_BOOTSTRAP = True
-'''
+"""
 
 
-def _notes_script(notes: Sequence[CreativeNote], mode: Literal["append", "replace"], request_id: str) -> str:
+def _notes_script(
+    notes: Sequence[CreativeNote], mode: Literal["append", "replace"], request_id: str
+) -> str:
     rows = [
         [
             note.pitch,
@@ -1076,7 +1140,7 @@ def _notes_script(notes: Sequence[CreativeNote], mode: Literal["append", "replac
     # close to Python syntax, but its ``true``/``false``/``null`` literals are
     # invalid Python and fail before the script can dispatch any notes.
     literal = repr(rows)
-    return f'''# Script.Name = "Postfader Apply"
+    return f"""# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED by PostFader. Request {request_id}.
 import flpianoroll as flp
@@ -1107,12 +1171,12 @@ def _run():
         score.addNote(note)
 
 _run()
-'''
+"""
 
 
 def _transform_script(request: PianoRollTransform, request_id: str) -> str:
     payload = repr(request.model_dump(mode="python"))
-    return f'''# Script.Name = "Postfader Apply"
+    return f"""# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED by PostFader. Request {request_id}.
 import flpianoroll as flp
@@ -1194,7 +1258,7 @@ def _run():
         score.deleteNote(index)
 
 _run()
-'''
+"""
 
 
 class _PianoRollRegistry:
@@ -1258,7 +1322,9 @@ class _PianoRollRegistry:
                     self._armed = False
                 else:
                     if not confirm_user_ran_script:
-                        raise ValueError("confirm requires confirm_user_ran_script=true")
+                        raise ValueError(
+                            "confirm requires confirm_user_ran_script=true"
+                        )
                     path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
                     if not self._prepared or not path.is_file():
                         raise ValueError(
@@ -1294,35 +1360,25 @@ class _PianoRollRegistry:
 PIANO_ROLL = _PianoRollRegistry()
 
 
-def _target_piano_roll(channel_index: int, pattern_number: int) -> PianoRollTargetReceipt:
+def _target_piano_roll(
+    channel_index: int,
+    pattern_number: int,
+    *,
+    session_fingerprint: str | None = None,
+) -> PianoRollTargetReceipt:
     if type(channel_index) is not int or channel_index < 0:
         raise ValueError("channel_index must be a non-negative global index")
     if type(pattern_number) is not int or not 1 <= pattern_number <= 999:
         raise ValueError("pattern_number must be within 1..999")
-    client = get_client()
-    ping = client.ping()
-    if not isinstance(ping, dict):
-        raise ValueError("FL bridge returned a malformed Piano Roll handshake")
-    connection = connection_from_ping(ping, getattr(client, "transport", "unknown"))
-    if not connection.connected or not connection.compatible:
-        raise IncompatibleFLStudio(connection.error or connection.compatibility_reason)
-    if not connection.verified_writes_enabled:
-        raise VerifiedWritesUnavailable(
-            WRITES_DISABLED_HELP.format(
-                mode=connection.bridge_mode,
-                enabled=connection.verified_writes_enabled,
-            )
-        )
-    if not connection.bridge_provenance_verified:
-        raise VerifiedWritesUnavailable(PROVENANCE_REFUSAL.format(status=connection.bridge_provenance))
-    if connection.session_fingerprint is None:
-        raise VerifiedWritesUnavailable("Piano Roll targeting requires a bridge session fingerprint")
+    client, _ping, session = _writable_preflight(
+        session_fingerprint=session_fingerprint
+    )
     raw = client.call(
         "creative.prepare_piano_roll",
         channel=channel_index,
         pattern=pattern_number,
         index_scope="global",
-        session_fingerprint=connection.session_fingerprint,
+        session_fingerprint=session,
     )
     return PianoRollTargetReceipt.model_validate(raw)
 
@@ -1330,11 +1386,11 @@ def _target_piano_roll(channel_index: int, pattern_number: int) -> PianoRollTarg
 def _trigger_piano_roll_shortcut() -> HotkeyDispatch:
     kind = _platform_label()
     if kind == "macos":
-        script = '''tell application "FL Studio" to activate
+        script = """tell application "FL Studio" to activate
 delay 0.3
 tell application "System Events"
   keystroke "y" using {command down, option down}
-end tell'''
+end tell"""
         try:
             completed = subprocess.run(
                 ["osascript", "-e", script],
@@ -1368,7 +1424,9 @@ end tell'''
 
             user32 = ctypes.windll.user32
             found = {"window": 0}
-            callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+            callback_type = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
+            )
 
             def inspect_window(window: int, _parameter: int) -> bool:
                 if not user32.IsWindowVisible(window):
@@ -1447,6 +1505,7 @@ def write_piano_roll_notes(
     pattern_number: int,
     mode: Literal["append", "replace"] = "append",
     auto_trigger: bool = True,
+    session_fingerprint: str | None = None,
 ) -> PianoRollDispatch:
     if not 1 <= len(notes) <= MAX_PIANO_ROLL_NOTES:
         raise ValueError(f"notes must contain 1..{MAX_PIANO_ROLL_NOTES} entries")
@@ -1465,7 +1524,20 @@ def write_piano_roll_notes(
             # serialized operation so a later request cannot retarget FL while
             # this request's fixed script is being written or dispatched.
             PIANO_ROLL.require_armed()
-            target = _target_piano_roll(channel_index, pattern_number)
+            if session_fingerprint is None:
+                target = _target_piano_roll(channel_index, pattern_number)
+            else:
+                target = _target_piano_roll(
+                    channel_index,
+                    pattern_number,
+                    session_fingerprint=session_fingerprint,
+                )
+        elif session_fingerprint is not None:
+            # Manual preparation still writes the integration script. When a
+            # caller supplies a session guard, prove it before that file write
+            # so a stale request cannot leave behind a script for another FL
+            # session.
+            _writable_preflight(session_fingerprint=session_fingerprint)
         script_digest = _atomic_text(path, script)
         PIANO_ROLL.record(
             request_id=request_id,
@@ -1490,7 +1562,11 @@ def write_piano_roll_notes(
                 ],
             )
         trigger = _trigger_piano_roll_shortcut()
-        status = "hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched"
+        status = (
+            "hotkey_dispatched_unverified"
+            if trigger.hotkey_dispatched
+            else "hotkey_not_dispatched"
+        )
         return PianoRollDispatch(
             requested_at=_now(),
             request_id=request_id,
@@ -1516,6 +1592,7 @@ def transform_piano_roll(
     channel_index: int,
     pattern_number: int,
     auto_trigger: bool = True,
+    session_fingerprint: str | None = None,
 ) -> PianoRollDispatch:
     request_id = os.urandom(16).hex()
     script = _transform_script(request, request_id)
@@ -1528,7 +1605,16 @@ def transform_piano_roll(
             # The target, fixed script, registry record, and hotkey remain one
             # serialized operation for the same reason as note writes above.
             PIANO_ROLL.require_armed()
-            target = _target_piano_roll(channel_index, pattern_number)
+            if session_fingerprint is None:
+                target = _target_piano_roll(channel_index, pattern_number)
+            else:
+                target = _target_piano_roll(
+                    channel_index,
+                    pattern_number,
+                    session_fingerprint=session_fingerprint,
+                )
+        elif session_fingerprint is not None:
+            _writable_preflight(session_fingerprint=session_fingerprint)
         script_digest = _atomic_text(path, script)
         PIANO_ROLL.record(
             request_id=request_id,
@@ -1560,7 +1646,9 @@ def transform_piano_roll(
             script_sha256=script_digest,
             target=target,
             trigger=trigger,
-            status="hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched",
+            status="hotkey_dispatched_unverified"
+            if trigger.hotkey_dispatched
+            else "hotkey_not_dispatched",
             warnings=[
                 "Transform execution is focus-sensitive and has no controller-API score readback.",
                 "The generated script uses FL's live score object; inspect the Piano Roll before another mutation.",
@@ -1627,9 +1715,9 @@ class AutomationRecordReceipt(CreativeModel):
     song_position_before_ticks: int | None = None
     song_position_after_ticks: int | None = None
     automation_event_recorded: None = None
-    automation_event_verification: Literal[
+    automation_event_verification: Literal["unavailable_no_public_point_getter"] = (
         "unavailable_no_public_point_getter"
-    ] = "unavailable_no_public_point_getter"
+    )
     verified: Literal[False] = False
     undo_point_created: bool | None = None
     session_fingerprint: str = Field(pattern=r"^[0-9a-f]{32}$")
@@ -1663,7 +1751,11 @@ class PatternPreparation(CreativeModel):
     @model_validator(mode="after")
     def validate_ordered_outcome(self) -> "PatternPreparation":
         if self.outcome == "selection_unverified":
-            valid = not self.selection.verified and self.identity is None and self.length is None
+            valid = (
+                not self.selection.verified
+                and self.identity is None
+                and self.length is None
+            )
         elif self.outcome == "identity_unverified":
             valid = (
                 self.selection.verified
@@ -1715,7 +1807,10 @@ class _PinnedClient:
         return result
 
 
-def _writable_preflight() -> tuple[Any, dict[str, Any], str]:
+def _writable_preflight(
+    *, session_fingerprint: str | None = None
+) -> tuple[Any, dict[str, Any], str]:
+    expected_session = _session_precondition(session_fingerprint)
     client = get_client()
     ping = client.ping()
     if not isinstance(ping, dict):
@@ -1731,10 +1826,19 @@ def _writable_preflight() -> tuple[Any, dict[str, Any], str]:
             )
         )
     if not connection.bridge_provenance_verified:
-        raise VerifiedWritesUnavailable(PROVENANCE_REFUSAL.format(status=connection.bridge_provenance))
+        raise VerifiedWritesUnavailable(
+            PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
+        )
     session = connection.session_fingerprint
     if session is None:
-        raise VerifiedWritesUnavailable("creative workflow requires a bridge session fingerprint")
+        raise VerifiedWritesUnavailable(
+            "creative workflow requires a bridge session fingerprint"
+        )
+    if expected_session is not None and expected_session != session:
+        raise VerifiedWritesUnavailable(
+            "creative workflow session precondition failed before mutation; "
+            "FL Studio reloaded the bridge or the project session changed"
+        )
     return client, ping, session
 
 
@@ -1744,6 +1848,8 @@ def prepare_empty_pattern(
     length_beats: int = 16,
     color: int | None = None,
     start_pattern_number: int = 1,
+    expected_pattern_number: int | None = None,
+    session_fingerprint: str | None = None,
 ) -> PatternPreparation:
     if not isinstance(name, str) or not name or len(name) > 64:
         raise ValueError("name must contain 1..64 characters")
@@ -1751,17 +1857,29 @@ def prepare_empty_pattern(
         raise ValueError("length_beats must be within 1..4096")
     if type(start_pattern_number) is not int or not 1 <= start_pattern_number <= 999:
         raise ValueError("start_pattern_number must be within 1..999")
+    if expected_pattern_number is not None and (
+        type(expected_pattern_number) is not int
+        or not start_pattern_number <= expected_pattern_number <= 999
+    ):
+        raise ValueError(
+            "expected_pattern_number must be within start_pattern_number..999"
+        )
     if color is not None and (
         type(color) is not int or color < 0 or color > 0xFFFFFFFF
     ):
         raise ValueError("color must be an unsigned 32-bit FL color")
-    client, ping, session = _writable_preflight()
+    client, ping, session = _writable_preflight(session_fingerprint=session_fingerprint)
     pinned = _PinnedClient(client, ping)
     inspector = TrackBInspector(TrackBReadGateway(pinned))
     found = inspector.find_empty_pattern(start_pattern_number=start_pattern_number)
     pattern = found.empty_pattern_number
     if pattern is None:
         raise ValueError("FL reported no empty pattern in the bounded search range")
+    if expected_pattern_number is not None and pattern != expected_pattern_number:
+        raise ValueError(
+            f"pattern {expected_pattern_number} is no longer the first empty pattern "
+            f"at or after {start_pattern_number}; FL reported pattern {pattern}"
+        )
     controller = TrackBController(TrackBMutationGateway(pinned))
     selection = controller.select_pattern(
         pattern_number=pattern,
@@ -1822,10 +1940,16 @@ def prepare_empty_pattern(
     )
 
 
-def add_section_markers(markers: Sequence[SectionMarker]) -> ArrangementMarkerReceipt:
+def add_section_markers(
+    markers: Sequence[SectionMarker],
+    *,
+    session_fingerprint: str | None = None,
+) -> ArrangementMarkerReceipt:
     if not 1 <= len(markers) <= 32:
         raise ValueError("markers must contain 1..32 section markers")
-    client, _ping, session = _writable_preflight()
+    client, _ping, session = _writable_preflight(
+        session_fingerprint=session_fingerprint
+    )
     project = client.call("project.info")
     if not isinstance(project, dict):
         raise ValueError("FL bridge returned a malformed project observation")
@@ -1848,9 +1972,13 @@ def add_section_markers(markers: Sequence[SectionMarker]) -> ArrangementMarkerRe
             raise ValueError(
                 f"marker {marker.name!r} beat_offset must be below the live {numerator}-beat bar"
             )
-        ticks = int(round((marker.bar_number - 1) * pulses_per_bar + marker.beat_offset * ppq))
+        ticks = int(
+            round((marker.bar_number - 1) * pulses_per_bar + marker.beat_offset * ppq)
+        )
         if ticks > 0x7FFFFFFF:
-            raise ValueError("section marker time exceeds FL's bounded integer timeline")
+            raise ValueError(
+                "section marker time exceeds FL's bounded integer timeline"
+            )
         requests.append({"time_ticks": ticks, "name": marker.name})
     raw = client.call(
         "arrangement.add_markers",
@@ -1884,6 +2012,7 @@ def record_automation_value(
     value_normalized: float,
     allow_master: bool = False,
     expected_before: float | None = None,
+    session_fingerprint: str | None = None,
 ) -> AutomationRecordReceipt:
     if target_kind not in {"mixer", "channel"}:
         raise ValueError("target_kind must be mixer or channel")
@@ -1893,7 +2022,9 @@ def record_automation_value(
         raise ValueError("channel automation supports volume and pan only")
     if property not in {"volume", "pan", "stereo_separation"}:
         raise ValueError("unsupported automation property")
-    if isinstance(value_normalized, bool) or not isinstance(value_normalized, (int, float)):
+    if isinstance(value_normalized, bool) or not isinstance(
+        value_normalized, (int, float)
+    ):
         raise ValueError("value_normalized must be numeric")
     value = float(value_normalized)
     if not math.isfinite(value) or not 0.0 <= value <= 1.0:
@@ -1904,8 +2035,12 @@ def record_automation_value(
         or not math.isfinite(float(expected_before))
         or not 0.0 <= float(expected_before) <= 1.0
     ):
-        raise ValueError("expected_before must be null or a normalized number within 0..1")
-    client, _ping, session = _writable_preflight()
+        raise ValueError(
+            "expected_before must be null or a normalized number within 0..1"
+        )
+    client, _ping, session = _writable_preflight(
+        session_fingerprint=session_fingerprint
+    )
     arguments: dict[str, Any] = {
         "target_kind": target_kind,
         "target_index": target_index,

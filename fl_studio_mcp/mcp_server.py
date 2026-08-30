@@ -1,6 +1,6 @@
 """The MCP server for FL Studio 2026.  This is the default agent entry point.
 
-Five surfaces, and nothing else is reachable from here:
+Six surfaces, and nothing else is reachable from here:
 
 * **Reads** over the live project, through the fail-closed inspector allowlist.
 * **Measurements** of rendered audio files, because the FL API exposes no
@@ -16,6 +16,9 @@ Five surfaces, and nothing else is reachable from here:
   user-present confirmation and is independently verified by a new handshake.
 * **Bounded live-note audition**, which reports note dispatch and release but
   never fabricates state verification.
+* **Task-scoped Production Runs**, which validate a closed multi-stage plan,
+  reuse the existing writers, and retain process-local receipts until the plan
+  completes, blocks, or is stopped.
 
 There is still no undo command, render, project save, caller-directed
 filesystem search, playback-speed setter without a getter, or reflective FL
@@ -141,6 +144,16 @@ from .mixing import (
     run_mix_doctor,
 )
 from .performance import TrackBController, TrackBInspector
+from .production_runs import (
+    PRODUCTION_RUNS,
+    ProductionRunDelta,
+    ProductionRunLookup,
+    ProductionRunPlan,
+    ProductionRunRequest,
+    ProductionRunResult,
+    ProductionRunValidation,
+    validate_production_run,
+)
 from .track_b_contracts import (
     ChannelList,
     EmptyPatternSearch,
@@ -240,7 +253,7 @@ SessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 90 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 95 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -259,6 +272,25 @@ with per-item receipts. It is non-atomic: successful earlier items are not
 rolled back. mix_create_plan and mix_apply_plan keep recommendation and action
 separate and apply a stored plan at most once. Peak watches and mix plans live
 only in this MCP process.
+
+Autonomy is task-scoped, not a persistent PostFader mode. The user does not
+need a special command. When the user asks to create, continue, finish,
+transform, arrange, remix, produce, mix, or otherwise change the project, the
+connected AI may translate that request into one bounded Production Run. Keep
+the user's scope and preservation constraints in the run request. For a clear
+request to make changes, postfader_execute_run enables the existing write
+boundary once internally; do not ask for a separate mode transition between
+run operations. Use lower-level tools for precise one-off changes and a
+Production Run for multi-stage, outcome-oriented work.
+
+When the user asks only for ideas, options, analysis, or a plan, use read-only
+inspection, postfader_validate_run, or a plan_only run and do not submit
+project mutations. Production Runs stop on a real capability, setup, session,
+scope, or verification blocker. Use postfader_continue_run only after a
+conversational follow-up and postfader_stop_run to prevent future operations;
+neither rewrites completed receipts or undoes earlier changes. Runs are
+bounded and process-local. Never claim a requested result completed when FL
+cannot expose or verify a required operation.
 
 Mix Doctor, gain staging, reference matching, masking recommendations,
 processing intents, plug-in profiles, and finish assessment use actual decoded
@@ -2932,6 +2964,117 @@ async def mix_finish_assessment(
         instrumental_path=instrumental_path,
         max_seconds=max_seconds,
     )
+
+
+# ---------------------------------------------------------------------------
+# Task-scoped Production Runs
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="postfader_validate_run",
+    annotations=READ_ONLY.model_copy(update={"title": "Validate a Production Run"}),
+)
+async def postfader_validate_run(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(
+            description=(
+                "Task-scoped objective, scope, preservation rules, allowed changes, "
+                "completion target, and authorization inferred from the user's request."
+            )
+        ),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed ordered Production Run plan to validate without mutation."),
+    ],
+) -> ProductionRunValidation:
+    """Validate a bounded Production Run and current capabilities without changing FL."""
+    return await _mix(validate_production_run, request, plan)
+
+
+@mcp.tool(
+    name="postfader_execute_run",
+    annotations=MUTATING.model_copy(update={"title": "Execute a Production Run"}),
+)
+async def postfader_execute_run(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(
+            description=(
+                "Task-scoped request. Mutating plans require authorized_to_modify=true "
+                "because the present user explicitly asked to change the project."
+            )
+        ),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed bounded plan to validate completely, then execute in order."),
+    ],
+) -> ProductionRunResult:
+    """Create and execute one task-scoped run until its plan completes or blocks."""
+    return await _mix(PRODUCTION_RUNS.execute, request, plan)
+
+
+@mcp.tool(
+    name="postfader_get_run",
+    annotations=READ_ONLY.model_copy(update={"title": "Get a Production Run"}),
+)
+async def postfader_get_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Process-local Production Run identifier.",
+        ),
+    ],
+) -> ProductionRunLookup:
+    """Read current process-local run state and its truthful operation receipts."""
+    return await _mix(PRODUCTION_RUNS.get, run_id)
+
+
+@mcp.tool(
+    name="postfader_continue_run",
+    annotations=MUTATING.model_copy(update={"title": "Continue a Production Run"}),
+)
+async def postfader_continue_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Process-local Production Run identifier.",
+        ),
+    ],
+    delta: Annotated[
+        ProductionRunDelta,
+        Field(
+            description=(
+                "Append operations or replace only the unexecuted remainder; an optional "
+                "updated request may narrow scope or change task policy."
+            )
+        ),
+    ],
+) -> ProductionRunResult:
+    """Continue or replace only a run's unexecuted remainder after a follow-up."""
+    return await _mix(PRODUCTION_RUNS.continue_run, run_id, delta)
+
+
+@mcp.tool(
+    name="postfader_stop_run",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Stop a Production Run"}),
+)
+async def postfader_stop_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Process-local Production Run identifier.",
+        ),
+    ],
+) -> ProductionRunResult:
+    """Stop future run operations without undoing completed project changes."""
+    return await _mix(PRODUCTION_RUNS.stop, run_id)
 
 
 # ---------------------------------------------------------------------------

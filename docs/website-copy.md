@@ -44,7 +44,7 @@ changes from Claude, Codex, Cursor, or another local MCP client.
 
 **Secondary action:** Explore what PostFader can do
 
-**Proof strip:** 90 tools · 8 live resources · Windows and macOS · Open source ·
+**Proof strip:** 95 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.

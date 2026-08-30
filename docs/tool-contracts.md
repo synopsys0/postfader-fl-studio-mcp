@@ -1,12 +1,12 @@
 # Tool and command reference
 
-PostFader exposes 90 MCP tools and 8 MCP resources. The MCP layer is the supported
+PostFader exposes 95 MCP tools and 8 MCP resources. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. The surface contains 36 read-only tools, 39 directly
-guarded FL setters, 8 specialized mutating workflows, 6 non-destructive
+and non-finite numbers. The surface contains 38 read-only tools, 39 directly
+guarded FL setters, 10 specialized mutating workflows, 7 non-destructive
 workflow/dispatch tools, and one session-mode control. `fl_set_write_mode` is a
 destructive capability change but an idempotent, session-only absolute state.
 
@@ -326,6 +326,35 @@ application is a distinct destructive, non-idempotent tool. Plan state is
 `partial` when a batch receipt reports an incomplete or unverified result, and
 `failed` when no batch receipt can be returned. Both terminal failure states
 require a fresh plan rather than an automatic retry.
+
+## Production Runs
+
+Production Runs are bounded, process-local orchestration records for one
+task-scoped request. The connected AI translates the user's objective into a
+typed request and a closed ordered plan; PostFader validates scope,
+preservation rules, dependencies, references, live capabilities, and session
+state before applying any operation. They are not a persistent autonomous
+mode.
+
+| Tool | Purpose |
+| --- | --- |
+| `postfader_validate_run` | Read-only structural and live-capability validation. Returns the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers without enabling writes. |
+| `postfader_execute_run` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
+| `postfader_get_run` | Read a process-local run state, generated outputs, receipts, blockers, and concise summary. |
+| `postfader_continue_run` | Append operations or replace only the unexecuted remainder. Completed receipts are immutable, and the FL session and project checkpoint must still match. |
+| `postfader_stop_run` | Stop future operations. It does not undo completed changes or claim rollback. |
+
+The MVP operation union includes deterministic chord, melody, bass, and drum
+generation; exact pattern preparation or selection; Piano Roll writes and
+supported transforms; section markers; supported automation values; and the
+existing closed verified batch. Note-sequence references may point only to an
+earlier compatible generator output. All plans and histories are bounded.
+
+Runs disappear when the MCP process exits or when the bounded registry evicts
+them. A Production Run never renders, inserts plug-ins, creates Playlist clips,
+saves the FL Studio project, retries an ambiguous mutation, or claims an
+automatic rollback. See [Production Runs](production-runs.md) for examples and
+current limitations.
 
 ## Creative, MIDI, arrangement, and automation tools
 

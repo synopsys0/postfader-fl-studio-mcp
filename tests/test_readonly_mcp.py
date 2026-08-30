@@ -82,6 +82,15 @@ WRITE_TOOLS = {
     "fl_route_channel_to_mixer",
     "fl_set_step_sequence",
 }
+PRODUCTION_READ_TOOLS = {
+    "postfader_validate_run",
+    "postfader_get_run",
+}
+PRODUCTION_MUTATING_TOOLS = {
+    "postfader_execute_run",
+    "postfader_continue_run",
+}
+PRODUCTION_WORKFLOW_TOOLS = {"postfader_stop_run"}
 EPHEMERAL_TOOLS = {"fl_trigger_note"}
 MODE_TOOLS = {"fl_set_write_mode"}
 MIX_READ_TOOLS = {
@@ -138,6 +147,9 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_get_project_history",
     "fl_get_plugin_preset_count",
     *EPHEMERAL_TOOLS,
+    *PRODUCTION_READ_TOOLS,
+    *PRODUCTION_MUTATING_TOOLS,
+    *PRODUCTION_WORKFLOW_TOOLS,
     *MODE_TOOLS,
     *MIX_READ_TOOLS,
     *WORKFLOW_STATE_TOOLS,
@@ -449,6 +461,8 @@ async def run():
                     for tool in tools
                     if tool.name
                     not in WRITE_TOOLS
+                    | PRODUCTION_MUTATING_TOOLS
+                    | PRODUCTION_WORKFLOW_TOOLS
                     | EPHEMERAL_TOOLS
                     | MODE_TOOLS
                     | WORKFLOW_STATE_TOOLS
@@ -456,6 +470,43 @@ async def run():
                     | CREATIVE_FL_TOOLS
                     | FILE_MUTATING_TOOLS
                 ),
+            )
+            check(
+                "Production Run read tools are annotated read-only",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is True
+                    for tool in tools
+                    if tool.name in PRODUCTION_READ_TOOLS
+                ),
+                sorted(PRODUCTION_READ_TOOLS),
+            )
+            check(
+                "Production Run execute and continue tools are mutating",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is False
+                    and tool.annotations.open_world_hint is True
+                    for tool in tools
+                    if tool.name in PRODUCTION_MUTATING_TOOLS
+                ),
+                sorted(PRODUCTION_MUTATING_TOOLS),
+            )
+            check(
+                "Production Run stop is non-destructive workflow state",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is False
+                    for tool in tools
+                    if tool.name in PRODUCTION_WORKFLOW_TOOLS
+                ),
+                sorted(PRODUCTION_WORKFLOW_TOOLS),
             )
             check(
                 "every write tool annotated mutating, destructive and non-idempotent",

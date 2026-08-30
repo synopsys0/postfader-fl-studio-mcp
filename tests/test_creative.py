@@ -17,6 +17,7 @@ from unittest import mock
 import numpy as np
 import soundfile as sf
 
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(HERE / "fakefl"))
@@ -25,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
+
 from fl_studio_mcp.bridge_install import expected_bridge_deployment  # noqa: E402
 from fl_studio_mcp.creative import (  # noqa: E402
     PIANO_ROLL,
@@ -50,6 +52,7 @@ from fl_studio_mcp.music_analysis import (  # noqa: E402
     analyze_tempo_and_key,
     transcribe_monophonic,
 )
+from fl_studio_mcp.verified_writer import VerifiedWritesUnavailable  # noqa: E402
 
 
 bridge.BRIDGE_SOURCE_SHA256 = expected_bridge_deployment()[1]
@@ -590,6 +593,71 @@ class CreativeTests(unittest.TestCase):
             self.assertFalse(automation.verified)
             self.assertAlmostEqual(_state.CHANNELS[1].pan, 0.5, places=3)
 
+    def test_creative_workflows_reject_a_stale_session_before_mutation(self) -> None:
+        class RecordingClient(DirectFakeClient):
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def call(self, command: str, **arguments):
+                self.calls.append(command)
+                return super().call(command, **arguments)
+
+        client = RecordingClient()
+        stale = "b" * 32
+        with mock.patch("fl_studio_mcp.creative.get_client", return_value=client):
+            with self.assertRaisesRegex(
+                VerifiedWritesUnavailable, "session precondition failed"
+            ):
+                prepare_empty_pattern(
+                    name="Stale",
+                    session_fingerprint=stale,
+                )
+            with self.assertRaisesRegex(
+                VerifiedWritesUnavailable, "session precondition failed"
+            ):
+                add_section_markers(
+                    [SectionMarker(name="Intro", bar_number=1)],
+                    session_fingerprint=stale,
+                )
+            with self.assertRaisesRegex(
+                VerifiedWritesUnavailable, "session precondition failed"
+            ):
+                record_automation_value(
+                    target_kind="channel",
+                    target_index=1,
+                    property="pan",
+                    value_normalized=0.75,
+                    session_fingerprint=stale,
+                )
+
+            with PIANO_ROLL._lock:
+                PIANO_ROLL._armed = True
+            with self.assertRaisesRegex(
+                VerifiedWritesUnavailable, "session precondition failed"
+            ):
+                write_piano_roll_notes(
+                    [CreativeNote(pitch=60, start_beats=0.0, duration_beats=1.0)],
+                    channel_index=2,
+                    pattern_number=3,
+                    session_fingerprint=stale,
+                )
+            with self.assertRaisesRegex(
+                VerifiedWritesUnavailable, "session precondition failed"
+            ):
+                transform_piano_roll(
+                    PianoRollTransform(
+                        operation="transpose",
+                        semitones=12,
+                    ),
+                    channel_index=2,
+                    pattern_number=3,
+                    session_fingerprint=stale,
+                )
+
+        self.assertEqual(client.calls, [])
+        self.assertEqual(_state.ARRANGEMENT_MARKERS, [])
+        self.assertEqual(_state.PATTERNS[3].name, "Pattern 3")
+
     def test_pattern_preparation_returns_ordered_partial_receipts(self) -> None:
         client = DirectFakeClient()
         with mock.patch("fl_studio_mcp.creative.get_client", return_value=client):
@@ -647,6 +715,35 @@ class CreativeTests(unittest.TestCase):
         self.assertIsNone(partial.length)
         self.assertFalse(partial.verified)
         length_write.assert_not_called()
+
+    def test_pattern_preparation_refuses_a_changed_exact_target_before_writes(
+        self,
+    ) -> None:
+        client = DirectFakeClient()
+        before = (
+            _state.CURRENT_PATTERN,
+            _state.PATTERNS[3].name,
+            _state.PATTERNS[3].length,
+            tuple(_state.UNDO),
+        )
+
+        with mock.patch("fl_studio_mcp.creative.get_client", return_value=client):
+            with self.assertRaisesRegex(ValueError, "no longer the first empty pattern"):
+                prepare_empty_pattern(
+                    name="Drop",
+                    start_pattern_number=3,
+                    expected_pattern_number=4,
+                )
+
+        self.assertEqual(
+            (
+                _state.CURRENT_PATTERN,
+                _state.PATTERNS[3].name,
+                _state.PATTERNS[3].length,
+                tuple(_state.UNDO),
+            ),
+            before,
+        )
 
     def test_tempo_key_and_monophonic_transcription_use_decoded_audio(self) -> None:
         rate = 22050
