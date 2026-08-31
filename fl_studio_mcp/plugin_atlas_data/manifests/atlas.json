@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.0",
+  "atlas_version": "2026.08.30.1",
+  "catalog_as_of": "2026-08-30",
+  "fl_studio_version": "26.1.5",
+  "source_snapshot": "Image-Line pricing matrix and official manual indexes reviewed 2026-08-30",
+  "expected_products_count": 151,
+  "expected_vendors_count": 4,
+  "expected_techniques_count": 37,
+  "expected_adapters_count": 5,
+  "expected_evidence_count": 3,
+  "catalogs": [
+    {
+      "resource": "vendors/image-line.json",
+      "vendor_id": "image-line",
+      "coverage": "complete_current_pricing_matrix_plus_current_auxiliary_and_reviewed_manual_legacy_universe",
+      "expected_product_count": 148,
+      "expected_name_digest": "8bb03312dde67d8188ff6be8dee38e5a1c7993cb2abb51f2390a20d278a87424",
+      "source_base_url": "https://www.image-line.com/fl-studio/pricing",
+      "index_sources": [
+        "https://www.image-line.com/fl-studio/pricing",
+        "https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/effects_plugins.htm",
+        "https://www.image-line.com/fl-studio-learning-content/fl-studio-online-manual/html/generator_plugins.htm"
+      ],
+      "catalog_as_of": "2026-08-30",
+      "fl_studio_version": "26.1.5",
+      "source_snapshot": "Current pricing rows, active auxiliary modules, and explicit legacy/manual-only records are separately scoped",
+      "record_count": 148
+    },
+    {
+      "resource": "vendors/third-party/fabfilter.json",
+      "vendor_id": "fabfilter",
+      "coverage": "selected_officially_documented_products",
+      "expected_product_count": 1,
+      "index_sources": [
+        "https://www.fabfilter.com/products/pro-q-4-equalizer-plug-in"
+      ],
+      "catalog_as_of": "2026-08-30",
+      "record_count": 1
+    },
+    {
+      "resource": "vendors/third-party/valhalla-dsp.json",
+      "vendor_id": "valhalla-dsp",
+      "coverage": "selected_officially_documented_products",
+      "expected_product_count": 1,
+      "index_sources": [
+        "https://valhalladsp.com/shop/reverb/valhalla-supermassive/"
+      ],
+      "catalog_as_of": "2026-08-30",
+      "record_count": 1
+    },
+    {
+      "resource": "vendors/third-party/vital-audio.json",
+      "vendor_id": "vital-audio",
+      "coverage": "selected_officially_documented_products",
+      "expected_product_count": 1,
+      "index_sources": [
+        "https://vital.audio/"
+      ],
+      "catalog_as_of": "2026-08-30",
+      "record_count": 1
+    }
+  ],
+  "catalog_snapshots": [
+    {
+      "resource": "manifests/image-line-current-matrix.json",
+      "snapshot_id": "image-line-current-edition-matrix-2026-08-30",
+      "vendor_id": "image-line",
+      "catalog_scope": "current_edition_matrix",
+      "expected_row_count": 119,
+      "expected_digest": "42dbec71f6da690a13127d8062033b0d374c6302d77cdcd08465ada997d0cb4c",
+      "category_counts": {
+        "audio_editor": 3,
+        "effect": 71,
+        "instrument": 39,
+        "visual": 6
+      },
+      "catalog_as_of": "2026-08-30",
+      "fl_studio_version": "26.1.5",
+      "source_snapshot": "https://www.image-line.com/fl-studio/pricing",
+      "record_count": 119
+    }
+  ],
+  "techniques_resource": {
+    "resource": "techniques/techniques.json",
+    "record_count": 37
+  },
+  "adapters_resource": {
+    "resource": "adapters/control-adapters.json",
+    "record_count": 5
+  },
+  "compatibility_resource": {
+    "resource": "compatibility/evidence.json",
+    "record_count": 3
+  }
+}

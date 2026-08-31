@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "vendor": {
+    "id": "vital-audio",
+    "name": "Vital Audio",
+    "origin": "third_party",
+    "website": "https://vital.audio/"
+  },
+  "products": [
+    {
+      "id": "vital-audio.vital",
+      "name": "Vital",
+      "aliases": ["Vital VST3", "Vital Synth"],
+      "plugin_kinds": ["instrument"],
+      "kind": "instrument",
+      "origin": "third_party",
+      "catalog_scope": "selected_third_party",
+      "lifecycle": "current",
+      "edition_min": "not_applicable",
+      "categories": ["wavetable-synthesizer", "spectral-synthesis"],
+      "summary": "A visual wavetable synthesizer centered on spectral oscillator warping, editable wavetables, and drag-and-drop modulation.",
+      "problems_solved": ["custom wavetable timbres", "animated spectral motion", "deep modulation", "sample-to-wavetable conversion"],
+      "appropriate_for": ["designed synth leads and basses", "pads and evolving textures", "custom wavetable work", "visible modulation routing"],
+      "poor_fit_when": ["a simple sampled acoustic instrument is required", "the product is not already loaded and insertion is required"],
+      "common_instruments": ["bass", "lead", "pad", "keys", "sound effects"],
+      "techniques": ["spectral-processing", "resynthesis", "subtractive-synthesis"],
+      "major_modules": [
+        {"id": "oscillators", "name": "Wavetable oscillators", "description": "Wavetables can be edited, converted from samples, and spectrally warped."},
+        {"id": "modulation", "name": "Modulation system", "description": "Drag-and-drop routing connects envelopes, LFOs, and other sources."},
+        {"id": "visualization", "name": "Visual feedback", "description": "Animated controls and signal displays expose modulation and spectral behavior."}
+      ],
+      "limitations": ["An Atlas entry does not prove the exact loaded version, format, exposed parameter map, or write behavior."],
+      "stock_alternatives": ["image-line.harmor", "image-line.flex", "image-line.sytrus"],
+      "manual_path": "https://vital.audio/",
+      "knowledge_depth": "curated",
+      "commercial_model": "vendor-defined free and paid tiers"
+    }
+  ]
+}

@@ -11,13 +11,25 @@ from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ATLAS_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas"
+ATLAS_DATA_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+ATLAS_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_PACKAGE_ROOT.rglob("*.py")
+}
+ATLAS_REQUIRED.update(
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_DATA_ROOT.rglob("*.json")
+)
+ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_data/__init__.py")
+ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_mcp.py")
 REQUIRED = {
     "manifest.json",
     "mcpb_entry.py",
     "pyproject.toml",
     "fl_studio_mcp/mcp_server.py",
     "fl_studio_mcp/_bridge/device_UniversalBridge.py",
-}
+} | ATLAS_REQUIRED
 FORBIDDEN_PARTS = {
     ".git",
     ".github",

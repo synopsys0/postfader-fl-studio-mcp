@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "vendor": {
+    "id": "fabfilter",
+    "name": "FabFilter",
+    "origin": "third_party",
+    "website": "https://www.fabfilter.com/"
+  },
+  "products": [
+    {
+      "id": "fabfilter.pro-q-4",
+      "name": "FabFilter Pro-Q 4",
+      "aliases": ["Pro-Q 4", "FabFilter Pro-Q 4 VST3"],
+      "plugin_kinds": ["effect"],
+      "kind": "effect",
+      "origin": "third_party",
+      "catalog_scope": "selected_third_party",
+      "lifecycle": "current",
+      "edition_min": "not_applicable",
+      "categories": ["equalizer", "dynamic-eq", "spectral-dynamics"],
+      "summary": "A mixing and mastering equalizer with static, dynamic, spectral, linear-phase, mid-side, and surround workflows.",
+      "problems_solved": ["tonal shaping", "resonance control", "dynamic frequency control", "spectrum matching"],
+      "appropriate_for": ["precise corrective EQ", "broad tonal work", "dynamic bands", "mastering and immersive formats"],
+      "poor_fit_when": ["a simple low-cost stock filter is enough", "the project cannot tolerate linear-phase latency", "the product is not already loaded and insertion is required"],
+      "common_sources": ["individual tracks", "buses", "master bus"],
+      "techniques": ["equalization", "filtering", "spectral-processing", "multiband-processing"],
+      "major_modules": [
+        {"id": "eq-display", "name": "Interactive EQ display", "description": "Creates and edits up to 24 filter bands."},
+        {"id": "dynamic-spectral", "name": "Dynamic and spectral processing", "description": "Adds level-dependent and spectral behavior to bands."},
+        {"id": "analyzer", "name": "Spectrum analyzer", "description": "Provides spectrum, solo, grab, and matching workflows."}
+      ],
+      "modes": ["zero latency", "Natural Phase", "linear phase", "dynamic EQ", "spectral dynamics"],
+      "limitations": ["An Atlas entry does not prove the exact loaded version, format, exposed parameter map, or write behavior."],
+      "stock_alternatives": ["image-line.fruity-parametric-eq2", "image-line.equo"],
+      "formats": ["vst", "vst3", "au"],
+      "manual_path": "https://www.fabfilter.com/products/pro-q-4-equalizer-plug-in",
+      "knowledge_depth": "curated",
+      "commercial_model": "commercial product with vendor trial"
+    }
+  ]
+}

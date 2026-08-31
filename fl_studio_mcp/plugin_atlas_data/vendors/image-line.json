@@ -1,0 +1,4791 @@
+{
+  "schema_version": "1.0",
+  "coverage": "complete_current_pricing_matrix_plus_current_auxiliary_and_reviewed_manual_legacy_universe",
+  "catalog_as_of": "2026-08-30",
+  "vendor": {
+    "id": "image-line",
+    "name": "Image-Line",
+    "origin": "stock",
+    "description": "Developer of FL Studio and its native plug-in catalog.",
+    "website": "https://www.image-line.com/"
+  },
+  "products": [
+    {
+      "id": "image-line.3x-osc",
+      "name": "3x OSC",
+      "aliases": [],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive"
+      ],
+      "summary": "A compact three-oscillator subtractive synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "keys",
+        "simple synth layers"
+      ],
+      "poor_fit_when": [
+        "complex modulation or sample playback is required"
+      ],
+      "manual_path": "plugins/3x%20Osc.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.audio-clip-generator",
+      "name": "Audio Clip Generator",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "audio-clip",
+        "playback"
+      ],
+      "summary": "The FL Studio channel type that holds and plays recorded audio clips.",
+      "techniques": [
+        "sampling"
+      ],
+      "manual_path": "playlist_audioclip.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.autogun",
+      "name": "Autogun",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "additive"
+      ],
+      "summary": "A preset-oriented additive synthesizer derived from Ogun technology.",
+      "techniques": [
+        "additive-synthesis"
+      ],
+      "manual_path": "plugins/Autogun.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.automation-clip-generator",
+      "name": "Automation Clip Generator",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "automation",
+        "playlist"
+      ],
+      "summary": "The FL Studio generator that stores automation shapes used in the Playlist.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "playlist_automationclip.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.bassdrum",
+      "name": "BassDrum",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "drum-synthesizer",
+        "physical-modeling"
+      ],
+      "summary": "A modeled percussion instrument focused on bass-drum design.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "kick drum"
+      ],
+      "manual_path": "plugins/BassDrum.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.beepmap",
+      "name": "BeepMap",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "image-synthesis",
+        "experimental"
+      ],
+      "summary": "An image-driven synthesizer that converts bitmap information into sound.",
+      "techniques": [
+        "spectral-processing"
+      ],
+      "manual_path": "plugins/BeepMap.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.boobass",
+      "name": "BooBass",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "bass-instrument",
+        "modeled-instrument"
+      ],
+      "summary": "A simple simulated bass-guitar instrument.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "bass guitar"
+      ],
+      "manual_path": "plugins/BooBass.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.buzz-generator-adapter",
+      "name": "Buzz Generator Adapter",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "host",
+        "legacy"
+      ],
+      "summary": "An adapter for hosting compatible Buzz instruments inside FL Studio.",
+      "techniques": [
+        "hosting"
+      ],
+      "limitations": [
+        "It is a host adapter rather than a sound source by itself.",
+        "Not included beyond FL Studio 11; it was 32-bit only."
+      ],
+      "manual_path": "plugins/Buzz%20Generator%20Adapter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "discontinued",
+      "edition_min": "not_applicable"
+    },
+    {
+      "id": "image-line.channel-sampler",
+      "name": "Channel Sampler",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "sampler",
+        "one-shot"
+      ],
+      "summary": "FL Studio's basic single-sample playback channel.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "drums",
+        "one-shots",
+        "pitched samples"
+      ],
+      "manual_path": "chansettings_sampler.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.channel-settings",
+      "name": "Channel Settings",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "channel-control",
+        "utility"
+      ],
+      "summary": "The native controls that configure an FL Studio channel.",
+      "techniques": [
+        "routing"
+      ],
+      "manual_path": "chansettings.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.control-surface",
+      "name": "Control Surface",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "interface-builder"
+      ],
+      "summary": "A configurable panel for building internal controls and linking parameters.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Control%20Surface.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.dashboard",
+      "name": "Dashboard",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "midi"
+      ],
+      "summary": "A configurable control panel for internal or external MIDI targets.",
+      "techniques": [
+        "automation-control",
+        "midi-control"
+      ],
+      "manual_path": "plugins/Dashboard.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "legacy",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Legacy module retained for old projects; Image-Line recommends Control Surface for new projects."
+      ]
+    },
+    {
+      "id": "image-line.directwave-full",
+      "name": "DirectWave Full",
+      "aliases": [
+        "DirectWave"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "sampler",
+        "multisampler"
+      ],
+      "summary": "A full sampler for multisampled instruments, mapping, editing, layering, and modulation.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "multisampled acoustic instruments",
+        "drums",
+        "custom sampled instruments"
+      ],
+      "poor_fit_when": [
+        "a synthesizer rather than sample playback is required"
+      ],
+      "manual_path": "plugins/DirectWave.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.directwave-player",
+      "name": "DirectWave Player",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "sampler",
+        "sample-player"
+      ],
+      "summary": "The playback-focused DirectWave edition for mapped sample instruments.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "multisampled acoustic instruments",
+        "drums",
+        "sample libraries"
+      ],
+      "limitations": [
+        "Advanced editing and mapping belong to DirectWave Full."
+      ],
+      "manual_path": "plugins/DirectWave.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.distructor",
+      "name": "Distructor",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "distortion",
+        "multi-effect"
+      ],
+      "summary": "A modular multi-model distortion and effects processor.",
+      "techniques": [
+        "distortion",
+        "filtering"
+      ],
+      "common_sources": [
+        "guitar",
+        "bass",
+        "drums",
+        "synths"
+      ],
+      "manual_path": "plugins/Distructor.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.drumaxx",
+      "name": "Drumaxx",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "drum-synthesizer",
+        "physical-modeling"
+      ],
+      "summary": "A modeled percussion instrument for synthesizing a complete drum kit.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "drum kit",
+        "electronic percussion"
+      ],
+      "manual_path": "plugins/Drumaxx.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.drumpad",
+      "name": "Drumpad",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "percussion",
+        "physical-modeling"
+      ],
+      "summary": "A modeled percussion pad designed for synthesized drum sounds.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "manual_path": "plugins/Drumpad.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.edison",
+      "name": "Edison",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "audio-editor",
+        "recorder",
+        "analysis"
+      ],
+      "summary": "An integrated audio recorder and wave editor with cleanup, analysis, and region tools.",
+      "problems_solved": [
+        "recording into a mixer slot",
+        "destructive waveform editing",
+        "noise cleanup",
+        "sample preparation"
+      ],
+      "appropriate_for": [
+        "capturing mixer audio",
+        "editing samples",
+        "repair and analysis before arrangement"
+      ],
+      "poor_fit_when": [
+        "non-destructive real-time processing is required"
+      ],
+      "techniques": [
+        "sampling",
+        "spectral-processing",
+        "time-manipulation"
+      ],
+      "major_modules": [
+        {
+          "id": "recording",
+          "name": "Recorder",
+          "description": "Captures audio routed through its mixer slot."
+        },
+        {
+          "id": "wave-editor",
+          "name": "Wave editor",
+          "description": "Edits selections, regions, fades, and sample properties."
+        },
+        {
+          "id": "analysis-cleanup",
+          "name": "Analysis and cleanup",
+          "description": "Provides spectral, denoise, and preparation tools."
+        }
+      ],
+      "limitations": [
+        "Many editor actions are not exposed through PostFader's current FL bridge."
+      ],
+      "manual_path": "plugins/Edison.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.effector",
+      "name": "Effector (12 FX)",
+      "aliases": [
+        "Effector"
+      ],
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "performance-effect",
+        "multi-effect"
+      ],
+      "summary": "A performance-focused processor that switches among twelve delay, filter, distortion, modulation, and reverb effects.",
+      "techniques": [
+        "delay",
+        "distortion",
+        "filtering",
+        "phasing",
+        "reverb"
+      ],
+      "manual_path": "plugins/Effector.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.emphasis",
+      "name": "Emphasis",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "mastering",
+        "dynamics"
+      ],
+      "summary": "A multi-stage mastering processor built around compression and limiting.",
+      "techniques": [
+        "compression",
+        "limiting",
+        "equalization"
+      ],
+      "common_buses": [
+        "master bus",
+        "mix bus"
+      ],
+      "poor_fit_when": [
+        "transparent single-purpose control is preferable to a multi-stage chain"
+      ],
+      "manual_path": "plugins/Emphasis.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.emphasizer",
+      "name": "Emphasizer",
+      "aliases": [
+        "Emphsizer"
+      ],
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "dynamics",
+        "clipping"
+      ],
+      "summary": "A single-band multi-stage processor derived from Emphasis, combining clean limiting with saturating hard and soft clipping stages.",
+      "techniques": [
+        "limiting",
+        "clipping"
+      ],
+      "common_buses": [
+        "master bus",
+        "mix bus"
+      ],
+      "manual_path": "plugins/Emphasizer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.equo",
+      "name": "EQUO",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "equalizer",
+        "graphic-eq"
+      ],
+      "summary": "A graphic equalizer for broad spectral shaping and animated curves.",
+      "techniques": [
+        "equalization",
+        "automation-control"
+      ],
+      "common_sources": [
+        "individual tracks",
+        "buses"
+      ],
+      "manual_path": "plugins/EQUO.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fl-keys",
+      "name": "FL Keys",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "rompler",
+        "keyboard"
+      ],
+      "summary": "A compact sampled keyboard instrument focused on piano-style sounds.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "piano",
+        "electric piano",
+        "keyboard"
+      ],
+      "manual_path": "plugins/FL%20Keys.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fl-slayer",
+      "name": "FL Slayer",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "modeled-instrument",
+        "guitar"
+      ],
+      "summary": "A simulated electric-guitar instrument.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "electric guitar"
+      ],
+      "manual_path": "plugins/FL%20Slayer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "deprecated",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Deprecated by Image-Line and retained for legacy-project compatibility."
+      ]
+    },
+    {
+      "id": "image-line.fl-studio-mobile-rack",
+      "name": "FL Studio Mobile Rack + FX",
+      "aliases": [
+        "FL Studio Mobile Rack"
+      ],
+      "plugin_kinds": [
+        "effect",
+        "instrument",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "host",
+        "mobile-rack"
+      ],
+      "summary": "A rack that hosts FL Studio Mobile instruments and effects in desktop FL Studio.",
+      "techniques": [
+        "hosting"
+      ],
+      "manual_path": "plugins/FL%20Studio%20Mobile%20Rack.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_auxiliary",
+      "lifecycle": "auxiliary",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.flex",
+      "name": "FLEX",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "preset-synthesizer",
+        "rompler"
+      ],
+      "summary": "A preset-centered instrument with macro controls and downloadable sound libraries.",
+      "problems_solved": [
+        "fast access to production-ready instrument sounds",
+        "broad preset coverage",
+        "simple macro-level sound shaping"
+      ],
+      "appropriate_for": [
+        "rapid drafting",
+        "layering",
+        "players who prefer curated presets over deep synthesis"
+      ],
+      "poor_fit_when": [
+        "full oscillator-level programming is required"
+      ],
+      "techniques": [
+        "sampling",
+        "subtractive-synthesis"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "pad",
+        "keys",
+        "orchestral and acoustic presets"
+      ],
+      "manual_path": "plugins/FLEX.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fpc",
+      "name": "Fruity Pad Controller (FPC)",
+      "aliases": [
+        "FPC"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "drum-sampler",
+        "pad-instrument"
+      ],
+      "summary": "A multi-pad drum sampler with layered samples and per-pad controls.",
+      "problems_solved": [
+        "mapping drum kits",
+        "layered velocity samples",
+        "pad-based drum performance"
+      ],
+      "appropriate_for": [
+        "acoustic or electronic drum kits",
+        "MIDI pad controllers",
+        "multi-sample one-shots"
+      ],
+      "poor_fit_when": [
+        "synthesized percussion rather than samples is required"
+      ],
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "drum kit",
+        "percussion"
+      ],
+      "manual_path": "plugins/FPC.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.frequency-shifter",
+      "name": "Frequency Shifter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "frequency-shifter",
+        "sound-design"
+      ],
+      "summary": "A frequency shifter for metallic, dissonant, and modulated timbres.",
+      "techniques": [
+        "frequency-shifting"
+      ],
+      "common_sources": [
+        "synths",
+        "percussion",
+        "sound effects"
+      ],
+      "poor_fit_when": [
+        "musical interval transposition is required instead of fixed frequency shifting"
+      ],
+      "manual_path": "plugins/Frequency%20Shifter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.frequency-splitter",
+      "name": "Frequency Splitter",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "crossover",
+        "routing"
+      ],
+      "summary": "A crossover utility that separates audio into two or three frequency bands for independent routing.",
+      "techniques": [
+        "multiband-processing",
+        "routing",
+        "filtering"
+      ],
+      "manual_path": "plugins/Frequency%20Splitter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruit-kick",
+      "name": "Fruity Kick",
+      "aliases": [
+        "Fruit Kick"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "drum-synthesizer",
+        "kick"
+      ],
+      "summary": "A dedicated synthesized kick-drum instrument.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "kick drum"
+      ],
+      "manual_path": "plugins/Fruit%20Kick.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-7-band-eq",
+      "name": "Fruity 7 Band EQ",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "equalizer",
+        "fixed-band"
+      ],
+      "summary": "A seven-band equalizer with fixed center frequencies.",
+      "techniques": [
+        "equalization"
+      ],
+      "appropriate_for": [
+        "simple broad tone adjustments"
+      ],
+      "poor_fit_when": [
+        "surgical frequency or bandwidth control is required"
+      ],
+      "manual_path": "plugins/Fruity%207%20Band%20EQ.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-balance",
+      "name": "Fruity Balance",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "gain",
+        "pan"
+      ],
+      "summary": "A lightweight gain and stereo-position control for a mixer chain.",
+      "techniques": [
+        "stereo-imaging",
+        "automation-control"
+      ],
+      "common_sources": [
+        "any audio track"
+      ],
+      "manual_path": "plugins/Fruity%20Balance.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-bass-boost",
+      "name": "Fruity Bass Boost",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "equalizer",
+        "bass"
+      ],
+      "summary": "A focused low-frequency boost effect.",
+      "techniques": [
+        "equalization"
+      ],
+      "common_sources": [
+        "bass",
+        "kick",
+        "full mixes needing reviewed low-frequency emphasis"
+      ],
+      "poor_fit_when": [
+        "subtractive cleanup or precise multi-band EQ is needed"
+      ],
+      "manual_path": "plugins/Fruity%20Bass%20Boost.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-big-clock",
+      "name": "Fruity Big Clock",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "display",
+        "timing"
+      ],
+      "summary": "A large display for project bar, beat, or time position.",
+      "techniques": [
+        "visualization"
+      ],
+      "manual_path": "plugins/Fruity%20Big%20Clock.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-blood-overdrive",
+      "name": "Fruity Blood Overdrive",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "overdrive",
+        "distortion"
+      ],
+      "summary": "An overdrive effect originally oriented toward distorted guitar tones.",
+      "techniques": [
+        "distortion"
+      ],
+      "common_sources": [
+        "guitar",
+        "bass",
+        "drums",
+        "synths"
+      ],
+      "manual_path": "plugins/Fruity%20Blood%20Overdrive.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-center",
+      "name": "Fruity Center",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "dc-removal",
+        "repair"
+      ],
+      "summary": "A utility for removing DC offset from an audio signal.",
+      "techniques": [
+        "dc-removal"
+      ],
+      "manual_path": "plugins/Fruity%20Center.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-chorus",
+      "name": "Fruity Chorus",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "chorus",
+        "modulation"
+      ],
+      "summary": "A chorus effect that layers modulated detuned copies for depth and width.",
+      "techniques": [
+        "chorus",
+        "stereo-imaging"
+      ],
+      "common_sources": [
+        "vocals",
+        "guitar",
+        "keys",
+        "synths"
+      ],
+      "manual_path": "plugins/Fruity%20Chorus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-compressor",
+      "name": "Fruity Compressor",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "compressor",
+        "dynamics"
+      ],
+      "summary": "A conventional single-band compressor with threshold, ratio, timing, and gain controls.",
+      "problems_solved": [
+        "peak control",
+        "level consistency",
+        "envelope shaping"
+      ],
+      "appropriate_for": [
+        "straightforward track compression",
+        "learning conventional compressor controls"
+      ],
+      "poor_fit_when": [
+        "multiband or limiter behavior is required",
+        "threshold and timing cannot be judged from signal evidence"
+      ],
+      "common_sources": [
+        "vocals",
+        "drums",
+        "bass",
+        "guitar",
+        "buses"
+      ],
+      "techniques": [
+        "compression"
+      ],
+      "major_modules": [
+        {
+          "id": "detector",
+          "name": "Level detector",
+          "description": "Threshold and ratio determine gain reduction."
+        },
+        {
+          "id": "timing",
+          "name": "Attack and release",
+          "description": "Timing controls shape transient response and recovery."
+        },
+        {
+          "id": "output",
+          "name": "Output gain",
+          "description": "Compensates level after compression."
+        }
+      ],
+      "limitations": [
+        "PostFader cannot hear gain reduction from FL's live output."
+      ],
+      "manual_path": "plugins/Fruity%20Compressor.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-convolver",
+      "name": "Fruity Convolver",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "convolution-reverb",
+        "linear-phase-eq"
+      ],
+      "summary": "A convolution processor for impulse-response spaces and preset-based linear-phase filtering.",
+      "problems_solved": [
+        "captured acoustic spaces",
+        "impulse-response processing",
+        "linear-phase EQ from supplied responses"
+      ],
+      "appropriate_for": [
+        "realistic or unusual spaces",
+        "cabinet and response capture",
+        "offline-designed filter responses"
+      ],
+      "poor_fit_when": [
+        "low latency or freely adjustable algorithmic decay is the priority"
+      ],
+      "common_sources": [
+        "vocals",
+        "instruments",
+        "effects sends",
+        "buses"
+      ],
+      "techniques": [
+        "convolution",
+        "reverb",
+        "equalization"
+      ],
+      "limitations": [
+        "Impulse-response selection and loading are not exposed by PostFader's current bridge."
+      ],
+      "manual_path": "plugins/Fruity%20Convolver.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-dance",
+      "name": "Fruity Dance",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "visual",
+        "novelty"
+      ],
+      "summary": "A synchronized FL Chan visual display rather than an audio processor.",
+      "techniques": [
+        "visualization"
+      ],
+      "manual_path": "plugins/Fruity%20Dance.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-db-meter",
+      "name": "Fruity dB Meter",
+      "plugin_kinds": [
+        "effect",
+        "analyzer"
+      ],
+      "kind": "analyzer",
+      "origin": "stock",
+      "categories": [
+        "meter",
+        "level"
+      ],
+      "summary": "A basic decibel-level display for a mixer signal.",
+      "techniques": [
+        "metering"
+      ],
+      "manual_path": "plugins/Fruity%20dB%20Meter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-delay",
+      "name": "Fruity Delay",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "delay",
+        "echo"
+      ],
+      "summary": "A basic echo and feedback delay effect.",
+      "techniques": [
+        "delay"
+      ],
+      "manual_path": "plugins/Fruity%20Delay.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-delay-2",
+      "name": "Fruity Delay 2",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "delay",
+        "filtered-echo"
+      ],
+      "summary": "An echo effect with filtering in the delay path.",
+      "techniques": [
+        "delay",
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Delay%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-delay-3",
+      "name": "Fruity Delay 3",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "delay",
+        "tempo-synced-echo"
+      ],
+      "summary": "A tempo-aware stereo delay with filtering, modulation, saturation, and feedback shaping.",
+      "problems_solved": [
+        "tempo-synced echoes",
+        "stereo delay movement",
+        "filtered or saturated repeats",
+        "creative feedback"
+      ],
+      "appropriate_for": [
+        "rhythmic vocal throws",
+        "instrument depth",
+        "tempo-following echo",
+        "sound design"
+      ],
+      "poor_fit_when": [
+        "a natural reverberant space is required",
+        "unbounded feedback would be unsafe"
+      ],
+      "common_sources": [
+        "vocals",
+        "guitar",
+        "keys",
+        "synths",
+        "effects sends"
+      ],
+      "techniques": [
+        "delay",
+        "filtering",
+        "distortion",
+        "stereo-imaging"
+      ],
+      "limitations": [
+        "A bundled adapter describes selected controls but does not prove every loaded version or parameter."
+      ],
+      "manual_path": "plugins/Fruity%20Delay%203.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-delay-bank",
+      "name": "Fruity Delay Bank",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "multi-delay",
+        "filter"
+      ],
+      "summary": "A multi-bank delay for layered echoes and filtered feedback paths.",
+      "techniques": [
+        "delay",
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Delay%20Bank.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-drumsynth-live",
+      "name": "Fruity DrumSynth Live",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "drum-synthesizer",
+        "percussion"
+      ],
+      "summary": "A multi-voice synthesized percussion instrument.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "electronic drums",
+        "percussion"
+      ],
+      "manual_path": "plugins/Fruity%20DrumSynth%20Live.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-dx10",
+      "name": "Fruity DX10",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "fm-synthesizer",
+        "compact"
+      ],
+      "summary": "A compact FM synthesizer.",
+      "techniques": [
+        "fm-rm-synthesis"
+      ],
+      "common_instruments": [
+        "bells",
+        "keys",
+        "bass",
+        "digital percussion"
+      ],
+      "manual_path": "plugins/Fruity%20DX10.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-envelope-controller",
+      "name": "Fruity Envelope Controller",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "envelope"
+      ],
+      "summary": "A playable envelope source for linking and automating other parameters.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Fruity%20Envelope%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_auxiliary",
+      "lifecycle": "auxiliary",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-fast-dist",
+      "name": "Fruity Fast Dist",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "distortion",
+        "simple"
+      ],
+      "summary": "A lightweight distortion effect for quick nonlinear coloration.",
+      "techniques": [
+        "distortion"
+      ],
+      "manual_path": "plugins/Fruity%20Fast%20Dist.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-fast-lp",
+      "name": "Fruity Fast LP",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "filter",
+        "low-pass"
+      ],
+      "summary": "A simple low-pass filter for reducing high-frequency content.",
+      "techniques": [
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Fast%20LP.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-filter",
+      "name": "Fruity Filter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "filter",
+        "simple"
+      ],
+      "summary": "A compact resonant filter effect.",
+      "techniques": [
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Filter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-flanger",
+      "name": "Fruity Flanger",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "flanger",
+        "modulation"
+      ],
+      "summary": "A pronounced modulated comb-filter effect.",
+      "techniques": [
+        "flanging"
+      ],
+      "manual_path": "plugins/Fruity%20Flanger.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-flangus",
+      "name": "Fruity Flangus",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "flanger",
+        "modulation"
+      ],
+      "summary": "An expanded flanger with additional modulation control.",
+      "techniques": [
+        "flanging"
+      ],
+      "manual_path": "plugins/Fruity%20Flangus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-formula-controller",
+      "name": "Fruity Formula Controller",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "formula"
+      ],
+      "summary": "A control source that evaluates a user-defined mathematical formula.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Fruity%20Formula%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-free-filter",
+      "name": "Fruity Free Filter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "filter",
+        "state-variable"
+      ],
+      "summary": "A variable-state filter for straightforward frequency shaping.",
+      "techniques": [
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Free%20Filter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-granulizer",
+      "name": "Fruity Granulizer",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "granular-synthesizer",
+        "sampler"
+      ],
+      "summary": "A sample-based granular synthesizer for clouds, textures, and transformed playback.",
+      "techniques": [
+        "granular-synthesis",
+        "sampling"
+      ],
+      "common_instruments": [
+        "textures",
+        "pads",
+        "sound effects",
+        "experimental leads"
+      ],
+      "poor_fit_when": [
+        "transparent unchanged sample playback is the goal"
+      ],
+      "manual_path": "plugins/Fruity%20Granulizer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-html-notebook",
+      "name": "Fruity HTML NoteBook",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "notes",
+        "project-documentation"
+      ],
+      "summary": "A playback-synchronized project notebook that can display HTML-formatted notes.",
+      "techniques": [
+        "visualization"
+      ],
+      "manual_path": "plugins/Fruity%20HTML%20NoteBook.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-keyboard-controller",
+      "name": "Fruity Keyboard Controller",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "midi"
+      ],
+      "summary": "A controller source that maps played notes and velocity to linked parameters.",
+      "techniques": [
+        "automation-control",
+        "midi-control"
+      ],
+      "manual_path": "plugins/Fruity%20Keyboard%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_auxiliary",
+      "lifecycle": "auxiliary",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-limiter",
+      "name": "Fruity Limiter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "limiter",
+        "compressor",
+        "maximizer"
+      ],
+      "summary": "A single-band limiter, compressor, gate, and level-maximizing dynamics processor.",
+      "problems_solved": [
+        "peak limiting",
+        "dynamic control",
+        "sidechain compression",
+        "level maximization"
+      ],
+      "appropriate_for": [
+        "track or bus peak control",
+        "compression with visual feedback",
+        "reviewed sidechain dynamics"
+      ],
+      "poor_fit_when": [
+        "multiband control is required",
+        "true-peak or audible-result proof is required without a new bounce"
+      ],
+      "common_sources": [
+        "vocals",
+        "drums",
+        "bass",
+        "individual tracks",
+        "buses",
+        "master bus"
+      ],
+      "techniques": [
+        "limiting",
+        "compression"
+      ],
+      "major_modules": [
+        {
+          "id": "limiter",
+          "name": "Limiter",
+          "description": "Constrains peaks with ceiling, gain, attack, release, and sustain behavior."
+        },
+        {
+          "id": "compressor",
+          "name": "Compressor",
+          "description": "Provides threshold, ratio, knee, timing, and sidechain-oriented dynamics control."
+        },
+        {
+          "id": "gate",
+          "name": "Noise gate",
+          "description": "Reduces signal below a threshold."
+        }
+      ],
+      "limitations": [
+        "Live FL sample peaks are not proof of exported true-peak headroom.",
+        "Representative compatibility evidence is read-only and does not validate every control."
+      ],
+      "manual_path": "plugins/Fruity%20Limiter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-love-philter",
+      "name": "Fruity Love Philter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "filter",
+        "sequenced-filter",
+        "multi-bank"
+      ],
+      "summary": "An advanced multi-bank filter with envelopes and rhythmic control.",
+      "techniques": [
+        "filtering",
+        "automation-control",
+        "sequencing"
+      ],
+      "common_sources": [
+        "synths",
+        "drums",
+        "loops",
+        "effects"
+      ],
+      "manual_path": "plugins/Fruity%20Love%20Philter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-lsd",
+      "name": "Fruity LSD",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "midi",
+        "system-synthesizer"
+      ],
+      "summary": "A Windows-only MIDI interface that uses MIDI Out to drive the computer's DirectMusic/DLS synthesizer.",
+      "techniques": [
+        "midi-control",
+        "hosting"
+      ],
+      "limitations": [
+        "Windows only; it depends on the operating system's DirectMusic/DLS synthesizer rather than an FL-native sound engine."
+      ],
+      "manual_path": "plugins/Fruity%20LSD.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-multiband-compressor",
+      "name": "Fruity Multiband Compressor",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "compressor",
+        "multiband"
+      ],
+      "summary": "A three-band compressor for independent low-, mid-, and high-frequency dynamics control.",
+      "techniques": [
+        "compression",
+        "multiband-processing"
+      ],
+      "common_sources": [
+        "buses",
+        "master bus",
+        "broadband sources"
+      ],
+      "poor_fit_when": [
+        "a single-band compressor is sufficient or crossover interaction is undesirable"
+      ],
+      "manual_path": "plugins/Fruity%20Multiband%20Compressor.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-mute-2",
+      "name": "Fruity Mute 2",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "mute",
+        "automation"
+      ],
+      "summary": "An automatable signal-muting utility.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Fruity%20Mute%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-notebook",
+      "name": "Fruity NoteBook",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "notes",
+        "project-documentation"
+      ],
+      "summary": "A playback-synchronized text notebook stored with the project.",
+      "techniques": [
+        "visualization"
+      ],
+      "manual_path": "plugins/Fruity%20NoteBook.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-panomatic",
+      "name": "Fruity PanOMatic",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "auto-pan",
+        "tremolo"
+      ],
+      "summary": "An LFO-driven pan and volume modulation effect.",
+      "techniques": [
+        "stereo-imaging",
+        "automation-control"
+      ],
+      "common_sources": [
+        "pads",
+        "effects",
+        "percussion",
+        "guitar",
+        "synths"
+      ],
+      "manual_path": "plugins/Fruity%20PanOMatic.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-parametric-eq",
+      "name": "Fruity Parametric EQ",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "equalizer",
+        "parametric"
+      ],
+      "summary": "A parametric equalizer with controllable band frequency, width, and gain.",
+      "techniques": [
+        "equalization",
+        "filtering"
+      ],
+      "manual_path": "plugins/Fruity%20Parametric%20EQ.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-parametric-eq2",
+      "name": "Fruity Parametric EQ2",
+      "aliases": [
+        "Fruity Parametric EQ 2"
+      ],
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "equalizer",
+        "parametric",
+        "spectrum-analyzer"
+      ],
+      "summary": "A seven-band parametric equalizer with filter-shape choices and an integrated spectrum display.",
+      "problems_solved": [
+        "tonal shaping",
+        "resonance reduction",
+        "high-pass and low-pass cleanup",
+        "frequency analysis"
+      ],
+      "appropriate_for": [
+        "corrective and creative track EQ",
+        "bus tone shaping",
+        "automation of reviewed bands"
+      ],
+      "poor_fit_when": [
+        "dynamic EQ is required",
+        "a curve is being guessed without source or bounce evidence"
+      ],
+      "common_sources": [
+        "vocals",
+        "drums",
+        "bass",
+        "guitar",
+        "keys",
+        "synths",
+        "buses",
+        "master bus"
+      ],
+      "techniques": [
+        "equalization",
+        "filtering",
+        "metering"
+      ],
+      "major_modules": [
+        {
+          "id": "bands",
+          "name": "Seven filter bands",
+          "description": "Each band exposes frequency, gain, width, and filter type."
+        },
+        {
+          "id": "spectrum",
+          "name": "Spectrum display",
+          "description": "Visualizes signal energy behind the EQ curve."
+        }
+      ],
+      "limitations": [
+        "Its bundled control adapter covers selected parameter roles and does not certify every loaded build or audible outcome."
+      ],
+      "manual_path": "plugins/Fruity%20Parametric%20EQ%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-peak-controller",
+      "name": "Fruity Peak Controller",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "envelope-follower",
+        "lfo"
+      ],
+      "summary": "A controller that derives automation from input level and an LFO.",
+      "techniques": [
+        "automation-control"
+      ],
+      "common_sources": [
+        "sidechain-style modulation sources",
+        "rhythmic material"
+      ],
+      "manual_path": "plugins/Fruity%20Peak%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-phase-inverter",
+      "name": "Fruity Phase Inverter",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "polarity",
+        "utility"
+      ],
+      "summary": "A polarity-inversion utility for correcting or testing phase relationships.",
+      "techniques": [
+        "stereo-imaging"
+      ],
+      "manual_path": "plugins/Fruity%20Phase%20Inverter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-phaser",
+      "name": "Fruity Phaser",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "phaser",
+        "modulation"
+      ],
+      "summary": "A swept phase-cancellation effect for moving notches and resonant color.",
+      "techniques": [
+        "phasing"
+      ],
+      "manual_path": "plugins/Fruity%20Phaser.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-reeverb",
+      "name": "Fruity Reeverb",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "reverb",
+        "algorithmic"
+      ],
+      "summary": "An early FL Studio algorithmic reverb for simulated acoustic space.",
+      "techniques": [
+        "reverb"
+      ],
+      "manual_path": "plugins/Fruity%20Reeverb.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "legacy",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Legacy first-generation reverb; Image-Line recommends Fruity Reeverb 2."
+      ]
+    },
+    {
+      "id": "image-line.fruity-reeverb-2",
+      "name": "Fruity Reeverb 2",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "reverb",
+        "algorithmic"
+      ],
+      "summary": "An algorithmic reverb with room, decay, damping, diffusion, and wet/dry shaping.",
+      "problems_solved": [
+        "adding depth",
+        "placing sources in a shared space",
+        "creating short rooms or longer tails"
+      ],
+      "appropriate_for": [
+        "vocals",
+        "drums",
+        "instruments",
+        "effects sends"
+      ],
+      "poor_fit_when": [
+        "a captured convolution space is required",
+        "long tails would mask articulation"
+      ],
+      "common_sources": [
+        "vocals",
+        "drums",
+        "guitar",
+        "keys",
+        "synths",
+        "effects sends"
+      ],
+      "techniques": [
+        "reverb",
+        "filtering"
+      ],
+      "limitations": [
+        "The adapter covers selected roles only; PostFader cannot hear the tail or prove the artistic result."
+      ],
+      "manual_path": "plugins/Fruity%20Reeverb%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-scratcher",
+      "name": "Fruity Scratcher",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "turntable",
+        "scratch"
+      ],
+      "summary": "A turntable-style scratching and playback-manipulation effect.",
+      "techniques": [
+        "time-manipulation"
+      ],
+      "manual_path": "plugins/Fruity%20Scratcher.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-send",
+      "name": "Fruity Send",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "routing",
+        "send"
+      ],
+      "summary": "A mixer-chain utility that taps audio at a chosen point and routes it to a send track.",
+      "techniques": [
+        "routing"
+      ],
+      "manual_path": "plugins/Fruity%20Send.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-slicer",
+      "name": "Fruity Slicer",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "slicer",
+        "loop-player"
+      ],
+      "summary": "A sample slicer for triggering and rearranging regions, especially drum loops.",
+      "techniques": [
+        "slicing",
+        "sampling"
+      ],
+      "common_instruments": [
+        "drum loops",
+        "sample phrases"
+      ],
+      "manual_path": "plugins/Fruity%20Slicer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-slicer-2",
+      "name": "Fruity Slicer 2",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "slicer",
+        "loop-player"
+      ],
+      "summary": "A newer sample-slicing instrument for region-based loop playback and rearrangement.",
+      "techniques": [
+        "slicing",
+        "sampling",
+        "time-manipulation"
+      ],
+      "common_instruments": [
+        "drum loops",
+        "sample phrases"
+      ],
+      "manual_path": "plugins/Fruity%20Slicer%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-soft-clipper",
+      "name": "Fruity Soft Clipper",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "clipper",
+        "dynamics"
+      ],
+      "summary": "A simple soft-clipping peak shaper.",
+      "techniques": [
+        "clipping",
+        "distortion"
+      ],
+      "common_sources": [
+        "drums",
+        "buses",
+        "master bus with careful review"
+      ],
+      "poor_fit_when": [
+        "transparent limiting or exact true-peak compliance is required"
+      ],
+      "manual_path": "plugins/Fruity%20Soft%20Clipper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-soundfont-player",
+      "name": "SoundFont Player",
+      "aliases": [
+        "Fruity SoundFont Player"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "rompler",
+        "soundfont"
+      ],
+      "summary": "A player for instruments stored in SoundFont banks.",
+      "techniques": [
+        "sampling"
+      ],
+      "common_instruments": [
+        "SoundFont instruments"
+      ],
+      "manual_path": "plugins/SoundFont%20Player.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.fruity-spectroman",
+      "name": "Fruity Spectroman",
+      "plugin_kinds": [
+        "effect",
+        "analyzer"
+      ],
+      "kind": "analyzer",
+      "origin": "stock",
+      "categories": [
+        "spectrum",
+        "sonograph"
+      ],
+      "summary": "A compact spectral sonograph display.",
+      "techniques": [
+        "metering",
+        "visualization"
+      ],
+      "manual_path": "plugins/Fruity%20Spectroman.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-squeeze",
+      "name": "Fruity Squeeze",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "bitcrusher",
+        "lo-fi"
+      ],
+      "summary": "A bit-reduction and sample-skipping effect for digital degradation.",
+      "techniques": [
+        "bit-reduction",
+        "distortion"
+      ],
+      "manual_path": "plugins/Fruity%20Squeeze.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-stereo-enhancer",
+      "name": "Fruity Stereo Enhancer",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "stereo",
+        "width"
+      ],
+      "summary": "A stereo-position and width enhancement effect.",
+      "techniques": [
+        "stereo-imaging"
+      ],
+      "poor_fit_when": [
+        "mono compatibility has not been checked"
+      ],
+      "manual_path": "plugins/Fruity%20Stereo%20Enhancer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-stereo-shaper",
+      "name": "Fruity Stereo Shaper",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "stereo",
+        "mid-side",
+        "matrix"
+      ],
+      "summary": "A stereo matrix processor for channel, phase, and mid-side relationships.",
+      "techniques": [
+        "stereo-imaging"
+      ],
+      "poor_fit_when": [
+        "the result cannot be checked in mono"
+      ],
+      "manual_path": "plugins/Fruity%20Stereo%20Shaper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-vibrator",
+      "name": "Fruity Vibrator",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "force-feedback"
+      ],
+      "summary": "A control generator for supported force-feedback devices.",
+      "techniques": [
+        "automation-control",
+        "midi-control"
+      ],
+      "manual_path": "plugins/Fruity%20Vibrator.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "discontinued",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Removed from the FL Studio installer in version 12.5; available only through a separate legacy installer."
+      ]
+    },
+    {
+      "id": "image-line.fruity-video-player",
+      "name": "Fruity Video Player",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "video",
+        "sync"
+      ],
+      "summary": "A video player synchronized with an FL Studio project.",
+      "techniques": [
+        "visualization"
+      ],
+      "limitations": [
+        "It is a visual synchronization tool, not an audio generator."
+      ],
+      "manual_path": "plugins/Fruity%20Video%20Player.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.fruity-vocoder",
+      "name": "Fruity Vocoder",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "vocoder",
+        "filter-bank"
+      ],
+      "summary": "A filter-bank vocoder that transfers spectral movement from a modulator to a carrier.",
+      "techniques": [
+        "vocoding",
+        "filtering"
+      ],
+      "common_sources": [
+        "voice as modulator",
+        "synth as carrier"
+      ],
+      "manual_path": "plugins/Fruity%20Vocoder.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-waveshaper",
+      "name": "Fruity WaveShaper",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "waveshaper",
+        "distortion"
+      ],
+      "summary": "A user-drawn transfer-curve distortion and saturation effect.",
+      "techniques": [
+        "distortion",
+        "clipping"
+      ],
+      "common_sources": [
+        "drums",
+        "bass",
+        "guitar",
+        "synths",
+        "buses"
+      ],
+      "poor_fit_when": [
+        "transparent processing is required"
+      ],
+      "manual_path": "plugins/Fruity%20WaveShaper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-wrapper",
+      "name": "Fruity Wrapper",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "host",
+        "wrapper"
+      ],
+      "summary": "FL Studio's host wrapper for compatible external instrument and effect formats.",
+      "techniques": [
+        "hosting",
+        "routing",
+        "midi-control"
+      ],
+      "limitations": [
+        "The wrapper does not establish ownership, installation, or compatibility of any particular hosted product."
+      ],
+      "manual_path": "plugins/wrapper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.fruity-x-y-controller",
+      "name": "Fruity X-Y Controller",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "xy-pad"
+      ],
+      "summary": "A two-axis controller for linking and moving two parameters together.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Fruity%20X-Y%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.groove-machine-synth",
+      "name": "GMS",
+      "aliases": [
+        "Groove Machine Synth"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "fm-rm"
+      ],
+      "summary": "A compact synthesizer using frequency and ring modulation techniques.",
+      "techniques": [
+        "fm-rm-synthesis",
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/GMS.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.gross-beat",
+      "name": "Gross Beat",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "time-manipulation",
+        "gating",
+        "glitch"
+      ],
+      "summary": "A tempo-synchronized time and volume envelope processor for gating, stutter, scratch, and rearrangement effects.",
+      "problems_solved": [
+        "rhythmic gating",
+        "retriggering",
+        "stutter and glitch",
+        "time-envelope performance"
+      ],
+      "appropriate_for": [
+        "drums",
+        "loops",
+        "full-bus transitions",
+        "creative resampling"
+      ],
+      "poor_fit_when": [
+        "transparent timing correction is required"
+      ],
+      "common_sources": [
+        "drums",
+        "loops",
+        "synths",
+        "buses"
+      ],
+      "techniques": [
+        "time-manipulation",
+        "automation-control",
+        "sequencing"
+      ],
+      "limitations": [
+        "PostFader does not fabricate audible validation of time effects."
+      ],
+      "manual_path": "plugins/Gross%20Beat.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.hardcore",
+      "name": "Hardcore (11 Guitar FX)",
+      "aliases": [
+        "Hardcore"
+      ],
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "guitar-rack",
+        "multi-effect"
+      ],
+      "summary": "A guitar-oriented rack combining eleven modeled pedals, dynamics, EQ, modulation, delay, and reverb.",
+      "techniques": [
+        "distortion",
+        "compression",
+        "equalization",
+        "filtering",
+        "delay",
+        "reverb",
+        "chorus",
+        "phasing"
+      ],
+      "common_sources": [
+        "guitar",
+        "bass",
+        "synths"
+      ],
+      "manual_path": "plugins/Hardcore.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.harmless",
+      "name": "Harmless",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "additive"
+      ],
+      "summary": "An additive synthesizer presented through a subtractive-style workflow.",
+      "techniques": [
+        "additive-synthesis",
+        "subtractive-synthesis"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "pad",
+        "keys"
+      ],
+      "manual_path": "plugins/Harmless.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.harmor",
+      "name": "Harmor",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "additive",
+        "resynthesis"
+      ],
+      "summary": "A deep additive synthesizer with image synthesis, sample resynthesis, filters, effects, and extensive modulation.",
+      "problems_solved": [
+        "complex additive timbres",
+        "sample resynthesis",
+        "image-derived sound",
+        "deep spectral transformation"
+      ],
+      "appropriate_for": [
+        "bass and lead design",
+        "evolving textures",
+        "resynthesized samples",
+        "experimental sound design"
+      ],
+      "poor_fit_when": [
+        "fast sample playback or a minimal subtractive workflow is preferable"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "pad",
+        "texture",
+        "sound effects"
+      ],
+      "techniques": [
+        "additive-synthesis",
+        "resynthesis",
+        "spectral-processing",
+        "sampling"
+      ],
+      "major_modules": [
+        {
+          "id": "partials",
+          "name": "Additive synthesis engine",
+          "description": "Constructs sound from generated partials."
+        },
+        {
+          "id": "image-resynthesis",
+          "name": "Image and audio resynthesis",
+          "description": "Transforms images or analyzed samples into spectral material."
+        },
+        {
+          "id": "modulation-effects",
+          "name": "Modulation and effects",
+          "description": "Shapes articulation, filtering, unison, and post-processing."
+        }
+      ],
+      "manual_path": "plugins/Harmor.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.hyper-chorus",
+      "name": "Hyper Chorus",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "chorus",
+        "modulation"
+      ],
+      "summary": "An extreme multi-voice chorus for dense modulation effects.",
+      "techniques": [
+        "chorus",
+        "stereo-imaging"
+      ],
+      "manual_path": "plugins/Hyper%20Chorus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.kepler",
+      "name": "Kepler",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "vintage-emulation"
+      ],
+      "summary": "A native emulation of a vintage analog-style synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/Kepler.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.kepler-exo",
+      "name": "Kepler Exo",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "vintage-inspired"
+      ],
+      "summary": "An expanded reimagining of Kepler's vintage-synth concept.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/Kepler%20Exo.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.layer-channel",
+      "name": "Layer Channel",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "layering",
+        "midi-routing"
+      ],
+      "summary": "A Channel Rack controller that triggers multiple child channels together.",
+      "techniques": [
+        "midi-control",
+        "routing"
+      ],
+      "manual_path": "chansettings_layer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "manual_index_only",
+      "lifecycle": "unknown",
+      "edition_min": "unknown"
+    },
+    {
+      "id": "image-line.low-lifter",
+      "name": "Low Lifter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "bass-enhancer",
+        "dynamics"
+      ],
+      "summary": "A low-frequency enhancement processor.",
+      "techniques": [
+        "compression",
+        "equalization"
+      ],
+      "common_sources": [
+        "bass",
+        "kick",
+        "buses"
+      ],
+      "manual_path": "plugins/Low%20Lifter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.luxeverb",
+      "name": "LuxeVerb",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "reverb",
+        "algorithmic",
+        "creative-space"
+      ],
+      "summary": "An advanced algorithmic reverb for realistic rooms, long spaces, modulation, and creative feedback textures.",
+      "problems_solved": [
+        "high-quality algorithmic ambience",
+        "large modulated spaces",
+        "creative reverb feedback",
+        "ducked or gated space"
+      ],
+      "appropriate_for": [
+        "vocals",
+        "drums",
+        "instruments",
+        "effects sends",
+        "sound design"
+      ],
+      "poor_fit_when": [
+        "a captured convolution response is specifically required"
+      ],
+      "common_sources": [
+        "vocals",
+        "drums",
+        "guitar",
+        "keys",
+        "synths",
+        "effects sends"
+      ],
+      "techniques": [
+        "reverb",
+        "delay",
+        "filtering",
+        "stereo-imaging"
+      ],
+      "manual_path": "plugins/LuxeVerb.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.maximus",
+      "name": "Maximus",
+      "aliases": [
+        "Maximus Multiband Maximizer"
+      ],
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "multiband-dynamics",
+        "maximizer",
+        "mastering"
+      ],
+      "summary": "A multiband compressor, limiter, saturator, and maximizer with separate low, mid, high, and master stages.",
+      "problems_solved": [
+        "multiband dynamic control",
+        "mastering loudness",
+        "band-specific saturation",
+        "de-essing and expansion workflows"
+      ],
+      "appropriate_for": [
+        "buses and mastering",
+        "complex dynamics that justify crossover bands"
+      ],
+      "poor_fit_when": [
+        "a transparent single-band compressor is sufficient",
+        "settings cannot be verified with a fresh bounce"
+      ],
+      "common_sources": [
+        "buses",
+        "master bus",
+        "broadband tracks"
+      ],
+      "techniques": [
+        "compression",
+        "limiting",
+        "multiband-processing",
+        "distortion"
+      ],
+      "limitations": [
+        "Atlas product knowledge does not prove control mappings or a mastered result."
+      ],
+      "manual_path": "plugins/Maximus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.midi-out",
+      "name": "MIDI Out",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "midi",
+        "external-control"
+      ],
+      "summary": "A Channel Rack controller for sending notes and controls to MIDI hardware or hosted instruments.",
+      "techniques": [
+        "midi-control",
+        "routing"
+      ],
+      "manual_path": "plugins/MIDI%20Out.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_auxiliary",
+      "lifecycle": "auxiliary",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.minisynth",
+      "name": "MiniSynth",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive"
+      ],
+      "summary": "A compact subtractive synthesizer adapted from FL Studio Mobile.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/MiniSynth.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.morphine",
+      "name": "Morphine",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "additive",
+        "resynthesis"
+      ],
+      "summary": "An additive synthesizer designed for resynthesis and morphing between spectral states.",
+      "techniques": [
+        "additive-synthesis",
+        "resynthesis",
+        "spectral-processing"
+      ],
+      "common_instruments": [
+        "pads",
+        "textures",
+        "hybrid instruments",
+        "sound effects"
+      ],
+      "manual_path": "plugins/Morphine.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.multiband-delay",
+      "name": "Multiband Delay",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "delay",
+        "multiband"
+      ],
+      "summary": "A creative effect that applies independent delay behavior to frequency bands.",
+      "techniques": [
+        "delay",
+        "multiband-processing",
+        "filtering"
+      ],
+      "manual_path": "plugins/Multiband%20Delay.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.newtime",
+      "name": "Newtime",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "time-editor",
+        "warping"
+      ],
+      "summary": "An audio editor for timing correction, warping, and tempo alignment.",
+      "techniques": [
+        "time-manipulation"
+      ],
+      "appropriate_for": [
+        "correcting recorded timing",
+        "warping loops and phrases"
+      ],
+      "poor_fit_when": [
+        "real-time delay or stutter processing is required"
+      ],
+      "limitations": [
+        "Its editor operations are not exposed through PostFader's current bridge."
+      ],
+      "manual_path": "plugins/Newtime.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.newtone",
+      "name": "Newtone",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "pitch-editor",
+        "correction"
+      ],
+      "summary": "An audio editor for pitch correction, timing adjustment, and note-level vocal or melodic editing.",
+      "techniques": [
+        "pitch-processing",
+        "time-manipulation"
+      ],
+      "appropriate_for": [
+        "monophonic vocal and instrument correction"
+      ],
+      "poor_fit_when": [
+        "polyphonic pitch editing is required"
+      ],
+      "limitations": [
+        "Its editor operations are not exposed through PostFader's current bridge."
+      ],
+      "manual_path": "plugins/Newtone.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.ogun",
+      "name": "Ogun",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "additive",
+        "metallic"
+      ],
+      "summary": "An additive synthesizer optimized for metallic and percussive timbres.",
+      "techniques": [
+        "additive-synthesis"
+      ],
+      "common_instruments": [
+        "bells",
+        "metallic percussion",
+        "sound effects"
+      ],
+      "manual_path": "plugins/Ogun.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.patcher",
+      "name": "Patcher",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "modular-host",
+        "routing",
+        "macro-control"
+      ],
+      "summary": "A modular environment for chaining instruments, effects, controllers, and custom interfaces.",
+      "problems_solved": [
+        "complex serial and parallel chains",
+        "multi-instrument layers",
+        "macro controls",
+        "reusable processing graphs"
+      ],
+      "appropriate_for": [
+        "routing beyond a single slot chain",
+        "combining multiple loaded processors",
+        "building reusable racks"
+      ],
+      "poor_fit_when": [
+        "a single simple processor is sufficient"
+      ],
+      "techniques": [
+        "hosting",
+        "routing",
+        "automation-control"
+      ],
+      "major_modules": [
+        {
+          "id": "map",
+          "name": "Map view",
+          "description": "Connects audio, event, and parameter links between modules."
+        },
+        {
+          "id": "surface",
+          "name": "Surface view",
+          "description": "Builds a custom front panel and macros."
+        }
+      ],
+      "limitations": [
+        "PostFader cannot insert or wire plug-ins inside Patcher through the current FL API."
+      ],
+      "manual_path": "plugins/Patcher.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.pitch-shifter",
+      "name": "Pitch Shifter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "pitch-shifter",
+        "formant"
+      ],
+      "summary": "A real-time effect for shifting input pitch and formant.",
+      "techniques": [
+        "pitch-processing"
+      ],
+      "common_sources": [
+        "vocals",
+        "instruments",
+        "sound effects"
+      ],
+      "manual_path": "plugins/Pitch%20Shifter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.pitcher",
+      "name": "Pitcher",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "pitch-correction",
+        "harmonizer"
+      ],
+      "summary": "A real-time monophonic pitch-correction and harmony effect.",
+      "techniques": [
+        "pitch-processing",
+        "midi-control"
+      ],
+      "common_sources": [
+        "vocals",
+        "monophonic instruments"
+      ],
+      "poor_fit_when": [
+        "polyphonic correction or offline note editing is required"
+      ],
+      "manual_path": "plugins/Pitcher.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.plucked",
+      "name": "Plucked!",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "physical-modeling",
+        "plucked-string"
+      ],
+      "summary": "A modeled plucked-string synthesizer.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "plucked strings",
+        "harp-like tones",
+        "short synthetic plucks"
+      ],
+      "manual_path": "plugins/Plucked!.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.poizone",
+      "name": "Poizone",
+      "aliases": [],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive"
+      ],
+      "summary": "A subtractive synthesizer aimed at accessible sound design and performance controls.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "pad",
+        "sequence"
+      ],
+      "manual_path": "plugins/PoiZone.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.rewired",
+      "name": "ReWired",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "host",
+        "rewire",
+        "legacy"
+      ],
+      "summary": "A host for compatible ReWire applications and devices.",
+      "techniques": [
+        "hosting",
+        "routing",
+        "midi-control"
+      ],
+      "limitations": [
+        "It depends on external ReWire compatibility and is not an instrument by itself.",
+        "ReWire was discontinued in 2020 and Image-Line support for this deprecated device ended with FL Studio 20.7."
+      ],
+      "manual_path": "plugins/ReWired.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "deprecated",
+      "edition_min": "not_applicable"
+    },
+    {
+      "id": "image-line.sakura",
+      "name": "Sakura",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "physical-modeling",
+        "string-synthesizer"
+      ],
+      "summary": "A physical-modeling instrument for struck, plucked, bowed, and resonant string timbres.",
+      "techniques": [
+        "physical-modeling"
+      ],
+      "common_instruments": [
+        "strings",
+        "plucks",
+        "mallets",
+        "hybrid acoustic tones"
+      ],
+      "manual_path": "plugins/Sakura.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.sawer",
+      "name": "Sawer",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive",
+        "vintage-inspired"
+      ],
+      "summary": "A vintage-inspired subtractive synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "sequence"
+      ],
+      "manual_path": "plugins/Sawer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.simsynth-live",
+      "name": "SimSynth",
+      "aliases": [
+        "SimSynth Live"
+      ],
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive"
+      ],
+      "summary": "A classic FL Studio subtractive synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/SimSynth.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.slicex",
+      "name": "Slicex",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "slicer",
+        "sampler",
+        "wave-editor"
+      ],
+      "summary": "An advanced loop slicer combining region detection, wave editing, articulation, and triggered playback.",
+      "problems_solved": [
+        "complex sample slicing",
+        "drum-loop rearrangement",
+        "region-level processing",
+        "slice articulation"
+      ],
+      "appropriate_for": [
+        "breakbeats",
+        "drum loops",
+        "chopped phrases",
+        "detailed slice editing"
+      ],
+      "poor_fit_when": [
+        "simple one-shot playback is enough"
+      ],
+      "techniques": [
+        "slicing",
+        "sampling",
+        "time-manipulation"
+      ],
+      "manual_path": "plugins/Slicex.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.soundgoodizer",
+      "name": "Soundgoodizer",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "maximizer",
+        "one-knob-dynamics"
+      ],
+      "summary": "A simplified one-control interface to selected Maximus processing presets.",
+      "techniques": [
+        "compression",
+        "limiting",
+        "distortion"
+      ],
+      "poor_fit_when": [
+        "precise control or transparent diagnosis is required"
+      ],
+      "manual_path": "plugins/Soundgoodizer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.speech-synthesizer",
+      "name": "Speech Synthesizer",
+      "plugin_kinds": [
+        "instrument",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "speech-synthesis",
+        "audio-rendering"
+      ],
+      "summary": "A Windows-only dialog that turns typed text into computerized or vocoder-like vocals and renders the result to a sliced Audio Clip.",
+      "techniques": [
+        "spectral-processing",
+        "sampling"
+      ],
+      "common_instruments": [
+        "spoken effects",
+        "synthetic voice"
+      ],
+      "limitations": [
+        "Windows only; it is a dialog rather than a standalone Add Plugin instrument, and PostFader cannot automate its render workflow."
+      ],
+      "manual_path": "plugins/Speech%20Synth.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.spreader",
+      "name": "Spreader",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "stereo",
+        "mono-compatible-width"
+      ],
+      "summary": "A stereo-width processor designed around mono-compatible enhancement.",
+      "techniques": [
+        "stereo-imaging"
+      ],
+      "common_sources": [
+        "instruments",
+        "buses"
+      ],
+      "manual_path": "plugins/Spreader.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.synthmaker",
+      "name": "SynthMaker",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "modular-builder",
+        "legacy"
+      ],
+      "summary": "A modular environment for building custom generators and effects.",
+      "techniques": [
+        "hosting",
+        "routing"
+      ],
+      "limitations": [
+        "It is a construction environment; capabilities depend on the graph built inside it.",
+        "Legacy, unsupported, 32-bit Windows-only module for projects opened with FL Studio 20.8.4 or older."
+      ],
+      "manual_path": "plugins/Synthmaker.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "legacy",
+      "edition_min": "not_applicable"
+    },
+    {
+      "id": "image-line.sytrus",
+      "name": "Sytrus",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "fm-rm",
+        "subtractive",
+        "hybrid"
+      ],
+      "summary": "A six-operator FM and RM synthesizer with subtractive filters, unison, waveshaping, and extensive modulation.",
+      "problems_solved": [
+        "complex FM timbres",
+        "hybrid synthesis",
+        "evolving modulation",
+        "custom operator routing"
+      ],
+      "appropriate_for": [
+        "bells",
+        "bass",
+        "keys",
+        "pads",
+        "leads",
+        "digital and hybrid sound design"
+      ],
+      "poor_fit_when": [
+        "a simple preset player or single-oscillator workflow is preferable"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "pad",
+        "keys",
+        "bells",
+        "sound effects"
+      ],
+      "techniques": [
+        "fm-rm-synthesis",
+        "subtractive-synthesis",
+        "distortion"
+      ],
+      "major_modules": [
+        {
+          "id": "operators",
+          "name": "Six operators",
+          "description": "Generate and modulate oscillator signals."
+        },
+        {
+          "id": "matrix",
+          "name": "FM and RM matrix",
+          "description": "Routes operator modulation and output."
+        },
+        {
+          "id": "filters-effects",
+          "name": "Filters and effects",
+          "description": "Adds subtractive and post-processing stages."
+        }
+      ],
+      "manual_path": "plugins/Sytrus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.toxic-biohazard",
+      "name": "Toxic Biohazard",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "fm"
+      ],
+      "summary": "An FM synthesizer with sequenced modulation and integrated effects.",
+      "techniques": [
+        "fm-rm-synthesis",
+        "sequencing"
+      ],
+      "common_instruments": [
+        "bass",
+        "lead",
+        "keys",
+        "sequence",
+        "sound effects"
+      ],
+      "manual_path": "plugins/Toxic%20Biohazard.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.transient-processor",
+      "name": "Transient Processor",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "transient-shaper",
+        "dynamics"
+      ],
+      "summary": "A dynamics effect for independently shaping attack and sustain.",
+      "techniques": [
+        "transient-shaping"
+      ],
+      "common_sources": [
+        "drums",
+        "percussion",
+        "guitar",
+        "piano",
+        "loops"
+      ],
+      "poor_fit_when": [
+        "level-dependent compression rather than envelope shaping is required"
+      ],
+      "manual_path": "plugins/Transient%20Processor.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.transistor-bass",
+      "name": "Transistor Bass",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "bass-synthesizer",
+        "subtractive",
+        "303-inspired"
+      ],
+      "summary": "A subtractive bass synthesizer inspired by classic acid-style hardware.",
+      "techniques": [
+        "subtractive-synthesis",
+        "sequencing"
+      ],
+      "common_instruments": [
+        "acid bass",
+        "sequenced bass"
+      ],
+      "manual_path": "plugins/Transistor%20Bass.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.transmitter",
+      "name": "Transmitter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "transient-sustain",
+        "spectral-dynamics"
+      ],
+      "summary": "A processor that separates transient and sustained components for independent treatment.",
+      "techniques": [
+        "transient-shaping",
+        "spectral-processing"
+      ],
+      "common_sources": [
+        "drums",
+        "loops",
+        "instruments"
+      ],
+      "manual_path": "plugins/Transmitter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.transporter",
+      "name": "Transporter",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "retrigger",
+        "reloop",
+        "performance-effect"
+      ],
+      "summary": "An automatic relooping and retriggering effect.",
+      "techniques": [
+        "time-manipulation",
+        "sequencing"
+      ],
+      "common_sources": [
+        "drums",
+        "loops",
+        "buses"
+      ],
+      "manual_path": "plugins/Transporter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "all_plugins"
+    },
+    {
+      "id": "image-line.tuner",
+      "name": "Tuner",
+      "plugin_kinds": [
+        "effect",
+        "analyzer"
+      ],
+      "kind": "analyzer",
+      "origin": "stock",
+      "categories": [
+        "tuner",
+        "pitch-analysis"
+      ],
+      "summary": "A pitch and tuning display for monophonic instrument signals.",
+      "techniques": [
+        "metering",
+        "pitch-processing"
+      ],
+      "common_sources": [
+        "guitar",
+        "bass",
+        "monophonic instruments"
+      ],
+      "manual_path": "plugins/Tuner.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-sequencer",
+      "name": "VFX Sequencer",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "sequencer",
+        "patcher",
+        "midi"
+      ],
+      "summary": "A Patcher-oriented sequencing module that generates and transforms note events.",
+      "techniques": [
+        "sequencing",
+        "midi-control"
+      ],
+      "limitations": [
+        "It is designed for use inside Patcher rather than as a conventional audio instrument."
+      ],
+      "manual_path": "plugins/VFX%20Sequencer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vintage-chorus",
+      "name": "Vintage Chorus",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "chorus",
+        "vintage-inspired"
+      ],
+      "summary": "A vintage-style chorus modeled after a classic six-voice analog synthesizer chorus character.",
+      "techniques": [
+        "chorus",
+        "stereo-imaging"
+      ],
+      "manual_path": "plugins/Vintage%20Chorus.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.vintage-phaser",
+      "name": "Vintage Phaser",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "phaser",
+        "vintage-inspired"
+      ],
+      "summary": "A vintage-style phaser modeled after a classic stompbox topology.",
+      "techniques": [
+        "phasing"
+      ],
+      "manual_path": "plugins/Vintage%20Phaser.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "signature"
+    },
+    {
+      "id": "image-line.vocodex",
+      "name": "Vocodex",
+      "plugin_kinds": [
+        "effect"
+      ],
+      "kind": "effect",
+      "origin": "stock",
+      "categories": [
+        "vocoder",
+        "advanced"
+      ],
+      "summary": "An advanced vocoder with detailed band analysis, carrier shaping, and articulation controls.",
+      "techniques": [
+        "vocoding",
+        "filtering",
+        "spectral-processing"
+      ],
+      "common_sources": [
+        "voice as modulator",
+        "synth or noise as carrier"
+      ],
+      "poor_fit_when": [
+        "simple pitch correction rather than carrier-modulator synthesis is needed"
+      ],
+      "manual_path": "plugins/Vocodex.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "producer"
+    },
+    {
+      "id": "image-line.wasp",
+      "name": "Wasp",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive",
+        "legacy"
+      ],
+      "summary": "A classic FL Studio subtractive synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/Wasp.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "discontinued",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Discontinued from FL Studio 20 onward; use a current synthesizer for new projects."
+      ]
+    },
+    {
+      "id": "image-line.wasp-xt",
+      "name": "Wasp XT",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "synthesizer",
+        "subtractive",
+        "legacy"
+      ],
+      "summary": "An expanded version of the Wasp subtractive synthesizer.",
+      "techniques": [
+        "subtractive-synthesis"
+      ],
+      "manual_path": "plugins/Wasp%20XT.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "discontinued",
+      "edition_min": "not_applicable",
+      "limitations": [
+        "Discontinued from FL Studio 20 onward; use a current synthesizer for new projects."
+      ]
+    },
+    {
+      "id": "image-line.wave-candy",
+      "name": "Wave Candy",
+      "plugin_kinds": [
+        "effect",
+        "analyzer"
+      ],
+      "kind": "analyzer",
+      "origin": "stock",
+      "categories": [
+        "meter",
+        "spectrum",
+        "oscilloscope",
+        "vectorscope"
+      ],
+      "summary": "A configurable audio-analysis display with waveform, spectrum, level, and stereo visualizations.",
+      "techniques": [
+        "metering",
+        "visualization"
+      ],
+      "appropriate_for": [
+        "signal inspection",
+        "spectrum review",
+        "stereo and level visualization"
+      ],
+      "limitations": [
+        "Visual analysis is not a substitute for live audio access, which FL does not expose to PostFader."
+      ],
+      "manual_path": "plugins/Wave%20Candy.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.wave-traveller",
+      "name": "Wave Traveller",
+      "plugin_kinds": [
+        "instrument"
+      ],
+      "kind": "instrument",
+      "origin": "stock",
+      "categories": [
+        "sampler",
+        "warping",
+        "slicer"
+      ],
+      "summary": "A sample instrument for drawing travel paths through audio and triggering warped slices.",
+      "techniques": [
+        "sampling",
+        "slicing",
+        "time-manipulation"
+      ],
+      "manual_path": "plugins/Wave%20Traveller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.buzz-effect-adapter",
+      "name": "Buzz Effect Adapter",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "host",
+        "legacy"
+      ],
+      "summary": "A legacy adapter for hosting compatible Buzz effects inside older 32-bit FL Studio releases.",
+      "techniques": [
+        "hosting"
+      ],
+      "limitations": [
+        "No longer included with FL Studio 12 or later; the old 32-bit workaround is unsupported."
+      ],
+      "manual_path": "plugins/Buzz%20Effect%20Adapter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "legacy_discontinued",
+      "lifecycle": "discontinued",
+      "edition_min": "not_applicable"
+    },
+    {
+      "id": "image-line.fruity-notebook-2",
+      "name": "Fruity NoteBook 2",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "notes",
+        "project-documentation"
+      ],
+      "summary": "A simple 100-page notepad for song information, lyrics, story text, and production notes.",
+      "techniques": [
+        "visualization"
+      ],
+      "limitations": [
+        "It stores project notes; it does not process audio."
+      ],
+      "manual_path": "plugins/Fruity%20NoteBook%202.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-voltage-controller",
+      "name": "Fruity Voltage Controller",
+      "plugin_kinds": [
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "control-voltage",
+        "hardware"
+      ],
+      "summary": "A hardware-control utility for sending up to eight channels of control voltage to modular equipment.",
+      "techniques": [
+        "automation-control",
+        "routing"
+      ],
+      "limitations": [
+        "Requires a DC-coupled audio interface; outputs repurposed for control voltage are not available for audio."
+      ],
+      "manual_path": "plugins/Fruity%20Voltage%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_auxiliary",
+      "lifecycle": "auxiliary",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.fruity-xyz-controller",
+      "name": "Fruity X-Y-Z Controller",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "controller",
+        "automation"
+      ],
+      "summary": "An internal controller whose mouse or touch gestures generate X, Y, and Z modulation sources; multitouch pinch can control Z.",
+      "techniques": [
+        "automation-control"
+      ],
+      "manual_path": "plugins/Fruity%20X-Y-Z%20Controller.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.razer-chroma",
+      "name": "Razer Chroma",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "lighting",
+        "visual"
+      ],
+      "summary": "A visual effect that drives supported Razer Chroma lighting on laptops, keyboards, mice, mousepads, and headsets.",
+      "techniques": [
+        "visualization",
+        "automation-control"
+      ],
+      "limitations": [
+        "It requires compatible Razer Chroma hardware and does not process project audio."
+      ],
+      "manual_path": "plugins/Razer%20Chroma.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-color-mapper",
+      "name": "VFX Color Mapper",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "event-routing"
+      ],
+      "summary": "A Patcher event-data filter that routes Piano Roll note colors to as many as sixteen instrument groups.",
+      "techniques": [
+        "midi-control",
+        "routing"
+      ],
+      "manual_path": "plugins/VFX%20Color%20Mapper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-envelope",
+      "name": "VFX Envelope",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "event-modulation"
+      ],
+      "summary": "A Patcher controller for applying envelopes to note velocity, pitch, pan, Mod X, and Mod Y event properties.",
+      "techniques": [
+        "automation-control",
+        "midi-control"
+      ],
+      "manual_path": "plugins/VFX%20Envelope.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-key-mapper",
+      "name": "VFX Key Mapper",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "event-mapping"
+      ],
+      "summary": "A Patcher utility for remapping MIDI note and event data.",
+      "techniques": [
+        "midi-control"
+      ],
+      "manual_path": "plugins/VFX%20Key%20Mapper.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-keyboard-splitter",
+      "name": "VFX Keyboard Splitter",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "keyboard-zones"
+      ],
+      "summary": "A Patcher utility that divides keyboard or Piano Roll input into as many as sixteen zones with velocity curves and transposition.",
+      "techniques": [
+        "midi-control",
+        "routing"
+      ],
+      "manual_path": "plugins/VFX%20Keyboard%20Splitter.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-level-scaler",
+      "name": "VFX Level Scaler",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "event-scaling"
+      ],
+      "summary": "A Patcher event utility for scaling incoming levels within an event-processing chain.",
+      "techniques": [
+        "midi-control"
+      ],
+      "manual_path": "plugins/VFX%20Level%20Scaler.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.vfx-script",
+      "name": "VFX Script",
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "patcher",
+        "event-scripting"
+      ],
+      "summary": "A Patcher module that runs bounded product scripts to transform MIDI notes and automation events in real time.",
+      "techniques": [
+        "midi-control",
+        "automation-control"
+      ],
+      "limitations": [
+        "An Atlas entry does not expose arbitrary Python execution through PostFader."
+      ],
+      "manual_path": "plugins/VFX%20Script.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "curated",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    },
+    {
+      "id": "image-line.zgameeditor-visualizer",
+      "name": "Video Visualizer (ZGameEditor)",
+      "aliases": [
+        "ZGameEditor Visualizer"
+      ],
+      "plugin_kinds": [
+        "effect",
+        "utility"
+      ],
+      "kind": "utility",
+      "origin": "stock",
+      "categories": [
+        "visualizer",
+        "video"
+      ],
+      "summary": "A real-time music visualizer and video-rendering environment driven by project audio and automation.",
+      "techniques": [
+        "visualization",
+        "automation-control"
+      ],
+      "limitations": [
+        "PostFader does not expose FL rendering or project saving, even though the product itself can render video through its UI."
+      ],
+      "manual_path": "plugins/ZGameEditor%20Visualizer.htm",
+      "formats": [
+        "native"
+      ],
+      "knowledge_depth": "basic",
+      "catalog_scope": "current_edition_matrix",
+      "lifecycle": "current",
+      "edition_min": "fruity"
+    }
+  ],
+  "fl_studio_version": "26.1.5",
+  "source_snapshot": "https://www.image-line.com/fl-studio/pricing"
+}

@@ -24,7 +24,7 @@ class MCPCompatibilityTests(unittest.TestCase):
 
     def test_all_tools_register_with_strict_top_level_input_schemas(self) -> None:
         tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 95)
+        self.assertEqual(len(tools), 99)
         non_strict = [
             tool.name
             for tool in tools

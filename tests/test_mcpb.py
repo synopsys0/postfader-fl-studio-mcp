@@ -25,6 +25,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import build_mcpb  # noqa: E402
 from build_mcpb import MCPB_NPM_PACKAGE  # noqa: E402
+from check_mcpb_bundle import REQUIRED as MCPB_REQUIRED  # noqa: E402
 from check_mcpb_bundle import inspect_bundle  # noqa: E402
 from sync_mcpb_manifest import discover_tools  # noqa: E402
 
@@ -100,7 +101,7 @@ class MCPBPackagingTests(unittest.TestCase):
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 75)
-        self.assertLessEqual(len(names), 95)
+        self.assertEqual(len(names), 99)
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"
@@ -139,6 +140,20 @@ class MCPBPackagingTests(unittest.TestCase):
     def test_manifest_does_not_enable_fl_write_mode(self) -> None:
         encoded = json.dumps(self.manifest)
         self.assertNotIn("FL_BRIDGE_ENABLE_WRITES", encoded)
+
+    def test_bundle_checker_requires_the_complete_plugin_atlas_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/plugin_atlas/__init__.py",
+                "fl_studio_mcp/plugin_atlas_data/__init__.py",
+                "fl_studio_mcp/plugin_atlas_mcp.py",
+            }
+            <= MCPB_REQUIRED
+        )
+        self.assertIn(
+            "fl_studio_mcp/plugin_atlas_data/manifests/atlas.json",
+            MCPB_REQUIRED,
+        )
 
     def test_bundle_entry_point_exists(self) -> None:
         self.assertTrue((ROOT / "mcpb_entry.py").is_file())

@@ -3,6 +3,19 @@
 These FL Studio 2026 MIDI-scripting behaviors determine what FL Studio MCP
 Bridge can safely expose. They are runtime constraints, not musical policy.
 
+## Plugin Atlas does not extend the FL Studio API
+
+[Plugin Atlas](plugin-atlas.md) is bundled static product knowledge. It can
+describe a product and link to reviewed sources, but it cannot establish that
+the product is installed, owned, or loaded, and it is never a runtime
+allowlist. The [validated plug-in matrix](plugin-matrix.md) is a separate set
+of bounded observations and compatibility/write evidence; a matrix row is not
+an Atlas record or a guarantee about every version, control, or format.
+
+Neither surface adds capabilities that FL Studio does not expose here. In
+particular, Atlas and the matrix cannot insert, remove, or reorder plug-ins,
+save or render a project, or read FL Studio's live audio output.
+
 ## The embedded Python environment cannot use files or sockets
 
 Inside FL Studio's MIDI-script interpreter, low-level file construction can

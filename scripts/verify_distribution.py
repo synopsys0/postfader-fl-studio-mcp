@@ -24,16 +24,28 @@ V013_REQUIRED_RUNTIME_MODULES = {
     "fl_studio_mcp/evidence.py",
     "fl_studio_mcp/host_config.py",
 }
+ATLAS_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas"
+ATLAS_DATA_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+ATLAS_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_PACKAGE_ROOT.rglob("*.py")
+}
+ATLAS_RUNTIME_MODULES.add("fl_studio_mcp/plugin_atlas_data/__init__.py")
+ATLAS_DATA_FILES = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_DATA_ROOT.rglob("*.json")
+}
 RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
-} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"}
+} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
     "postfader = fl_studio_mcp.cli:main",
     "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
     "postfader-doctor = fl_studio_mcp.diagnostics:main",
     "postfader-plugin-report = fl_studio_mcp.plugin_report:main",
+    "postfader-plugin-atlas = fl_studio_mcp.plugin_atlas.cli:main",
     "postfader-setup = fl_studio_mcp.setup_wizard:main",
 }
 WHEEL_FORBIDDEN_PARTS = {
@@ -119,6 +131,9 @@ def inspect_wheel(wheel: Path, version: str) -> list[str]:
             for required in sorted(RUNTIME_MODULES):
                 if required not in names:
                     failures.append("wheel is missing %s" % required)
+            for required in sorted(ATLAS_DATA_FILES):
+                if required not in names:
+                    failures.append("wheel is missing Atlas data %s" % required)
 
             bridge_name = "fl_studio_mcp/_bridge/device_UniversalBridge.py"
             if bridge_name in names and any(
@@ -148,6 +163,10 @@ def inspect_sdist(sdist: Path) -> list[str]:
             for suffix in SDIST_REQUIRED_SUFFIXES:
                 if not any(name.endswith(suffix) for name in names):
                     failures.append("sdist is missing %s" % suffix.lstrip("/"))
+            for required in sorted(ATLAS_RUNTIME_MODULES | ATLAS_DATA_FILES):
+                suffix = "/" + required
+                if not any(name.endswith(suffix) for name in names):
+                    failures.append("sdist is missing %s" % required)
 
             readmes = sorted(
                 name

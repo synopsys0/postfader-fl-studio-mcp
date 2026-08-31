@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "evidence": [
+    {
+      "id": "matrix.fruity-limiter.read-profiled",
+      "product_id": "image-line.fruity-limiter",
+      "adapter_id": "fl-fruity-limiter",
+      "level": "read_profiled",
+      "source": "maintainer",
+      "detail": "One FL Studio 26.1.3 build 5336 Producer observation examined all 18 reported mixer-effect controls. No representative write was run; exact product version and other formats remain unproven.",
+      "locator": "docs/plugin-matrix.md"
+    },
+    {
+      "id": "matrix.fruity-delay-3.read-profiled",
+      "product_id": "image-line.fruity-delay-3",
+      "adapter_id": "fl-delay-3",
+      "level": "read_profiled",
+      "source": "maintainer",
+      "detail": "One FL Studio 26.1.3 build 5336 Producer observation examined all 26 reported mixer-effect controls. No representative write was run; exact product version and other formats remain unproven.",
+      "locator": "docs/plugin-matrix.md"
+    },
+    {
+      "id": "matrix.fruity-filter.read-profiled",
+      "product_id": "image-line.fruity-filter",
+      "level": "read_profiled",
+      "source": "maintainer",
+      "detail": "One FL Studio 26.1.3 build 5336 Producer observation examined all six reported mixer-effect controls. No representative write was run and no semantic control adapter is bundled.",
+      "locator": "docs/plugin-matrix.md"
+    }
+  ]
+}

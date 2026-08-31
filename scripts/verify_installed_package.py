@@ -28,6 +28,7 @@ def main(argv=None) -> int:
         expected_bridge_deployment,
     )
     from fl_studio_mcp.mcp_server import mcp
+    from fl_studio_mcp.plugin_atlas import load_bundled_registry
 
     failures: list[str] = []
     distribution = importlib.metadata.distribution("postfader-fl-studio-mcp")
@@ -46,10 +47,20 @@ def main(argv=None) -> int:
         "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
         "postfader-doctor": "fl_studio_mcp.diagnostics:main",
         "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+        "postfader-plugin-atlas": "fl_studio_mcp.plugin_atlas.cli:main",
         "postfader-setup": "fl_studio_mcp.setup_wizard:main",
     }
     if entries != expected_entries:
         failures.append("installed console entry points differ: %s" % entries)
+
+    try:
+        atlas = load_bundled_registry()
+        if not atlas.products:
+            failures.append("installed Plugin Atlas contains no products")
+        if not atlas.digest():
+            failures.append("installed Plugin Atlas did not produce a content digest")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append("installed Plugin Atlas could not be loaded: %s" % error)
 
     bridge = bridge_source_path().read_bytes()
     if any(byte >= 128 for byte in bridge):

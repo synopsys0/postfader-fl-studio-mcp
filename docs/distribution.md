@@ -19,7 +19,7 @@ inside the FL Studio project already open.
 PostFader connects Claude, Codex, Cursor, and other local MCP clients to the
 project open in FL Studio. Inspect mixer routing and loaded plug-ins, diagnose
 exported mixes, control the session, generate MIDI parts, and prepare patterns
-and arrangement markers through 95 tools and 8 live resources. Guided packages
+and arrangement markers through 99 tools and 8 live resources. Guided packages
 support Windows and macOS. PostFader starts read-only and never saves
 automatically.
 
@@ -41,7 +41,7 @@ reviewable mix plans. Generate chords, melody, bass, and drums; export
 multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio;
 and prepare patterns, section markers, or Piano Roll transforms.
 
-The v0.20 surface contains 90 tools and 8 live resources. Guided Windows and
+The v0.20 surface contains 99 tools and 8 live resources. Guided Windows and
 macOS packages, dedicated Codex packages, a Claude Desktop MCPB, and Python
 distributions cover different setup needs. PostFader starts read-only, requires
 session-only authorization for writes, never saves automatically, and reads
@@ -58,7 +58,7 @@ service, account, or telemetry.
   Master protection.
 - Supported direct setters use later-update readback; weaker evidence is
   labeled partial or unverified.
-- The current public surface has 95 tools and 8 live resources.
+- The current public surface has 99 tools and 8 live resources.
 - Guided setup connects the local package, Universal Bridge, virtual MIDI
   selection, client configuration, and doctor checks; it does not install a
   virtual MIDI provider.

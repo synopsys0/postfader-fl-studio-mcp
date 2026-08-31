@@ -144,6 +144,20 @@ from .mixing import (
     run_mix_doctor,
 )
 from .performance import TrackBController, TrackBInspector
+from .plugin_atlas_mcp import (
+    AtlasGetProductRequest,
+    AtlasInspectLoadedRequest,
+    AtlasInspectLoadedResponse,
+    AtlasProductResponse,
+    AtlasRecommendationResponse,
+    AtlasRecommendRequest,
+    AtlasSearchRequest,
+    AtlasSearchResponse,
+    get_atlas_product,
+    inspect_loaded_atlas,
+    recommend_atlas,
+    search_atlas,
+)
 from .production_runs import (
     PRODUCTION_RUNS,
     ProductionRunDelta,
@@ -253,7 +267,7 @@ SessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 95 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 99 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -315,6 +329,17 @@ clip CRUD, live audio buffers, rendering, project save, playback speed, and a
 generic raw FL API escape hatch are unavailable. A send must exist before its
 level can be set. Unprofiled plug-in parameters remain unsafe by default;
 prefer displayed-value or exact-option tools when their meaning is known.
+
+Plugin Atlas is a bundled, offline knowledge layer. Use
+plugins_atlas_search, plugins_atlas_get_product, and plugins_atlas_recommend
+for static product, technique, limitation, adapter, and stock-alternative
+knowledge; these tools do not contact FL Studio and do not claim ownership,
+installation, or loaded state. Use plugins_atlas_inspect_loaded when a live
+inventory match is needed. It reads the same target-aware Track B inventory as
+plugins_scan_loaded_plugins, keeps mixer-effect and global Channel Rack
+generator identities separate, and reports a product-name match as name_only:
+name-only matching is never control proof. Atlas records and adapters do not
+authorize plug-in insertion or parameter writes.
 
 fl_get_selected_range intentionally leaves selection semantics and render
 inclusivity unknown. Step writes require the latest grid digest and preserve
@@ -904,6 +929,54 @@ async def plugins_scan_parameters(
         max_indices=max_indices,
         max_results=max_results,
     )
+
+
+@mcp.tool(
+    name="plugins_atlas_search",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Search Plugin Atlas"}),
+)
+async def plugins_atlas_search(
+    request: AtlasSearchRequest,
+) -> AtlasSearchResponse:
+    """Search bundled static plug-in knowledge without contacting FL Studio."""
+    return await _mix(search_atlas, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_get_product",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get Plugin Atlas product"}),
+)
+async def plugins_atlas_get_product(
+    request: AtlasGetProductRequest,
+) -> AtlasProductResponse:
+    """Read one static Atlas product and its related descriptive records."""
+    return await _mix(get_atlas_product, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_recommend",
+    annotations=LOCAL_READ_ONLY.model_copy(
+        update={"title": "Recommend from Plugin Atlas"}
+    ),
+)
+async def plugins_atlas_recommend(
+    request: AtlasRecommendRequest,
+) -> AtlasRecommendationResponse:
+    """Rank static plug-in choices or stock alternatives without changing FL."""
+    return await _mix(recommend_atlas, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_inspect_loaded",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Match loaded plug-ins to Plugin Atlas"}
+    ),
+)
+async def plugins_atlas_inspect_loaded(
+    request: AtlasInspectLoadedRequest,
+) -> AtlasInspectLoadedResponse:
+    """Match the target-aware live Track B inventory to static Atlas knowledge."""
+    return await _mix(inspect_loaded_atlas, request)
 
 
 @mcp.tool(

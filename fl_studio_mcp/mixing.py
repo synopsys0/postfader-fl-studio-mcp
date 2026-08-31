@@ -37,6 +37,7 @@ from .workflows import (
     validate_batch_operations,
 )
 from .contracts import ContractModel, SCHEMA_VERSION
+from .plugin_atlas import AtlasLoadError, load_bundled_registry
 
 
 MIX_POLICY_VERSION = "postfader-mix-policy-1"
@@ -768,91 +769,62 @@ class PluginAdapterProfile(MixingModel):
     warnings: tuple[str, ...] = ()
 
 
-def _parameter(role: str, names: tuple[str, ...], unit: str, tool: str = "fl_set_plugin_param_display") -> PluginParameterProfile:
-    return PluginParameterProfile(
-        role=role,
-        name_candidates=names,
-        display_unit=unit,
-        preferred_write_tool=cast(Any, tool),
-    )
+def _profiles_from_atlas() -> tuple[PluginAdapterProfile, ...]:
+    """Adapt bundled Atlas records to the unchanged v0.20 mix contract."""
+
+    profiles: list[PluginAdapterProfile] = []
+    for adapter in load_bundled_registry().adapters:
+        if adapter.provenance != "bundled_postfader_profile":
+            continue
+        parameters: list[PluginParameterProfile] = []
+        for control in adapter.controls:
+            if (
+                control.role is None
+                or control.unit is None
+                or control.preferred_write_tool == "unknown"
+            ):
+                raise ValueError(
+                    f"Atlas adapter {adapter.adapter_id!r} lacks a complete mix-profile control"
+                )
+            parameters.append(
+                PluginParameterProfile(
+                    role=control.role,
+                    name_candidates=control.names,
+                    display_unit=control.unit,
+                    preferred_write_tool=cast(Any, control.preferred_write_tool),
+                )
+            )
+        profiles.append(
+            PluginAdapterProfile(
+                profile_id=adapter.adapter_id,
+                plugin_names=adapter.reported_names,
+                category=cast(Any, adapter.category),
+                supported_intents=adapter.supported_intents,
+                parameters=tuple(parameters),
+                recipes=tuple(
+                    ProcessingRecipe(
+                        recipe_id=recipe.recipe_id,
+                        intent=recipe.intent,
+                        parameter_roles=recipe.parameter_roles,
+                        guidance=recipe.guidance,
+                    )
+                    for recipe in adapter.recipes
+                ),
+                warnings=adapter.warnings,
+            )
+        )
+    return tuple(profiles)
 
 
-PLUGIN_PROFILES: tuple[PluginAdapterProfile, ...] = (
-    PluginAdapterProfile(
-        profile_id="fl-parametric-eq-2",
-        plugin_names=("Fruity Parametric EQ 2",),
-        category="equalizer",
-        supported_intents=("reduce_mud", "tame_harshness", "add_presence", "add_air", "tighten_low_end"),
-        parameters=(
-            _parameter("band_gain", ("Band 1 level", "Band 2 level", "Band 3 level"), "dB"),
-            _parameter("band_frequency", ("Band 1 freq", "Band 2 freq", "Band 3 freq"), "Hz"),
-            _parameter("band_width", ("Band 1 width", "Band 2 width", "Band 3 width"), "percent"),
-        ),
-        recipes=(
-            ProcessingRecipe(recipe_id="eq-mud-review", intent="reduce_mud", parameter_roles=("band_frequency", "band_gain", "band_width"), guidance="Sweep only to identify the source, then audition a 1-3 dB reduction rather than applying a blind full-mix cut."),
-            ProcessingRecipe(recipe_id="eq-air-review", intent="add_air", parameter_roles=("band_frequency", "band_gain"), guidance="Review a broad 0.5-2 dB high-band lift against sibilance and true-peak measurements."),
-        ),
-    ),
-    PluginAdapterProfile(
-        profile_id="fl-fruity-compressor",
-        plugin_names=("Fruity Compressor",),
-        category="compressor",
-        supported_intents=("control_dynamics", "add_punch", "level_vocal"),
-        parameters=(
-            _parameter("threshold", ("Threshold",), "dB"),
-            _parameter("ratio", ("Ratio",), "ratio"),
-            _parameter("attack", ("Attack",), "ms"),
-            _parameter("release", ("Release",), "ms"),
-            _parameter("makeup_gain", ("Gain",), "dB"),
-        ),
-        recipes=(
-            ProcessingRecipe(recipe_id="compressor-control", intent="control_dynamics", parameter_roles=("threshold", "ratio", "attack", "release"), guidance="Set threshold from measured gain reduction; start around 2:1-4:1 and preserve transients with program-dependent attack/release."),
-        ),
-    ),
-    PluginAdapterProfile(
-        profile_id="fl-fruity-limiter",
-        plugin_names=("Fruity Limiter",),
-        category="limiter",
-        supported_intents=("limit_peaks", "control_dynamics"),
-        parameters=(
-            _parameter("input_gain", ("GAIN", "Gain"), "dB"),
-            _parameter("ceiling", ("CEIL", "Ceiling"), "dB"),
-            _parameter("attack", ("ATT", "Attack"), "ms"),
-            _parameter("release", ("REL", "Release"), "ms"),
-        ),
-        recipes=(
-            ProcessingRecipe(recipe_id="limiter-headroom", intent="limit_peaks", parameter_roles=("ceiling", "input_gain"), guidance="Set ceiling from a new true-peak bounce; do not use live sample peaks as proof of codec headroom."),
-        ),
-    ),
-    PluginAdapterProfile(
-        profile_id="fl-reeverb-2",
-        plugin_names=("Fruity Reeverb 2",),
-        category="reverb",
-        supported_intents=("add_depth", "shorten_space", "darken_reverb"),
-        parameters=(
-            _parameter("decay", ("Decay",), "seconds"),
-            _parameter("wet", ("Wet",), "percent"),
-            _parameter("dry", ("Dry",), "percent"),
-            _parameter("high_cut", ("HighCut", "High cut"), "Hz"),
-        ),
-        recipes=(
-            ProcessingRecipe(recipe_id="reverb-depth", intent="add_depth", parameter_roles=("decay", "wet", "high_cut"), guidance="Use a send when possible; raise wet amount in context and filter the return to preserve intelligibility."),
-        ),
-    ),
-    PluginAdapterProfile(
-        profile_id="fl-delay-3",
-        plugin_names=("Fruity Delay 3",),
-        category="delay",
-        supported_intents=("add_depth", "rhythmic_echo"),
-        parameters=(
-            _parameter("feedback", ("Feedback",), "percent"),
-            _parameter("time", ("Time",), "beats_or_ms"),
-        ),
-        recipes=(
-            ProcessingRecipe(recipe_id="delay-depth", intent="add_depth", parameter_roles=("time", "feedback"), guidance="Choose a tempo-related time and automate/filter the return; verify that feedback remains bounded."),
-        ),
-    ),
-)
+try:
+    PLUGIN_PROFILES: tuple[PluginAdapterProfile, ...] = _profiles_from_atlas()
+    _PLUGIN_PROFILE_LOAD_WARNING: str | None = None
+except (AtlasLoadError, TypeError, ValueError) as error:
+    # A catalog-data problem must not disable identity-independent plug-in
+    # inventory and parameter tools. The legacy profile surface degrades to an
+    # empty, explicit result while generic runtime discovery stays available.
+    PLUGIN_PROFILES = ()
+    _PLUGIN_PROFILE_LOAD_WARNING = f"Bundled plug-in profiles are unavailable: {error}"
 
 
 class PluginProfileCatalog(MixingModel):
@@ -869,13 +841,16 @@ def list_plugin_profiles(category: str | None = None) -> PluginProfileCatalog:
         profile for profile in PLUGIN_PROFILES
         if category is None or profile.category == category
     )
+    warnings = [
+        "Profiles match reported plug-in names and parameter labels; FL exposes no exact plug-in version.",
+        "Factory preset names/current preset are not invented because FL exposes no authoritative current-preset getter.",
+    ]
+    if _PLUGIN_PROFILE_LOAD_WARNING is not None:
+        warnings.insert(0, _PLUGIN_PROFILE_LOAD_WARNING)
     return PluginProfileCatalog(
         profiles=profiles,
         profile_count=len(profiles),
-        warnings=[
-            "Profiles match reported plug-in names and parameter labels; FL exposes no exact plug-in version.",
-            "Factory preset names/current preset are not invented because FL exposes no authoritative current-preset getter.",
-        ],
+        warnings=warnings,
     )
 
 

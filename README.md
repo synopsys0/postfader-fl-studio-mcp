@@ -28,7 +28,7 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**95 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**99 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
@@ -125,6 +125,14 @@ PostFader works with the chain already in the session. It does not currently
 insert, remove, or reorder plug-ins, and FL Studio does not expose reliable
 effect-slot bypass or wet/dry control here.
 
+Plugin Atlas adds offline product knowledge for plug-ins whether or not an
+instance is currently loaded. Its bundled Image-Line catalog and selected
+third-party records describe purposes, techniques, limitations, and explicit
+stock alternatives. Atlas keeps that knowledge separate from runtime matching,
+control-adapter evidence, and the three honest availability states. See the
+[Plugin Atlas guide](docs/plugin-atlas.md) or inspect the installed bundle with
+`postfader-plugin-atlas`.
+
 ### 🎹 Compose, transform, and organize musical ideas
 
 > “Create an eight-bar D Dorian melody with a bassline and drum pattern.”
@@ -217,6 +225,8 @@ run lifetime, and FL Studio limitations.
 - Read undo/redo history bounds and edit the current step sequence.
 - Discover and control supported parameters exposed by loaded effects and
   generators.
+- Read bundled Plugin Atlas product knowledge and compare it with observed
+  loaded plug-ins without turning the catalog into a runtime allowlist.
 
 ### Create music
 
@@ -380,6 +390,7 @@ first write test, and disable write mode when you are done.
 | [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
+| [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
 | [Security](SECURITY.md) | Threat model, local trust boundaries, privacy, and vulnerability reporting |
