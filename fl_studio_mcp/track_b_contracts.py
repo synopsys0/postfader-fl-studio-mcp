@@ -44,6 +44,12 @@ SEQUENCER_WRITE_CALL_BUDGET = 320
 SEQUENCER_WRITE_FIXED_CALLS = 8
 STEP_GRID_RESOLUTION = "sixteenth_note"
 STEP_DIGEST_ALGORITHM = "sha256-canonical-json-v1"
+MAX_PLUGIN_PRESET_COUNT = 1_000_000
+MAX_PLUGIN_PRESET_PAGE_SIZE = 256
+MAX_PLUGIN_PRESET_NAME_LENGTH = 256
+MAX_PLUGIN_PAD_COUNT = 512
+MAX_PRESET_NAVIGATION_STEPS = 256
+MAX_PRESET_SETTLE_TICKS = 8
 
 LoopMode = Literal["pattern", "song"]
 ChannelKind = Literal[
@@ -265,7 +271,7 @@ class VerifiedPlayingWrite(TrackBVerifiedMutation):
 class VerifiedStopWrite(TrackBVerifiedMutation):
     bridge_command: Literal["transport.stop"] = "transport.stop"
     requested_playing: Literal[False] = False
-    requested_song_position_normalized: Literal[0.0] = 0.0
+    requested_song_position_normalized: float = Field(default=0.0, ge=0.0, le=0.0)
     before_playing: bool | None = None
     after_playing: bool | None = None
     before_song_position_normalized: float | None = None
@@ -518,6 +524,7 @@ class TargetedPluginSummary(TrackBContract):
     target: PluginTarget
     name: str = Field(max_length=256)
     user_name: str | None = Field(default=None, max_length=256)
+    target_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
     reported_parameter_count: int | None = Field(default=None, ge=0)
     mix_level_normalized: float | None = None
     exact_version: None = Field(
@@ -614,6 +621,372 @@ class PluginPresetCount(TrackBContract):
     plugin: TargetedPluginSummary
     preset_count: int = Field(ge=0)
     project_dirty_flag: Literal[0, 1, 2] | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+PresetIdentityStatus = Literal[
+    "stable",
+    "blank",
+    "ambiguous",
+    "unsupported",
+    "unresolved",
+    "not_requested",
+]
+
+
+class PluginPresetState(TrackBContract):
+    """One current-preset observation, kept separate from product identity."""
+
+    name: str | None = Field(default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH)
+    index: int | None = Field(default=None, ge=0)
+    identity_status: PresetIdentityStatus
+
+    @model_validator(mode="after")
+    def status_matches_identity(self) -> "PluginPresetState":
+        if self.identity_status == "stable" and not self.name:
+            raise ValueError("stable preset identity requires a non-empty name")
+        if self.identity_status == "blank":
+            if self.name != "" or self.index is not None:
+                raise ValueError("blank preset identity must have an empty name and no index")
+        if self.identity_status in {"unsupported", "not_requested"}:
+            if self.name is not None or self.index is not None:
+                raise ValueError(
+                    "unavailable preset identities cannot carry a name or index"
+                )
+        if self.identity_status == "unresolved" and self.index is not None:
+            raise ValueError("an unresolved preset identity cannot carry an index")
+        if self.identity_status == "ambiguous" and not self.name:
+            raise ValueError("ambiguous preset identity requires a reported name")
+        if self.index is not None and self.identity_status != "stable":
+            raise ValueError("a resolved preset index requires stable identity")
+        return self
+
+
+class PluginPresetRecord(TrackBContract):
+    """A bounded, deterministic preset page row."""
+
+    index: int = Field(ge=0, le=MAX_PLUGIN_PRESET_COUNT - 1)
+    name: str = Field(max_length=MAX_PLUGIN_PRESET_NAME_LENGTH)
+    is_current: bool = False
+
+
+class PluginPresetPage(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    plugin: TargetedPluginSummary
+    preset_count: int = Field(ge=0, le=MAX_PLUGIN_PRESET_COUNT)
+    start: int = Field(ge=0, le=MAX_PLUGIN_PRESET_COUNT)
+    limit: int = Field(ge=1, le=MAX_PLUGIN_PRESET_PAGE_SIZE)
+    scanned_count: int = Field(ge=0, le=MAX_PLUGIN_PRESET_COUNT)
+    returned_count: int = Field(ge=0, le=MAX_PLUGIN_PRESET_PAGE_SIZE)
+    has_more: bool
+    next_start: int | None = Field(default=None, ge=0, le=MAX_PLUGIN_PRESET_COUNT)
+    presets: list[PluginPresetRecord] = Field(max_length=MAX_PLUGIN_PRESET_PAGE_SIZE)
+    current_preset_name: str | None = Field(
+        default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH
+    )
+    current_preset_index: int | None = Field(
+        default=None, ge=0, le=MAX_PLUGIN_PRESET_COUNT - 1
+    )
+    current_preset_status: PresetIdentityStatus
+    duplicate_names: list[str] = Field(max_length=MAX_PLUGIN_PRESET_PAGE_SIZE)
+    blank_name_indices: list[int] = Field(max_length=MAX_PLUGIN_PRESET_PAGE_SIZE)
+    partial: bool = False
+    truncated: bool = False
+    truncated_by: Literal["max_enumeration", "unsupported", "page"] | None = None
+    session_fingerprint: str | None = Field(
+        default=None, pattern=SESSION_FINGERPRINT_PATTERN
+    )
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def page_counts_and_identity_agree(self) -> "PluginPresetPage":
+        if self.returned_count != len(self.presets):
+            raise ValueError("returned_count must equal the preset page length")
+        indexes = [row.index for row in self.presets]
+        rows_by_index = {row.index: row for row in self.presets}
+        if indexes != sorted(set(indexes)):
+            raise ValueError("preset rows must be ordered and have unique indexes")
+        if any(
+            row.index < self.start
+            or row.index >= self.start + self.limit
+            or row.index >= self.preset_count
+            for row in self.presets
+        ):
+            raise ValueError("preset rows must fall inside the requested page")
+        if sum(row.is_current for row in self.presets) > 1:
+            raise ValueError("a preset page cannot mark multiple rows current")
+        if self.start > self.preset_count:
+            raise ValueError("preset page start cannot exceed preset_count")
+        if self.scanned_count > self.preset_count:
+            raise ValueError("scanned_count cannot exceed preset_count")
+        if self.returned_count > self.scanned_count:
+            raise ValueError("returned_count cannot exceed scanned_count")
+        if self.current_preset_index is not None:
+            if self.current_preset_status != "stable" or not self.current_preset_name:
+                raise ValueError("current_preset_index requires a stable current name")
+            if self.current_preset_index >= self.preset_count:
+                raise ValueError("current_preset_index cannot exceed preset_count")
+        if self.current_preset_status == "stable" and not self.current_preset_name:
+            raise ValueError("stable current preset status requires a name")
+        if self.current_preset_status == "blank" and self.current_preset_name != "":
+            raise ValueError("blank current preset status requires an empty name")
+        if self.current_preset_status in {"unsupported", "not_requested"}:
+            if self.current_preset_name is not None or self.current_preset_index is not None:
+                raise ValueError("unresolved current preset cannot carry identity fields")
+        if self.current_preset_status == "unresolved" and self.current_preset_index is not None:
+            raise ValueError("an unresolved current preset cannot carry an index")
+        # Validate the status/name/index tuple through the same state contract
+        # used by current-preset and mutation receipts. This also rejects an
+        # ambiguous or blank status that carries an identity field it cannot
+        # truthfully support.
+        PluginPresetState(
+            name=self.current_preset_name,
+            index=self.current_preset_index,
+            identity_status=self.current_preset_status,
+        )
+        expected_more = self.start + self.limit < self.preset_count
+        if self.has_more != expected_more and not self.truncated:
+            raise ValueError("has_more contradicts preset_count, start, and limit")
+        if self.has_more:
+            if self.next_start != self.start + self.limit:
+                raise ValueError("next_start must equal start + limit when has_more is true")
+        elif self.next_start is not None:
+            raise ValueError("next_start is only valid when has_more is true")
+        if self.duplicate_names != sorted(set(self.duplicate_names)):
+            raise ValueError("duplicate_names must be sorted and unique")
+        if self.blank_name_indices != sorted(set(self.blank_name_indices)):
+            raise ValueError("blank_name_indices must be sorted and unique")
+        if any(
+            index < self.start
+            or index >= self.start + self.limit
+            or index >= self.preset_count
+            for index in self.blank_name_indices
+        ):
+            raise ValueError("blank_name_indices must fall inside the requested page")
+        expected_duplicates = sorted(
+            {
+                row.name
+                for row in self.presets
+                if row.name
+                and sum(other.name == row.name for other in self.presets) > 1
+            }
+        )
+        if self.duplicate_names != expected_duplicates:
+            raise ValueError("duplicate_names does not match the preset page")
+
+        row_blank_indices = {
+            row.index for row in self.presets if row.name == ""
+        }
+        if not row_blank_indices.issubset(self.blank_name_indices):
+            raise ValueError(
+                "blank_name_indices must include every returned blank-name row"
+            )
+        if any(
+            index in rows_by_index and rows_by_index[index].name != ""
+            for index in self.blank_name_indices
+        ):
+            raise ValueError(
+                "blank_name_indices cannot identify a non-blank preset row"
+            )
+
+        current_rows = [row for row in self.presets if row.is_current]
+        if current_rows:
+            if (
+                self.current_preset_status != "stable"
+                or self.current_preset_name is None
+                or self.current_preset_index is None
+            ):
+                raise ValueError(
+                    "is_current requires a stable current name and index"
+                )
+            current_row = current_rows[0]
+            if (
+                current_row.index != self.current_preset_index
+                or current_row.name != self.current_preset_name
+            ):
+                raise ValueError(
+                    "is_current must identify the reported current preset"
+                )
+        elif (
+            self.current_preset_status == "stable"
+            and self.current_preset_index is not None
+            and self.current_preset_index in rows_by_index
+        ):
+            current_row = rows_by_index[self.current_preset_index]
+            if current_row.name != self.current_preset_name:
+                raise ValueError(
+                    "current_preset_index does not match the page row name"
+                )
+            raise ValueError(
+                "the page row at current_preset_index must be marked is_current"
+            )
+        return self
+
+
+class PluginCurrentPreset(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    plugin: TargetedPluginSummary
+    preset_count: int = Field(ge=0, le=MAX_PLUGIN_PRESET_COUNT)
+    current_preset_name: str | None = Field(
+        default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH
+    )
+    current_preset_index: int | None = Field(
+        default=None, ge=0, le=MAX_PLUGIN_PRESET_COUNT - 1
+    )
+    current_preset_status: PresetIdentityStatus
+    session_fingerprint: str | None = Field(
+        default=None, pattern=SESSION_FINGERPRINT_PATTERN
+    )
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def identity_fields_match(self) -> "PluginCurrentPreset":
+        PluginPresetState(
+            name=self.current_preset_name,
+            index=self.current_preset_index,
+            identity_status=self.current_preset_status,
+        )
+        return self
+
+    @property
+    def current(self) -> PluginPresetState:
+        return PluginPresetState(
+            name=self.current_preset_name,
+            index=self.current_preset_index,
+            identity_status=self.current_preset_status,
+        )
+
+
+class PluginPad(TrackBContract):
+    pad_index: int = Field(ge=0, le=MAX_PLUGIN_PAD_COUNT - 1)
+    semitone: int | None = Field(default=None, ge=0, le=127)
+    color: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
+    empty: bool | None = None
+    muted: bool | None = None
+    semitone_name: str | None = Field(
+        default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH
+    )
+
+
+class PluginPadMap(TrackBContract):
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    plugin: TargetedPluginSummary
+    pad_count: int = Field(ge=0, le=MAX_PLUGIN_PAD_COUNT)
+    pads: list[PluginPad] = Field(max_length=MAX_PLUGIN_PAD_COUNT)
+    complete: bool
+    session_fingerprint: str | None = Field(
+        default=None, pattern=SESSION_FINGERPRINT_PATTERN
+    )
+    project_dirty_flag: Literal[0, 1, 2] | None = None
+    observation_atomic: Literal[False] = False
+    warnings: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def pads_match_count(self) -> "PluginPadMap":
+        expected = list(range(len(self.pads)))
+        if [pad.pad_index for pad in self.pads] != expected:
+            raise ValueError("pad rows must be contiguous and ordered from zero")
+        if self.complete and len(self.pads) != self.pad_count:
+            raise ValueError("complete pad maps must contain every reported pad")
+        if len(self.pads) > self.pad_count:
+            raise ValueError("pad rows cannot exceed pad_count")
+        return self
+
+
+class ExpectedPluginPresetState(TrackBContract):
+    """Optional stale-read guard for a preset selection."""
+
+    name: str | None = Field(default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH)
+    index: int | None = Field(default=None, ge=0, le=MAX_PLUGIN_PRESET_COUNT - 1)
+
+    @model_validator(mode="after")
+    def require_one_preset_field(self) -> "ExpectedPluginPresetState":
+        if self.name is None and self.index is None:
+            raise ValueError("expected current preset needs name, index, or both")
+        return self
+
+
+class VerifiedPluginPresetSelection(TrackBVerifiedMutation):
+    bridge_command: Literal["plugin.select_preset"] = "plugin.select_preset"
+    target: PluginTarget
+    plugin: TargetedPluginSummary
+    requested_preset_name: str | None = Field(
+        default=None, max_length=MAX_PLUGIN_PRESET_NAME_LENGTH
+    )
+    requested_preset_index: int | None = Field(
+        default=None, ge=0, le=MAX_PLUGIN_PRESET_COUNT - 1
+    )
+    before: PluginPresetState
+    after: PluginPresetState
+    outcome: Literal["verified", "not_reached", "unknown"]
+    navigation_direction: Literal["none", "next", "prev", "fallback_next"]
+    navigation_steps: int = Field(ge=0, le=MAX_PRESET_NAVIGATION_STEPS)
+    max_navigation_steps: int = Field(ge=0, le=MAX_PRESET_NAVIGATION_STEPS)
+    settle_tick_limit: int = Field(ge=1, le=MAX_PRESET_SETTLE_TICKS)
+    target_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="after")
+    def selection_proof_is_truthful(self) -> "VerifiedPluginPresetSelection":
+        if self.requested_preset_name is None and self.requested_preset_index is None:
+            raise ValueError("preset selection needs a name, index, or both")
+        if self.outcome == "verified":
+            if not self.verified or self.after.identity_status != "stable":
+                raise ValueError("verified preset selection needs stable readback")
+            if (
+                self.requested_preset_name is not None
+                and self.after.name != self.requested_preset_name
+            ):
+                raise ValueError("verified preset name does not match the request")
+            if (
+                self.requested_preset_index is not None
+                and self.after.index != self.requested_preset_index
+            ):
+                raise ValueError("verified preset index does not match the request")
+        elif self.verified:
+            raise ValueError("unverified preset outcomes cannot set verified=true")
+        if self.navigation_steps > self.max_navigation_steps:
+            raise ValueError("navigation_steps cannot exceed max_navigation_steps")
+        if self.navigation_direction == "none" and self.navigation_steps != 0:
+            raise ValueError("navigation_direction='none' requires zero navigation steps")
+        return self
+
+
+class LoopStarterRerollDispatch(TrackBContract):
+    """One explicit Loop Starter reroll; identity is intentionally unverified."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    observed_at: datetime
+    bridge_command: Literal["channels.rerollLoopStarterLoop"] = (
+        "channels.rerollLoopStarterLoop"
+    )
+    channel_index: int = Field(ge=0)
+    index_scope: Literal["global"] = "global"
+    before_channel_fingerprint: str | None = Field(
+        default=None, pattern=SHA256_PATTERN
+    )
+    after_channel_fingerprint: str | None = Field(
+        default=None, pattern=SHA256_PATTERN
+    )
+    dispatched: bool
+    identity_verified: Literal[False] = False
+    verified: Literal[False] = False
+    verification_basis: Literal["dispatch_only_no_identity_readback"] = (
+        "dispatch_only_no_identity_readback"
+    )
+    undo_point_created: bool | None = None
+    project_saved: Literal[False] = False
+    session_fingerprint: str | None = Field(
+        default=None, pattern=SESSION_FINGERPRINT_PATTERN
+    )
+    session_precondition_applied: bool = False
+    expected_before_applied: bool = False
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -1332,6 +1705,12 @@ TrackBResult = (
     | TargetedPluginParameterPage
     | TargetedPluginParameterScan
     | TargetedLoadedPluginInventory
+    | PluginPresetCount
+    | PluginPresetPage
+    | PluginCurrentPreset
+    | PluginPadMap
+    | VerifiedPluginPresetSelection
+    | LoopStarterRerollDispatch
     | VerifiedTargetedPluginParameterWrite
     | VerifiedTargetedPluginDisplayWrite
     | VerifiedTargetedPluginOptionWrite

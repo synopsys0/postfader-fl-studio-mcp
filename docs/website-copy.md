@@ -33,9 +33,10 @@ documents instead of expanding the homepage.
 
 # Your AI can finally work inside FL Studio.
 
-Inspect your real project, diagnose mixes, control supported parameters on
-loaded plug-ins, build MIDI parts, organize arrangements, and make supported
-changes from Claude, Codex, Cursor, or another local MCP client.
+Inspect your real project, diagnose mixes, choose coherent sound palettes,
+control supported parameters on loaded plug-ins, build MIDI parts, organize
+arrangements, and make supported changes from Claude, Codex, Cursor, or
+another local MCP client.
 
 **Primary actions**
 
@@ -44,7 +45,7 @@ changes from Claude, Codex, Cursor, or another local MCP client.
 
 **Secondary action:** Explore what PostFader can do
 
-**Proof strip:** 99 tools · 8 live resources · Windows and macOS · Open source ·
+**Proof strip:** 111 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.
@@ -60,8 +61,9 @@ It gives your AI useful context from the project that is open now. Inspect the
 mixer and routing. Understand channels, patterns, Playlist tracks, undo/redo
 history position, steps, and loaded plug-ins. Diagnose exported audio. Control
 the session and supported plug-in parameters. Compose complete musical parts.
-Transform Piano Roll material. Prepare patterns and markers that make an
-arrangement easier to navigate.
+Choose a sound palette from the loaded instruments, preserving identity sounds
+while varying sections. Transform Piano Roll material. Prepare patterns and
+markers that make an arrangement easier to navigate.
 
 The result is one connected workflow across project understanding, mixing,
 plug-in control, composition, editing, arrangement, and audio analysis.
@@ -168,7 +170,10 @@ from supported operations for you to review before proceeding to application.
 - Channel Rack, pattern, Playlist track, undo/redo history, and step-sequence
   controls;
 - runtime plug-in parameter discovery and bounded scans; and
-- normalized, displayed-value, and named-option parameter controls.
+- normalized, displayed-value, and named-option parameter controls;
+- exact loaded-preset reads and later-tick verified preset navigation; and
+- Sound Selection's role-based palette, continuity, and explicit drum-map
+  workflow.
 
 ### What it does
 
@@ -521,6 +526,7 @@ guaranteed rollback, or a guaranteed undo point.
 · [Security policy](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/SECURITY.md)
 · [FL Studio API limitations](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/fl-constraints.md)
 · [Tool contracts](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/tool-contracts.md)
+· [Sound Selection](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/sound-selection.md)
 
 ---
 

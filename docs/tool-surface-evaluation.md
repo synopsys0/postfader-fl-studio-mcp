@@ -1,6 +1,6 @@
 # Tool-surface evaluation
 
-PostFader v0.20 exposes 99 MCP tools and 8 live resources. This document is a
+PostFader v0.20 exposes 111 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,
 profile rollout, telemetry, or a silent change to the default surface.
@@ -13,14 +13,15 @@ count from a model transcript alone.
 
 ## Current surface to evaluate
 
-The current contract groups the 99 tools as follows:
+The current contract groups the 111 tools as follows:
 
 | Surface | Count | What it represents | Typical evidence source |
 | --- | ---: | --- | --- |
-| Read-only tools | 42 | Project, transport, mixer, plug-in, Plugin Atlas, Channel Rack, pattern, Playlist, history, audio, and non-mutating workflow observations | SDK listing, fake FL, or live read acceptance |
-| Directly guarded FL setters and bounded mutating workflows | 49 | Narrow mixer, plug-in, transport, Channel Rack, pattern, Playlist, sequencer, history, batch, Production Run, Piano Roll, arrangement, automation, and local MIDI mutations | Contract tests, fake FL, then disposable live write acceptance |
-| Non-destructive workflow/dispatch tools | 7 | Note audition, peak watches, plans, and other process-local preparation or dispatch surfaces that do not themselves apply a project mutation | Deterministic workflow tests and response evidence |
-| Session-mode control | 1 | `fl_set_write_mode`, the session-only capability transition | Read-only startup and post-transition handshake tests |
+| Read-only tools | 50 | Project, transport, mixer, plug-in, preset, pad-map, Plugin Atlas, Channel Rack, pattern, Playlist, history, audio, Sound Selection, and non-mutating workflow observations | SDK listing, fake FL, or live read acceptance |
+| Directly guarded FL setters | 39 | Narrow mixer, plug-in, transport, Channel Rack, pattern, Playlist, sequencer, and local MIDI mutations with independently checkable preconditions | Contract tests, fake FL, then disposable live write acceptance |
+| Specialized mutating workflows | 12 | Preset selection, batch, Production Run, Sound Selection application, Piano Roll, arrangement, and automation workflows whose verification or restore boundary needs dedicated evidence | Deterministic workflow tests and focused disposable-project acceptance |
+| Non-destructive workflow/dispatch tools | 8 | Note audition, peak watches, plans, explicit Sound Selection feedback, and other process-local preparation or dispatch surfaces that do not delete data or apply a persistent project mutation | Deterministic workflow tests and response evidence |
+| Idempotent destructive controls | 2 | `fl_set_write_mode`, the session write-capability transition, and `sound_selection_history_reset`, which deletes only confirmed local history | Capability-handshake and explicit local-history reset tests |
 
 The category labels are evaluation aids, not a second API taxonomy. Some tools
 have a nuanced evidence boundary: an arrangement marker or automation receipt
@@ -176,7 +177,7 @@ does not support resources, or failed to start the server. Attach the output of
 an explicit tool-listing check only after removing paths, environment values,
 and private metadata.
 
-The expected server values are 99 tools and 8 resources for v0.20. A client
+The expected server values are 111 tools and 8 resources for v0.20. A client
 showing fewer is not evidence that the repository should silently change its
 default surface. Escalate client limits or MCP SDK compatibility separately.
 
@@ -311,17 +312,16 @@ reports across more than one MCP client/model, a measurable discovery or
 selection problem, a reviewed mapping that does not duplicate or contradict
 tool contracts, and hermetic tests for each profile's exact list and safety
 annotations. Do not add telemetry to gather that evidence. Until those inputs
-exist, keep the v0.20 default at 99 tools and 8 resources and improve guidance,
+exist, keep the v0.20 default at 111 tools and 8 resources and improve guidance,
 schemas, or client-specific documentation instead.
 
 ## What this guide does not claim
 
 - It does not claim that every model will choose the ideal tool.
-- It does not claim that a client exposing all 99 tools can fit them into every
+- It does not claim that a client exposing all 111 tools can fit them into every
   model context window.
 - It does not claim that tool selection proves a live FL Studio mutation,
   audible quality, undo point, rollback, or project save.
 - It does not claim that a report from one client generalizes to all clients,
   models, plug-ins, FL Studio builds, or virtual MIDI providers.
-- It does not add a hosted service, telemetry, automatic analytics, or a new
-  major capability area.
+- It does not add a hosted service, telemetry, or automatic analytics.

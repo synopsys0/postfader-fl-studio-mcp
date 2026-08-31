@@ -2,10 +2,15 @@
 
 
 class Plugin:
-    def __init__(self, name, params):
+    def __init__(self, name, params, presets=None, pads=None):
         self.name = name
         self.param_names = [p for p, _ in params]
         self.values = [v for _, v in params]
+        self.presets = list(
+            ["Preset %d" % i for i in range(12)] if presets is None else presets
+        )
+        self.current_preset = 0
+        self.pads = list(pads or [])
 
 
 class Track:
@@ -44,6 +49,10 @@ class Track:
 class Channel:
     def __init__(self, name, target_fx=0):
         self.name = name
+        self.generator_plugin = Plugin(
+            name,
+            [("Volume", 0.8), ("Pan", 0.5)],
+        )
         self.volume = 0.78
         self.pan = 0.0
         self.pitch = 0.0

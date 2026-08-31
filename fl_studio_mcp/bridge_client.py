@@ -169,6 +169,9 @@ IDEMPOTENT_READ_COMMANDS = frozenset({
     "mixer.track",
     "plugin.params",
     "plugin.preset_count",
+    "plugin.presets",
+    "plugin.current_preset",
+    "plugin.pad_map",
     "plugin.scan_params",
     "channels.list",
     "sequencer.get",
@@ -1293,6 +1296,18 @@ class BridgeClient:
             if value is not None:
                 args[key] = value
         return self.call("plugin.scan_params", **args)
+
+    def list_plugin_presets(self, **args) -> dict:
+        """Return one bounded, replay-safe preset page."""
+        return self.call("plugin.presets", **args)
+
+    def get_plugin_current_preset(self, **args) -> dict:
+        """Return replay-safe current preset identity."""
+        return self.call("plugin.current_preset", **args)
+
+    def inspect_plugin_pad_map(self, **args) -> dict:
+        """Return replay-safe generic pad-map observations."""
+        return self.call("plugin.pad_map", **args)
 
     # -- lean verified writes -------------------------------------------
     #

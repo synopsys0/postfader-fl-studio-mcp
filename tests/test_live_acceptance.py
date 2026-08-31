@@ -572,7 +572,7 @@ class WriteAcceptanceTests(unittest.TestCase):
         self.assertNotIn("fl_set_write_mode", self.surface.persistent_write_tools)
         self.assertEqual(
             self.surface.session_control_tools,
-            ("fl_set_write_mode",),
+            ("fl_set_write_mode", "sound_selection_history_reset"),
         )
 
     def test_required_confirmations_refuse_before_preflight_or_writes(self):

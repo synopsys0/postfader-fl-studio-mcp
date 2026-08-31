@@ -35,10 +35,22 @@ ATLAS_DATA_FILES = {
     path.relative_to(ROOT).as_posix()
     for path in ATLAS_DATA_ROOT.rglob("*.json")
 }
+SOUND_SELECTION_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "sound_selection"
+SOUND_SELECTION_DATA_ROOT = SOUND_SELECTION_PACKAGE_ROOT / "data"
+SOUND_SELECTION_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.py")
+}
+SOUND_SELECTION_DATA_FILES = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_DATA_ROOT.rglob("*.json")
+}
 RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
-} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES
+} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES
+EXPECTED_TOOL_COUNT = 111
+EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
     "postfader = fl_studio_mcp.cli:main",
@@ -68,6 +80,7 @@ SDIST_REQUIRED_SUFFIXES = (
     "/scripts/launch_fl_studio.ps1",
     "/scripts/generate_mcp_config.py",
     "/scripts/live_read_acceptance.py",
+    "/scripts/live_sound_selection_acceptance.py",
     "/scripts/live_write_acceptance.py",
     "/scripts/live_note_acceptance.py",
     "/scripts/verify_distribution.py",
@@ -134,6 +147,11 @@ def inspect_wheel(wheel: Path, version: str) -> list[str]:
             for required in sorted(ATLAS_DATA_FILES):
                 if required not in names:
                     failures.append("wheel is missing Atlas data %s" % required)
+            for required in sorted(SOUND_SELECTION_DATA_FILES):
+                if required not in names:
+                    failures.append(
+                        "wheel is missing Sound Selection data %s" % required
+                    )
 
             bridge_name = "fl_studio_mcp/_bridge/device_UniversalBridge.py"
             if bridge_name in names and any(
@@ -163,7 +181,12 @@ def inspect_sdist(sdist: Path) -> list[str]:
             for suffix in SDIST_REQUIRED_SUFFIXES:
                 if not any(name.endswith(suffix) for name in names):
                     failures.append("sdist is missing %s" % suffix.lstrip("/"))
-            for required in sorted(ATLAS_RUNTIME_MODULES | ATLAS_DATA_FILES):
+            for required in sorted(
+                ATLAS_RUNTIME_MODULES
+                | ATLAS_DATA_FILES
+                | SOUND_SELECTION_RUNTIME_MODULES
+                | SOUND_SELECTION_DATA_FILES
+            ):
                 suffix = "/" + required
                 if not any(name.endswith(suffix) for name in names):
                     failures.append("sdist is missing %s" % required)
@@ -209,9 +232,19 @@ def version_failures(version: str) -> list[str]:
         namespace,
     )
     versions.append(namespace.get("__version__"))
+    failures: list[str] = []
     if any(value != version for value in versions):
-        return ["public version declarations disagree: %r" % versions]
-    return []
+        failures.append("public version declarations disagree: %r" % versions)
+    tools = manifest.get("tools")
+    if not isinstance(tools, list) or len(tools) != EXPECTED_TOOL_COUNT:
+        failures.append(
+            "manifest tool count is not %d: %s"
+            % (
+                EXPECTED_TOOL_COUNT,
+                len(tools) if isinstance(tools, list) else "invalid",
+            )
+        )
+    return failures
 
 
 def main(argv=None) -> int:

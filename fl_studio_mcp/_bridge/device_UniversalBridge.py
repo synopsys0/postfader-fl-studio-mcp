@@ -76,6 +76,17 @@ PARAMS_PER_TICK = 64
 CHANNELS_PER_TICK = 8
 PATTERNS_PER_TICK = 64
 PLAYLIST_TRACKS_PER_TICK = 32
+# Preset names are a potentially large plug-in-owned list. Keep every
+# callback bounded and return a page rather than retaining the full list on
+# the wire. Selection uses the same ceiling when it must prove a name/index.
+PRESETS_PER_TICK = 32
+MAX_PRESET_PAGE = 256
+MAX_PRESET_ENUMERATION = 4096
+MAX_PLUGIN_PRESET_NAME_LENGTH = 256
+PADS_PER_TICK = 32
+MAX_PAD_COUNT = 512
+MAX_PRESET_NAVIGATION_STEPS = 256
+MAX_PRESET_SETTLE_TICKS = 8
 MAX_PATTERN_NUMBER = 999
 MAX_PATTERN_NAME_LENGTH = 64
 MAX_PATTERN_LENGTH_BEATS = 4096
@@ -242,6 +253,9 @@ READ_ONLY_COMMANDS = frozenset({
     "mixer.track",
     "plugin.params",
     "plugin.preset_count",
+    "plugin.presets",
+    "plugin.current_preset",
+    "plugin.pad_map",
     # A read, like plugin.params: it walks the same indices with the same
     # padding rule and writes nothing.
     "plugin.scan_params",
@@ -271,6 +285,7 @@ LEAN_WRITE_COMMANDS = frozenset({
     "plugin.set_param",
     "plugin.set_param_display",
     "plugin.set_param_option",
+    "plugin.select_preset",
     "transport.set_playing",
     "transport.stop",
     "transport.set_song_position",
@@ -298,6 +313,7 @@ LEAN_WRITE_COMMANDS = frozenset({
     "channel.route_to_mixer",
     "sequencer.set",
     "channel.trigger_note",
+    "channels.rerollLoopStarterLoop",
 })
 
 MAX_PENDING_JOBS = 32
@@ -466,21 +482,42 @@ def _effect_slot_index(value):
 def _plugin_summary(track, slot, use_global_index=False):
     if not _safe(lambda: plugins.isValid(track, slot, use_global_index), False):
         return None
+    name = _safe(
+        lambda: plugins.getPluginName(track, slot, False, use_global_index), ""
+    ) or ""
+    user_name = _safe(
+        lambda: plugins.getPluginName(track, slot, True, use_global_index), ""
+    ) or ""
+    param_count = _safe(
+        lambda: plugins.getParamCount(track, slot, use_global_index), 0
+    )
+    target = {
+        "target_kind": (
+            "channel_generator" if use_global_index else "mixer_effect"
+        ),
+        "slot": slot,
+        "use_global_index": bool(use_global_index),
+    }
+    if use_global_index:
+        target["channel"] = track
+        target["index_scope"] = "global"
+    else:
+        target["track"] = track
     return {
         "slot": slot,
-        "name": _safe(
-            lambda: plugins.getPluginName(track, slot, False, use_global_index), ""
-        ),
-        "user_name": _safe(
-            lambda: plugins.getPluginName(track, slot, True, use_global_index), ""
-        ),
-        "param_count": _safe(
-            lambda: plugins.getParamCount(track, slot, use_global_index), 0
-        ),
+        "name": name,
+        "user_name": user_name,
+        "param_count": param_count,
         "mix_level": None if use_global_index else _safe(
             lambda: mixer.getPluginMixLevel(track, slot), None
         ),
         "use_global_index": bool(use_global_index),
+        # The inventory already read the live product identity above. Expose
+        # the same observation-scoped digest used by the target-aware preset
+        # commands so an inventory row can safely seed a later write guard.
+        "target_fingerprint": _plugin_target_fingerprint(
+            target, name, user_name, param_count
+        ),
     }
 
 
@@ -1082,6 +1119,91 @@ def _plugin_target_report(target):
     return report
 
 
+def _plugin_name_at(
+    index, slot, use_global_index, *, current=False, param_index=0, flag=None
+):
+    """Read one plug-in-owned name without turning unsupported into a blank."""
+    if flag is None:
+        flag = getattr(midi, "FPN_Preset", 6)
+    if current:
+        param_index = getattr(midi, "GPN_GetCurrentPreset", -1)
+    try:
+        value = plugins.getName(
+            index,
+            slot,
+            flag,
+            param_index,
+            use_global_index,
+        )
+    except Exception:
+        return None, False
+    if value is None:
+        return None, False
+    if not isinstance(value, str) or len(value) > MAX_PLUGIN_PRESET_NAME_LENGTH:
+        return None, False
+    return value, True
+
+
+def _plugin_preset_count(index, slot, use_global_index):
+    count = _strict_integer(
+        plugins.getPresetCount(index, slot, use_global_index),
+        "plug-in preset count",
+    )
+    if count < 0 or count > 1000000:
+        raise ValueError("FL reported a plug-in preset count outside 0..1000000")
+    return count
+
+
+def _plugin_observation(target):
+    """Return the live product identity used by preset target guards."""
+    index = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    name = _safe(
+        lambda: plugins.getPluginName(index, slot, False, use_global), ""
+    ) or ""
+    user_name = _safe(
+        lambda: plugins.getPluginName(index, slot, True, use_global), ""
+    ) or ""
+    param_count = _safe(
+        lambda: plugins.getParamCount(index, slot, use_global), 0
+    )
+    mix_level = None if use_global else _safe(
+        lambda: mixer.getPluginMixLevel(index, slot), None
+    )
+    return {
+        **_plugin_target_report(target),
+        "plugin": name,
+        "plugin_user_name": user_name,
+        "param_count": param_count,
+        "mix_level": mix_level,
+        "target_fingerprint": _plugin_target_fingerprint(
+            target, name, user_name, param_count
+        ),
+    }
+
+
+def _current_preset_state(index, slot, use_global_index):
+    name, supported = _plugin_name_at(
+        index, slot, use_global_index, current=True
+    )
+    if not supported:
+        return {"name": None, "index": None, "identity_status": "unsupported"}
+    if name == "":
+        return {"name": "", "index": None, "identity_status": "blank"}
+    return {"name": name, "index": None, "identity_status": "stable"}
+
+
+def _plugin_target_fingerprint(target, name, user_name, param_count):
+    """Hash address plus live product identity, never the mutable preset."""
+    return _sha256_json({
+        "target": _plugin_target_report(target),
+        "plugin": name,
+        "plugin_user_name": user_name,
+        "param_count": param_count,
+    })
+
+
 def cmd_plugin_params(a):
     target = _plugin_target(a)
     track = target["index"]
@@ -1148,28 +1270,897 @@ def cmd_plugin_preset_count(a):
     use_global = target["use_global_index"]
     if not _safe(lambda: plugins.isValid(index, slot, use_global), False):
         raise ValueError("no plugin at requested %s target" % target["target_kind"])
-    count = _strict_integer(
-        plugins.getPresetCount(index, slot, use_global), "plug-in preset count"
-    )
-    if count < 0 or count > 1000000:
-        raise ValueError("FL reported a plug-in preset count outside 0..1000000")
+    count = _plugin_preset_count(index, slot, use_global)
+    observation = _plugin_observation(target)
     return {
         "command": "plugin.preset_count",
-        **_plugin_target_report(target),
-        "plugin": _safe(
-            lambda: plugins.getPluginName(index, slot, False, use_global), ""
-        ),
-        "plugin_user_name": _safe(
-            lambda: plugins.getPluginName(index, slot, True, use_global), ""
-        ),
-        "param_count": _safe(
-            lambda: plugins.getParamCount(index, slot, use_global), 0
-        ),
-        "mix_level": None if use_global else _safe(
-            lambda: mixer.getPluginMixLevel(index, slot), None
-        ),
+        **observation,
         "preset_count": count,
         "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+    }
+
+
+def cmd_plugin_presets(a):
+    """Return a bounded, deterministic page of plug-in preset names."""
+    allowed = {
+        "target_kind", "track", "channel", "slot", "use_global_index",
+        "index_scope", "allow_master", "start", "limit",
+        "include_current", "include_empty_names",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "plugin.presets received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    target = _plugin_target(a)
+    index = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(index, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    count = _plugin_preset_count(index, slot, use_global)
+    start = _strict_integer(a.get("start", 0), "preset page start")
+    limit = _strict_integer(a.get("limit", 64), "preset page limit")
+    if start < 0 or start > count:
+        raise ValueError("preset page start must be within 0..%d" % count)
+    if limit < 1 or limit > MAX_PRESET_PAGE:
+        raise ValueError("preset page limit must be within 1..%d" % MAX_PRESET_PAGE)
+    include_current = a.get("include_current", True)
+    include_empty = a.get("include_empty_names", False)
+    if type(include_current) is not bool:
+        raise ValueError("include_current must be true or false")
+    if type(include_empty) is not bool:
+        raise ValueError("include_empty_names must be true or false")
+
+    observation = _plugin_observation(target)
+    current = {"name": None, "index": None, "identity_status": "not_requested"}
+    warnings = []
+    if include_current:
+        current = _current_preset_state(index, slot, use_global)
+        if current["identity_status"] == "unsupported":
+            warnings.append("FL did not expose a current preset name getter")
+
+    # A page never emits a full preset catalog. For modest catalogs we can
+    # nevertheless resolve the current index without making it part of the
+    # response; larger catalogs remain explicitly unresolved.
+    current_matches = []
+    all_names = {}
+    truncated = False
+    truncated_by = None
+    if include_current and current["identity_status"] == "stable":
+        if count <= MAX_PRESET_ENUMERATION:
+            enumeration_complete = True
+            for preset_index in range(count):
+                name, supported = _plugin_name_at(
+                    index, slot, use_global, param_index=preset_index
+                )
+                if not supported:
+                    truncated = True
+                    truncated_by = "unsupported"
+                    enumeration_complete = False
+                    warnings.append(
+                        "FL stopped preset enumeration before resolving the current index"
+                    )
+                    break
+                all_names[preset_index] = name
+                if name == current["name"]:
+                    current_matches.append(preset_index)
+                if (preset_index + 1) % PRESETS_PER_TICK == 0 and preset_index + 1 < count:
+                    yield
+            if current["identity_status"] == "stable" and enumeration_complete:
+                if len(current_matches) == 1:
+                    current["index"] = current_matches[0]
+                elif len(current_matches) > 1:
+                    current["identity_status"] = "ambiguous"
+                    current["index"] = None
+                    warnings.append("current preset name is duplicated")
+                else:
+                    current["identity_status"] = "unresolved"
+                    current["index"] = None
+                    warnings.append("current preset name was not found in the preset list")
+        else:
+            truncated = True
+            truncated_by = "max_enumeration"
+            warnings.append(
+                "preset catalog exceeds the bounded identity-resolution scan; current name is stable but index is unknown"
+            )
+
+    page_end = min(count, start + limit)
+    rows = []
+    blank_indices = []
+    page_names = {}
+    page_examined = 0
+    if start < page_end:
+        # Reuse the bounded identity scan where possible. Otherwise only the
+        # requested page is touched, preserving deterministic pagination.
+        for preset_index in range(start, page_end):
+            if preset_index in all_names:
+                name = all_names[preset_index]
+                supported = True
+            else:
+                name, supported = _plugin_name_at(
+                    index, slot, use_global, param_index=preset_index
+                )
+            page_examined += 1
+            if not supported:
+                truncated = True
+                truncated_by = "unsupported"
+                warnings.append("FL did not expose preset names for the requested page")
+                break
+            page_names[preset_index] = name
+            if name == "":
+                blank_indices.append(preset_index)
+                if include_empty:
+                    rows.append({"index": preset_index, "name": name})
+            else:
+                rows.append({"index": preset_index, "name": name})
+            if page_examined % PRESETS_PER_TICK == 0 and preset_index + 1 < page_end:
+                yield
+
+    duplicate_names = sorted({
+        name for name in page_names.values()
+        if name and list(page_names.values()).count(name) > 1
+    })
+    if duplicate_names:
+        warnings.append("the requested preset page contains duplicate names")
+    for row in rows:
+        row["is_current"] = (
+            current.get("identity_status") == "stable"
+            and current.get("index") == row["index"]
+        )
+    page_complete = not truncated and page_end == count
+    has_more = start + limit < count
+    return {
+        "command": "plugin.presets",
+        **observation,
+        "preset_count": count,
+        "start": start,
+        "limit": limit,
+        "scanned_count": (
+            count if all_names and not truncated else page_examined
+        ),
+        "returned_count": len(rows),
+        "has_more": has_more,
+        "next_start": start + limit if has_more else None,
+        "presets": rows,
+        "current_preset_name": current.get("name"),
+        "current_preset_index": current.get("index"),
+        "current_preset_status": current.get("identity_status"),
+        "duplicate_names": duplicate_names,
+        "blank_name_indices": blank_indices,
+        "partial": not page_complete,
+        "truncated": truncated,
+        "truncated_by": truncated_by,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+        "warnings": warnings,
+    }
+
+
+def cmd_plugin_current_preset(a):
+    """Read current preset identity, resolving an index only when unique."""
+    page = yield from cmd_plugin_presets({
+        **a,
+        "start": 0,
+        "limit": MAX_PRESET_PAGE,
+        "include_current": True,
+        "include_empty_names": True,
+    })
+    return {
+        "command": "plugin.current_preset",
+        "target_kind": page["target_kind"],
+        "track": page.get("track"),
+        "channel": page.get("channel"),
+        "slot": page["slot"],
+        "use_global_index": page["use_global_index"],
+        "index_scope": page.get("index_scope"),
+        "plugin": page["plugin"],
+        "plugin_user_name": page["plugin_user_name"],
+        "param_count": page["param_count"],
+        "mix_level": page.get("mix_level"),
+        "preset_count": page["preset_count"],
+        "current_preset_name": page["current_preset_name"],
+        "current_preset_index": page["current_preset_index"],
+        "current_preset_status": page["current_preset_status"],
+        "target_fingerprint": page["target_fingerprint"],
+        "session_fingerprint": page["session_fingerprint"],
+        "unsaved_changes": page.get("unsaved_changes"),
+        "warnings": page.get("warnings", []),
+    }
+
+
+def cmd_plugin_pad_map(a):
+    """Read a generic plug-in pad map with explicit unsupported values."""
+    allowed = {
+        "target_kind", "track", "channel", "slot", "use_global_index",
+        "index_scope", "allow_master",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "plugin.pad_map received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    target = _plugin_target(a)
+    index = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(index, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    observation = _plugin_observation(target)
+    count_marker = object()
+    try:
+        raw_count = plugins.getPadInfo(
+            index,
+            slot,
+            getattr(midi, "PAD_Count", 0),
+            -1,
+            use_global,
+        )
+    except Exception:
+        raw_count = count_marker
+    if raw_count is count_marker:
+        return {
+            "command": "plugin.pad_map",
+            **observation,
+            "pad_count": 0,
+            "pads": [],
+            "complete": False,
+            "session_fingerprint": SESSION_FINGERPRINT,
+            "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+            "warnings": ["FL did not expose the pad-map API for this plug-in"],
+        }
+    count = _strict_integer(raw_count, "pad count")
+    if count < 0 or count > MAX_PAD_COUNT:
+        raise ValueError("FL reported a pad count outside 0..%d" % MAX_PAD_COUNT)
+    pads = []
+    warnings = []
+    for pad_index in range(count):
+        def pad_value(option, default=None):
+            try:
+                return plugins.getPadInfo(
+                    index, slot, option, pad_index, use_global
+                )
+            except Exception:
+                return default
+
+        semitone = pad_value(getattr(midi, "PAD_Semitone", 1), None)
+        if isinstance(semitone, bool) or not isinstance(semitone, int) or not 0 <= semitone <= 127:
+            semitone = None
+        color = _fl_color_word(pad_value(getattr(midi, "PAD_Color", 2), None))
+        empty = _fl_bool(pad_value(getattr(midi, "PAD_Empty", 3), None))
+        muted = _fl_bool(pad_value(getattr(midi, "PAD_Muted", 4), None))
+        semitone_name = None
+        if semitone is not None:
+            semitone_name, supported = _plugin_name_at(
+                index,
+                slot,
+                use_global,
+                param_index=semitone,
+                flag=getattr(midi, "FPN_Semitone", 2),
+            )
+            if not supported:
+                semitone_name = None
+        pads.append({
+            "pad_index": pad_index,
+            "semitone": semitone,
+            "color": color,
+            "empty": empty,
+            "muted": muted,
+            "semitone_name": semitone_name,
+        })
+        if (pad_index + 1) % PADS_PER_TICK == 0 and pad_index + 1 < count:
+            yield
+    if any(pad["semitone_name"] is None for pad in pads if pad["semitone"] is not None):
+        warnings.append("FL did not report semitone names for every mapped pad")
+    return {
+        "command": "plugin.pad_map",
+        **observation,
+        "pad_count": count,
+        "pads": pads,
+        "complete": True,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "unsaved_changes": _safe(lambda: general.getChangedFlag(), None),
+        "warnings": warnings,
+    }
+
+
+def _preset_selection_request(a):
+    """Normalize selection aliases while keeping the bridge input bounded."""
+    name = a.get("preset_name", a.get("name"))
+    index = a.get("preset_index", a.get("index"))
+    if name is not None:
+        if not isinstance(name, str) or not name:
+            raise ValueError("preset_name must be a non-empty exact text value")
+        if len(name) > MAX_PLUGIN_PRESET_NAME_LENGTH:
+            raise ValueError("preset_name is too long")
+    if index is not None:
+        index = _strict_integer(index, "preset_index")
+        if index < 0:
+            raise ValueError("preset_index must be non-negative")
+    if name is None and index is None:
+        raise ValueError("preset_name or preset_index is required")
+    if "name" in a and "preset_name" in a and a["name"] != a["preset_name"]:
+        raise ValueError("name and preset_name disagree")
+    if "index" in a and "preset_index" in a and a["index"] != a["preset_index"]:
+        raise ValueError("index and preset_index disagree")
+    return name, index
+
+
+def _preset_expected_current(a):
+    expected = a.get("expected_current", a.get("expected_before"))
+    if expected is not None and not isinstance(expected, dict):
+        raise ValueError("expected_current must be an object")
+    expected = {} if expected is None else expected
+    allowed = {"name", "index", "current_preset_name", "current_preset_index"}
+    unknown = set(expected) - allowed
+    if unknown:
+        raise ValueError(
+            "expected_current has unsupported fields: %s"
+            % ", ".join(sorted(unknown))
+        )
+    name = expected.get("name", expected.get("current_preset_name"))
+    index = expected.get("index", expected.get("current_preset_index"))
+    if name is not None and (not isinstance(name, str) or len(name) > MAX_PLUGIN_PRESET_NAME_LENGTH):
+        raise ValueError("expected current preset name must be text")
+    if index is not None:
+        index = _strict_integer(index, "expected current preset index")
+        if index < 0:
+            raise ValueError("expected current preset index must be non-negative")
+    return name, index
+
+
+def cmd_plugin_select_preset(a):
+    """Select one exact preset using a bounded later-tick navigation loop."""
+    allowed = {
+        "target_kind", "track", "channel", "slot", "use_global_index",
+        "index_scope", "allow_master", "preset_name", "preset_index", "name",
+        "index", "expected_current", "expected_before", "target_fingerprint",
+        "max_navigation_steps", "settle_tick_limit", "session_fingerprint",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "plugin.select_preset received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    target = _plugin_target(a, writing=True)
+    index = target["index"]
+    slot = target["slot"]
+    use_global = target["use_global_index"]
+    if not _safe(lambda: plugins.isValid(index, slot, use_global), False):
+        raise ValueError("no plugin at requested %s target" % target["target_kind"])
+    _check_session_precondition(a)
+    requested_name, requested_index = _preset_selection_request(a)
+    name_was_requested = requested_name is not None
+    expected_name, expected_index = _preset_expected_current(a)
+    max_steps = _strict_integer(
+        a.get("max_navigation_steps", 64), "max_navigation_steps"
+    )
+    settle_ticks = _strict_integer(
+        a.get("settle_tick_limit", 1), "settle_tick_limit"
+    )
+    if max_steps < 0 or max_steps > MAX_PRESET_NAVIGATION_STEPS:
+        raise ValueError(
+            "max_navigation_steps must be within 0..%d"
+            % MAX_PRESET_NAVIGATION_STEPS
+        )
+    if settle_ticks < 1 or settle_ticks > MAX_PRESET_SETTLE_TICKS:
+        raise ValueError(
+            "settle_tick_limit must be within 1..%d" % MAX_PRESET_SETTLE_TICKS
+        )
+    before_observation = _plugin_observation(target)
+    wanted_target_fp = a.get("target_fingerprint")
+    if wanted_target_fp is not None:
+        if (
+            not isinstance(wanted_target_fp, str)
+            or len(wanted_target_fp) != 64
+            or any(c not in "0123456789abcdef" for c in wanted_target_fp)
+        ):
+            raise ValueError("target_fingerprint must be 64 lowercase hex characters")
+        if wanted_target_fp != before_observation["target_fingerprint"]:
+            raise ValueError(
+                "target fingerprint precondition failed; re-read the plug-in target"
+            )
+
+    count = _plugin_preset_count(index, slot, use_global)
+    if count < 1:
+        raise ValueError("plug-in exposes no selectable presets")
+    before = _current_preset_state(index, slot, use_global)
+    if before["identity_status"] != "stable":
+        raise ValueError(
+            "plug-in does not expose a stable current preset identity; selection refused"
+        )
+    if expected_name is not None and before["name"] != expected_name:
+        raise ValueError("expected current preset name precondition failed")
+
+    # Resolve the requested exact name/index. Name requests require a complete
+    # bounded scan to reject duplicate names before any dispatch. Index requests
+    # need only read the addressed row, but still require a current index map so
+    # the after-readback can prove the exact index. If FL refuses indexed name
+    # reads, a name-only request may use the bounded fallback below; it proves
+    # uniqueness by observing one complete reported-name cycle rather than by
+    # guessing from the first matching readback.
+    names = {}
+    matches = []
+    fallback_mode = False
+    enumeration_warning = None
+    if requested_name is not None and count > MAX_PRESET_ENUMERATION and requested_index is None:
+        raise ValueError(
+            "preset catalog exceeds the bounded exact-name resolution limit"
+        )
+    if requested_name is not None or requested_index is not None:
+        if requested_index is not None:
+            if requested_index >= count:
+                raise ValueError("preset_index is outside the reported preset count")
+            target_name, supported = _plugin_name_at(
+                index, slot, use_global, param_index=requested_index
+            )
+            if not supported or not target_name:
+                raise ValueError("requested preset index has no stable name")
+            names[requested_index] = target_name
+            if requested_name is not None and target_name != requested_name:
+                raise ValueError("preset_name and preset_index identify different presets")
+            requested_name = target_name
+        if requested_name is not None and name_was_requested and requested_index is None:
+            for preset_index in range(count):
+                if preset_index in names:
+                    name = names[preset_index]
+                    supported = True
+                else:
+                    name, supported = _plugin_name_at(
+                        index, slot, use_global, param_index=preset_index
+                    )
+                    if supported:
+                        names[preset_index] = name
+                if not supported:
+                    if requested_index is not None:
+                        raise ValueError("FL did not expose a stable exact preset name")
+                    fallback_mode = True
+                    enumeration_warning = (
+                        "FL did not expose indexed preset names; using a bounded "
+                        "current-name cycle for exact-name verification"
+                    )
+                    break
+                if name == requested_name:
+                    matches.append(preset_index)
+                if (preset_index + 1) % PRESETS_PER_TICK == 0 and preset_index + 1 < count:
+                    yield
+            if not fallback_mode and len(matches) != 1:
+                raise ValueError(
+                    "requested preset name is ambiguous or absent; provide an exact index"
+                )
+            if not fallback_mode and requested_index is not None and matches[0] != requested_index:
+                raise ValueError("requested preset index does not resolve to the requested name")
+            if not fallback_mode:
+                requested_index = matches[0]
+
+    # Resolve the current index where possible. A missing map is safe for a
+    # unique-name fallback, but not for an index request.
+    current_matches = []
+    if not fallback_mode and count <= MAX_PRESET_ENUMERATION:
+        for preset_index in range(count):
+            if preset_index in names:
+                name = names[preset_index]
+                supported = True
+            else:
+                name, supported = _plugin_name_at(
+                    index, slot, use_global, param_index=preset_index
+                )
+                if supported:
+                    names[preset_index] = name
+            if not supported:
+                break
+            if name == before["name"]:
+                current_matches.append(preset_index)
+            if (preset_index + 1) % PRESETS_PER_TICK == 0 and preset_index + 1 < count:
+                yield
+    if len(current_matches) == 1:
+        before["index"] = current_matches[0]
+    elif requested_index is not None:
+        raise ValueError("current preset index could not be resolved unambiguously")
+
+    if expected_index is not None and before.get("index") != expected_index:
+        raise ValueError("expected current preset index precondition failed")
+
+    if requested_name is None or requested_name == "":
+        raise ValueError("requested preset has no stable exact name")
+    if not fallback_mode and before.get("name") == requested_name and (
+        requested_index is None or before.get("index") == requested_index
+    ):
+        return {
+            "command": "plugin.select_preset",
+            **before_observation,
+            "preset_count": count,
+            "requested_preset_name": requested_name,
+            "requested_preset_index": requested_index,
+            "before": before,
+            "after": dict(before),
+            "outcome": "verified",
+            "verified": True,
+            "navigation_direction": "none",
+            "navigation_steps": 0,
+            "max_navigation_steps": max_steps,
+            "settle_tick_limit": settle_ticks,
+            "undo_point_created": False,
+            "session_fingerprint": SESSION_FINGERPRINT,
+            "session_precondition_applied": a.get("session_fingerprint") is not None,
+            "expected_before_applied": expected_name is not None or expected_index is not None,
+            "project_saved": False,
+            "warnings": [],
+        }
+
+    direction = "next"
+    planned_steps = None
+    if before.get("index") is not None and requested_index is not None:
+        current_index = before["index"]
+        forward = (requested_index - current_index) % count
+        backward = (current_index - requested_index) % count
+        if forward <= backward:
+            direction = "next"
+            planned_steps = forward
+        else:
+            direction = "prev"
+            planned_steps = backward
+    elif fallback_mode:
+        direction = "fallback_next"
+        planned_steps = max_steps
+    else:
+        # This is reached only when a future resolver leaves the current index
+        # unknown. Refuse rather than silently turning an exact request into a
+        # name-only mutation.
+        raise ValueError("current preset index could not be resolved unambiguously")
+    if planned_steps > max_steps:
+        raise ValueError(
+            "shortest preset navigation exceeds max_navigation_steps"
+        )
+    if planned_steps == 0:
+        return {
+            "command": "plugin.select_preset",
+            **before_observation,
+            "preset_count": count,
+            "requested_preset_name": requested_name,
+            "requested_preset_index": requested_index,
+            "before": before,
+            "after": dict(before),
+            "outcome": "not_reached",
+            "verified": False,
+            "navigation_direction": direction,
+            "navigation_steps": 0,
+            "max_navigation_steps": max_steps,
+            "settle_tick_limit": settle_ticks,
+            "undo_point_created": False,
+            "session_fingerprint": SESSION_FINGERPRINT,
+            "session_precondition_applied": a.get("session_fingerprint") is not None,
+            "expected_before_applied": expected_name is not None or expected_index is not None,
+            "project_saved": False,
+            "warnings": [
+                *([enumeration_warning] if enumeration_warning is not None else []),
+                "maximum preset navigation steps is zero; no dispatch was attempted",
+            ],
+        }
+
+    undone = _save_undo(
+        "Universal Bridge: select preset %s" % requested_name
+    )
+    warnings = []
+    if enumeration_warning is not None:
+        warnings.append(enumeration_warning)
+    if undone is None:
+        warnings.append("FL did not expose enough undo history evidence to confirm an undo point")
+    elif undone:
+        warnings.append(
+            "FL undo evidence confirms a history change; preset navigation may create more than one level"
+        )
+    # ``after`` is initialized so a zero-step bounded request still returns a
+    # truthful receipt instead of raising an unbound-local error. In fallback
+    # mode a name match is not enough by itself: complete one reported-count
+    # cycle and ensure the requested name occurred only at the cycle endpoint.
+    after = dict(before)
+    fallback_first_match = (
+        0 if fallback_mode and before.get("name") == requested_name else None
+    )
+    fallback_target_hits = 1 if fallback_first_match is not None else 0
+    fallback_completion_step = (
+        count if fallback_first_match is not None else None
+    )
+    steps = 0
+    while steps < planned_steps:
+        try:
+            _check_session_precondition(a)
+            current_observation = _plugin_observation(target)
+            if current_observation["target_fingerprint"] != before_observation["target_fingerprint"]:
+                after = _current_preset_state(index, slot, use_global)
+                warnings.append("plug-in target identity changed during navigation")
+                return {
+                    "command": "plugin.select_preset",
+                    **current_observation,
+                    "preset_count": count,
+                    "requested_preset_name": requested_name,
+                    "requested_preset_index": requested_index,
+                    "before": before,
+                    "after": after,
+                    "outcome": "unknown",
+                    "verified": False,
+                    "navigation_direction": direction,
+                    "navigation_steps": steps,
+                    "max_navigation_steps": max_steps,
+                    "settle_tick_limit": settle_ticks,
+                    "undo_point_created": undone,
+                    "session_fingerprint": SESSION_FINGERPRINT,
+                    "session_precondition_applied": a.get("session_fingerprint") is not None,
+                    "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+            if direction in ("next", "fallback_next"):
+                plugins.nextPreset(index, slot, use_global)
+            else:
+                plugins.prevPreset(index, slot, use_global)
+        except Exception as exc:
+            after = _current_preset_state(index, slot, use_global)
+            warnings.append(
+                "preset navigation dispatch/readback outcome is unknown: %s" % exc
+            )
+            return {
+                "command": "plugin.select_preset",
+                **before_observation,
+                "preset_count": count,
+                "requested_preset_name": requested_name,
+                "requested_preset_index": requested_index,
+                "before": before,
+                "after": after,
+                "outcome": "unknown",
+                "verified": False,
+                "navigation_direction": direction,
+                "navigation_steps": steps,
+                "max_navigation_steps": max_steps,
+                "settle_tick_limit": settle_ticks,
+                "undo_point_created": undone,
+                "session_fingerprint": SESSION_FINGERPRINT,
+                "session_precondition_applied": a.get("session_fingerprint") is not None,
+                "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+        steps += 1
+        # A dispatch is never evidence. Hand FL its thread for at least one
+        # later tick, then permit a bounded extra settle window.
+        for _ in range(max(1, settle_ticks)):
+            yield
+        try:
+            _check_session_precondition(a)
+        except Exception as exc:
+            after = _current_preset_state(index, slot, use_global)
+            warnings.append(
+                "preset navigation session changed before readback: %s" % exc
+            )
+            return {
+                "command": "plugin.select_preset",
+                **before_observation,
+                "preset_count": count,
+                "requested_preset_name": requested_name,
+                "requested_preset_index": requested_index,
+                "before": before,
+                "after": after,
+                "outcome": "unknown",
+                "verified": False,
+                "navigation_direction": direction,
+                "navigation_steps": steps,
+                "max_navigation_steps": max_steps,
+                "settle_tick_limit": settle_ticks,
+                "undo_point_created": undone,
+                "session_fingerprint": SESSION_FINGERPRINT,
+                "session_precondition_applied": a.get("session_fingerprint") is not None,
+                "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+        after = _current_preset_state(index, slot, use_global)
+        if after["identity_status"] != "stable":
+            warnings.append("FL stopped exposing a stable current preset readback")
+            return {
+                "command": "plugin.select_preset",
+                **before_observation,
+                "preset_count": count,
+                "requested_preset_name": requested_name,
+                "requested_preset_index": requested_index,
+                "before": before,
+                "after": after,
+                "outcome": "unknown",
+                "verified": False,
+                "navigation_direction": direction,
+                "navigation_steps": steps,
+                "max_navigation_steps": max_steps,
+                "settle_tick_limit": settle_ticks,
+                "undo_point_created": undone,
+                "session_fingerprint": SESSION_FINGERPRINT,
+                "session_precondition_applied": a.get("session_fingerprint") is not None,
+                "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+        after_observation = _plugin_observation(target)
+        if after_observation["target_fingerprint"] != before_observation["target_fingerprint"]:
+            warnings.append("plug-in target identity changed during navigation")
+            return {
+                "command": "plugin.select_preset",
+                **after_observation,
+                "preset_count": count,
+                "requested_preset_name": requested_name,
+                "requested_preset_index": requested_index,
+                "before": before,
+                "after": after,
+                "outcome": "unknown",
+                "verified": False,
+                "navigation_direction": direction,
+                "navigation_steps": steps,
+                "max_navigation_steps": max_steps,
+                "settle_tick_limit": settle_ticks,
+                "undo_point_created": undone,
+                "session_fingerprint": SESSION_FINGERPRINT,
+                "session_precondition_applied": a.get("session_fingerprint") is not None,
+                "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+        # FL does not expose the current preset's numeric index directly.
+        # For an explicit index request, however, the complete bounded name
+        # map plus the known current index and the exact next/prev step count
+        # gives us a deterministic path proof. Keep requiring the live current
+        # name readback as a second check, then retain the path-derived index
+        # even when that name is duplicated elsewhere in the catalog.
+        path_index = None
+        if (
+            not fallback_mode
+            and requested_index is not None
+            and before.get("index") is not None
+            and direction in ("next", "prev")
+        ):
+            delta = steps if direction == "next" else -steps
+            path_index = (before["index"] + delta) % count
+            expected_path_name = names.get(path_index)
+            if expected_path_name is None or after["name"] != expected_path_name:
+                warnings.append(
+                    "preset navigation path readback did not match the "
+                    "deterministic indexed preset path"
+                )
+                return {
+                    "command": "plugin.select_preset",
+                    **before_observation,
+                    "preset_count": count,
+                    "requested_preset_name": requested_name,
+                    "requested_preset_index": requested_index,
+                    "before": before,
+                    "after": after,
+                    "outcome": "unknown",
+                    "verified": False,
+                    "navigation_direction": direction,
+                    "navigation_steps": steps,
+                    "max_navigation_steps": max_steps,
+                    "settle_tick_limit": settle_ticks,
+                    "undo_point_created": undone,
+                    "session_fingerprint": SESSION_FINGERPRINT,
+                    "session_precondition_applied": a.get("session_fingerprint") is not None,
+                    "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+            after["index"] = path_index
+        if names:
+            if path_index is None:
+                matches_after = [
+                    preset_index for preset_index, name in names.items()
+                    if name == after["name"]
+                ]
+                if len(matches_after) == 1:
+                    after["index"] = matches_after[0]
+                elif len(matches_after) > 1:
+                    after["identity_status"] = "ambiguous"
+        if fallback_mode and after["name"] == requested_name:
+            fallback_target_hits += 1
+            if fallback_first_match is None:
+                fallback_first_match = steps
+                fallback_completion_step = steps + count
+            elif fallback_completion_step is not None and steps < fallback_completion_step:
+                warnings.append(
+                    "bounded fallback observed the requested name more than once; "
+                    "preset identity is ambiguous"
+                )
+                return {
+                    "command": "plugin.select_preset",
+                    **before_observation,
+                    "preset_count": count,
+                    "requested_preset_name": requested_name,
+                    "requested_preset_index": requested_index,
+                    "before": before,
+                    "after": after,
+                    "outcome": "unknown",
+                    "verified": False,
+                    "navigation_direction": direction,
+                    "navigation_steps": steps,
+                    "max_navigation_steps": max_steps,
+                    "settle_tick_limit": settle_ticks,
+                    "undo_point_created": undone,
+                    "session_fingerprint": SESSION_FINGERPRINT,
+                    "session_precondition_applied": a.get("session_fingerprint") is not None,
+                    "expected_before_applied": expected_name is not None or expected_index is not None,
+                    "project_saved": False,
+                    "warnings": warnings,
+                }
+            elif (
+                fallback_completion_step is not None
+                and steps == fallback_completion_step
+                and fallback_target_hits == 2
+            ):
+                return {
+                    "command": "plugin.select_preset",
+                    **before_observation,
+                    "preset_count": count,
+                    "requested_preset_name": requested_name,
+                    "requested_preset_index": requested_index,
+                    "before": before,
+                    "after": after,
+                    "outcome": "verified",
+                    "verified": True,
+                    "navigation_direction": direction,
+                    "navigation_steps": steps,
+                    "max_navigation_steps": max_steps,
+                    "settle_tick_limit": settle_ticks,
+                    "undo_point_created": undone,
+                    "session_fingerprint": SESSION_FINGERPRINT,
+                    "session_precondition_applied": a.get("session_fingerprint") is not None,
+                    "expected_before_applied": expected_name is not None or expected_index is not None,
+                    "project_saved": False,
+                    "warnings": warnings,
+                }
+        if not fallback_mode and after["name"] == requested_name and (
+            requested_index is None or after.get("index") == requested_index
+        ):
+            return {
+                "command": "plugin.select_preset",
+                **before_observation,
+                "preset_count": count,
+                "requested_preset_name": requested_name,
+                "requested_preset_index": requested_index,
+                "before": before,
+                "after": after,
+                "outcome": "verified",
+                "verified": True,
+                "navigation_direction": direction,
+                "navigation_steps": steps,
+                "max_navigation_steps": max_steps,
+                "settle_tick_limit": settle_ticks,
+                "undo_point_created": undone,
+                "session_fingerprint": SESSION_FINGERPRINT,
+                "session_precondition_applied": a.get("session_fingerprint") is not None,
+                "expected_before_applied": expected_name is not None or expected_index is not None,
+                "project_saved": False,
+                "warnings": warnings,
+            }
+
+    warnings.append("bounded preset navigation did not reach the requested exact preset")
+    return {
+        "command": "plugin.select_preset",
+        **before_observation,
+        "preset_count": count,
+        "requested_preset_name": requested_name,
+        "requested_preset_index": requested_index,
+        "before": before,
+        "after": after,
+        "outcome": "not_reached",
+        "verified": False,
+        "navigation_direction": direction,
+        "navigation_steps": steps,
+        "max_navigation_steps": max_steps,
+        "settle_tick_limit": settle_ticks,
+        "undo_point_created": undone,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "expected_before_applied": expected_name is not None or expected_index is not None,
+        "project_saved": False,
+        "warnings": warnings,
     }
 
 
@@ -1357,6 +2348,9 @@ def _channel_summary(i):
     )
     destination = _safe(lambda: channels.getTargetFxTrack(i, True), None)
     plugin_name = _safe(lambda: plugins.getPluginName(i, -1, False, True), "") or ""
+    plugin_user_name = _safe(
+        lambda: plugins.getPluginName(i, -1, True, True), ""
+    ) or ""
     param_count = _safe(lambda: plugins.getParamCount(i, -1, True), None)
     material = {
         "channel_index": i,
@@ -1389,7 +2383,24 @@ def _channel_summary(i):
         "mixer_track": destination,
         "color": color,
         "plugin": plugin_name,
+        "plugin_user_name": plugin_user_name,
         "reported_parameter_count": param_count,
+        # Keep this digest tied to the same global Channel Rack target and
+        # live product fields used by _plugin_observation. It is deliberately
+        # absent only when the public getters themselves fail (the helper
+        # still returns a canonical digest for the values FL did report).
+        "target_fingerprint": _plugin_target_fingerprint(
+            {
+                "target_kind": "channel_generator",
+                "channel": i,
+                "slot": -1,
+                "use_global_index": True,
+                "index_scope": "global",
+            },
+            plugin_name,
+            plugin_user_name,
+            param_count,
+        ),
         "channel_fingerprint": _sha256_json(material),
     }
 
@@ -4272,6 +5283,68 @@ def cmd_channel_trigger_note(a):
     }
 
 
+def cmd_channels_reroll_loop_starter_loop(a):
+    """Dispatch one explicit Loop Starter reroll with a channel guard.
+
+    FL exposes no public identity getter for the newly selected loop. The
+    operation therefore never enters the preset-selection proof path and
+    always reports dispatch-only semantics. In particular, an exception after
+    the API call is not retried: the caller must re-read the channel.
+    """
+    allowed = {
+        "channel", "index_scope", "session_fingerprint", "expected_before",
+    }
+    unknown = set(a) - allowed
+    if unknown:
+        raise ValueError(
+            "channels.rerollLoopStarterLoop received unknown arguments: %s"
+            % ", ".join(sorted(unknown))
+        )
+    index = _channel_write_target(a)
+    _check_session_precondition(a)
+    before = _channel_summary(index)
+    expected = _track_b_expected(
+        a, {"channel_fingerprint"}, "Loop Starter channel target"
+    )
+    _expect_track_b_value(
+        expected,
+        "channel_fingerprint",
+        before.get("channel_fingerprint"),
+        "Loop Starter channel fingerprint",
+    )
+    undone = _save_undo("Universal Bridge: reroll Loop Starter channel %d" % index)
+    dispatched = False
+    warnings = [
+        "FL exposes no authoritative identity readback for the rerolled Loop Starter loop; "
+        "the sound choice is not verified.",
+    ]
+    try:
+        channels.rerollLoopStarterLoop(index, True)
+        dispatched = True
+    except Exception as exc:
+        warnings.append(
+            "Loop Starter reroll dispatch outcome is unknown: %s" % exc
+        )
+    after = _safe(lambda: _channel_summary(index), {})
+    return {
+        "command": "channels.rerollLoopStarterLoop",
+        "channel": index,
+        "index_scope": "global",
+        "before_channel_fingerprint": before.get("channel_fingerprint"),
+        "after_channel_fingerprint": after.get("channel_fingerprint"),
+        "dispatched": dispatched,
+        "identity_verified": False,
+        "verified": False,
+        "verification_basis": "dispatch_only_no_identity_readback",
+        "undo_point_created": undone,
+        "session_fingerprint": SESSION_FINGERPRINT,
+        "session_precondition_applied": a.get("session_fingerprint") is not None,
+        "expected_before_applied": a.get("expected_before") is not None,
+        "project_saved": False,
+        "warnings": warnings,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Creative targeting, section markers, and public REC-event automation
 # ---------------------------------------------------------------------------
@@ -4301,6 +5374,27 @@ def cmd_creative_prepare_piano_roll(a):
     if pattern < 1 or pattern > maximum:
         raise ValueError("pattern must be within the live range 1..%d" % maximum)
     _check_session_precondition(a)
+    expected_target_fingerprint = a.get("target_fingerprint")
+    if expected_target_fingerprint is not None:
+        if (
+            not isinstance(expected_target_fingerprint, str)
+            or len(expected_target_fingerprint) != 64
+            or any(c not in "0123456789abcdef" for c in expected_target_fingerprint)
+        ):
+            raise ValueError("target_fingerprint must be 64 lowercase hex characters")
+        target = {
+            "target_kind": "channel_generator",
+            "index": channel,
+            "channel": channel,
+            "slot": -1,
+            "use_global_index": True,
+            "index_scope": "global",
+        }
+        observation = _plugin_observation(target)
+        if observation["target_fingerprint"] != expected_target_fingerprint:
+            raise ValueError(
+                "target fingerprint precondition failed; re-read the plug-in target"
+            )
     before_channels = _selected_channels()
     before_pattern = _strict_integer(patterns.patternNumber(), "current pattern")
     window_id = getattr(midi, "widPianoRoll", None)
@@ -4311,12 +5405,23 @@ def cmd_creative_prepare_piano_roll(a):
     channels.selectOneChannel(channel, True)
     ui.showWindow(window_id)
     yield
+    if expected_target_fingerprint is not None:
+        after_observation = _plugin_observation(target)
+        if after_observation["target_fingerprint"] != expected_target_fingerprint:
+            raise ValueError(
+                "target fingerprint changed while preparing the Piano Roll"
+            )
     after_channels = _selected_channels()
     after_pattern = _strict_integer(patterns.patternNumber(), "current pattern")
     after_visible = _safe(lambda: bool(ui.getVisible(window_id)), None)
     return {
         "command": "creative.prepare_piano_roll",
         "channel_index": channel,
+        "target_fingerprint": (
+            expected_target_fingerprint
+            if expected_target_fingerprint is not None
+            else None
+        ),
         "pattern_number": pattern,
         "before_channel_indices": before_channels,
         "after_channel_indices": after_channels,
@@ -4583,6 +5688,10 @@ HANDLERS = {
     "plugin.set_param_option": cmd_plugin_set_param_option,
     "plugin.params": cmd_plugin_params,
     "plugin.preset_count": cmd_plugin_preset_count,
+    "plugin.presets": cmd_plugin_presets,
+    "plugin.current_preset": cmd_plugin_current_preset,
+    "plugin.pad_map": cmd_plugin_pad_map,
+    "plugin.select_preset": cmd_plugin_select_preset,
     "plugin.scan_params": cmd_plugin_scan_params,
     "channels.list": cmd_channels_list,
     "patterns.list": cmd_patterns_list,
@@ -4602,6 +5711,7 @@ HANDLERS = {
     "sequencer.get": cmd_sequencer_get,
     "sequencer.set": cmd_sequencer_set,
     "channel.trigger_note": cmd_channel_trigger_note,
+    "channels.rerollLoopStarterLoop": cmd_channels_reroll_loop_starter_loop,
     "creative.prepare_piano_roll": cmd_creative_prepare_piano_roll,
     "arrangement.add_markers": cmd_arrangement_add_markers,
     "automation.record_value": cmd_automation_record_value,

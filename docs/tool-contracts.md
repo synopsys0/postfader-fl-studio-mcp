@@ -1,14 +1,16 @@
 # Tool and command reference
 
-PostFader exposes 99 MCP tools and 8 MCP resources. The MCP layer is the supported
+PostFader exposes 111 MCP tools and 8 MCP resources. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. The surface contains 42 read-only tools, 39 directly
-guarded FL setters, 10 specialized mutating workflows, 7 non-destructive
-workflow/dispatch tools, and one session-mode control. `fl_set_write_mode` is a
-destructive capability change but an idempotent, session-only absolute state.
+and non-finite numbers. The surface contains 50 read-only tools, 39 directly
+guarded FL setters, 12 specialized mutating workflows, 8 non-destructive
+workflow/dispatch tools, and 2 idempotent destructive controls.
+`fl_set_write_mode` changes the session write capability;
+`sound_selection_history_reset` deletes only the bounded local history after
+explicit confirmation.
 
 ## Inspection tools
 
@@ -35,6 +37,41 @@ destructive capability change but an idempotent, session-only absolute state.
 | `fl_list_playlist_tracks` | List every one-based Playlist track and its controllable identity/state. |
 | `fl_get_project_history` | Read undo/redo bounds, current position, history hint, and dirty state. |
 | `fl_get_plugin_preset_count` | Read FL's authoritative preset count for one explicit effect or generator target. |
+| `plugins_list_presets` | Read one bounded, deterministic page of exact preset index/name records, current identity, duplicate names, blank names, and partial/truncated status. |
+| `plugins_get_current_preset` | Read the current preset name and a preset index only when FL resolves it uniquely. |
+| `plugins_inspect_pad_map` | Read a generic target's reported pad count, MIDI/semitone notes, colors, empty/muted flags, and semitone names where exposed. |
+
+## Sound Selection tools
+
+Sound Selection plans a coherent palette from the currently loaded target pool.
+The connected AI turns natural-language direction into a strict
+`SoundSelectionRequest`; PostFader does not embed an LLM. User preferences,
+exclusions, stock-only direction, locked roles, section scope, and required
+drum mappings are hard constraints. The default `balanced` policy preserves
+identity sounds within a song and uses bounded local history only to separate
+similarly suitable candidates. Planning does not mutate FL or usage history.
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `sound_selection_inventory` | Read a compact inventory of loaded Channel Rack generators and optional mixer effects, bounded preset pages, current presets, pad maps, target fingerprints, current palette/locks, Atlas matches, and Atlas-known products not observed as loaded. |
+| `sound_selection_plan` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. No FL or history changes. |
+| `sound_selection_get` | Look up process-local palette state and immutable apply receipts by palette ID. Expiry or another process returns an availability-honest result. |
+| `sound_selection_create_variation` | Plan a section-scoped delta from an existing palette. Anchors remain unchanged unless explicitly replaced; the result is read-only. |
+| `sound_selection_history_status` | Read the local history path, schema/health, record counts, and configured bounds. |
+| `sound_selection_apply` | Authorized mutating workflow that requires the current 32-character lowercase `session_fingerprint`, revalidates the session and loaded targets, applies exact assignments in deterministic order, and stops on the first unknown/unverified result. Earlier receipts remain immutable. |
+| `sound_selection_record_feedback` | Store an explicit accepted, rejected, or neutral local verdict when persistence is enabled. Silence is never inferred as acceptance. It does not mutate FL. |
+| `sound_selection_history_reset` | Explicitly remove the local Sound Selection history after `confirm=true`; project state is unchanged and the removed file is not recoverable by PostFader. |
+
+Sound Selection uses the same discriminated Track B target as parameter tools:
+`mixer_effect` addresses a mixer track and slot, while `channel_generator`
+addresses a global Channel Rack generator. Atlas product matches never prove
+installation, ownership, loaded state, or control. An unprofiled loaded target
+can still participate with lower semantic confidence.
+
+`source_strategy="instrument_pool"` is the default and excludes Loop Starter.
+Loop Starter rerolling is available only for an explicit Loop Starter request;
+FL does not expose authoritative selected-loop identity, so that result is
+dispatch-only rather than a verified sound selection.
 
 ## Live resources
 
@@ -111,11 +148,14 @@ later FL Studio idle tick, reads the target back, and returns a verdict. There
 is no per-write MCP confirmation round-trip and no automatic rollback. Ask the
 client to enable the session first with `fl_set_write_mode`.
 
-Every state tool accepts an optional bridge-lifetime `session_fingerprint` and
-a typed `expected_before`, except `fl_set_step_sequence`, whose required
-`expected_digest` is its stronger state guard. The bridge checks supplied
-guards immediately before undo and mutation. Omitting them preserves the 0.11
-call shape; supplying them makes stale decisions fail closed.
+Every direct state-write tool accepts an optional bridge-lifetime
+`session_fingerprint` and a typed `expected_before`, except
+`fl_set_step_sequence`, whose required `expected_digest` is its stronger state
+guard. The bridge checks supplied guards immediately before undo and mutation.
+Omitting them preserves the 0.11 call shape; supplying them makes stale
+decisions fail closed. The high-level `sound_selection_apply` workflow is the
+exception: its public MCP contract requires `session_fingerprint` because the
+palette service cannot apply without a live session token.
 
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
@@ -135,12 +175,41 @@ call shape; supplying them makes stale decisions fail closed.
 | `fl_set_plugin_param` | explicit mixer-effect or channel-generator target, or legacy mixer track/slot; parameter index; normalized value 0–1; optional `allow_master` for Master effects | `plugin.set_param` |
 | `fl_set_plugin_param_display` | same target forms; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` for Master effects | `plugin.set_param_display` |
 | `fl_set_plugin_param_option` | same target forms; parameter index or text; option text; optional sweep resolution and `allow_master` for Master effects | `plugin.set_param_option` |
+| `fl_select_plugin_preset` | explicit target plus exact `preset_name` and/or `preset_index`; optional current/session/target guards and bounded navigation/settling limits | `plugin.select_preset` |
 
-The three plug-in reads and three plug-in setters also accept an explicit
+The parameter reads and three plug-in setters also accept an explicit
 discriminated target. `mixer_effect` names `track_index`, slot 0–9, and optional
 Master authorization. `channel_generator` names a global `channel_index`; the
 bridge uses FL's separate `slotIndex=-1` form internally. A call may use that
 target or the legacy mixer track/slot pair, never both.
+
+### Preset identity and navigation
+
+`plugins_list_presets` reads a page with `start` and `limit` (1–256), and never
+enumerates an unbounded catalog in one response. It reports FL's authoritative
+count, index/name rows, current name/index/status, duplicate names, blank
+indices, `partial`, `truncated`, and a deterministic continuation position.
+`plugins_get_current_preset` reports the current name and only a uniquely
+resolved index. A count-only `fl_get_plugin_preset_count` result does not prove
+current identity.
+
+`fl_select_plugin_preset` resolves the requested exact name/index against live
+state, refuses an ambiguous duplicate-name request unless an index is supplied,
+and uses the shortest next/previous path when the current index is known.
+Without a known index it uses a bounded fallback search. The bridge yields over
+later FL idle ticks, allows bounded settling, and returns success only after
+exact current-preset readback matches the request. It reports before/after
+identity, direction, step count, target/session guards, and `undo_point_created`
+as the value FL exposed (`true`, `false`, or `null`). Dispatch alone is never
+success. An unstable identity, stale guard, navigation limit, or unknown
+transport outcome stops the operation; it is never automatically replayed,
+rolled back, or silently redirected to another preset.
+
+`plugins_inspect_pad_map` is a read-only generic pad observation. Sound
+Selection uses its notes and reported names to build semantic drum maps and
+does not assume General MIDI. `compose_drums` can consume the resulting typed
+map; its General MIDI notes remain an explicit fallback only when no map is
+provided. Missing required drum roles block before note writing.
 
 ### Transport, Channel Rack, and sequencer state
 

@@ -12,6 +12,10 @@ import tempfile
 from pathlib import Path
 
 
+EXPECTED_TOOL_COUNT = 111
+EXPECTED_RESOURCE_COUNT = 8
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -29,6 +33,7 @@ def main(argv=None) -> int:
     )
     from fl_studio_mcp.mcp_server import mcp
     from fl_studio_mcp.plugin_atlas import load_bundled_registry
+    from fl_studio_mcp.sound_selection import load_bundled_descriptors
 
     failures: list[str] = []
     distribution = importlib.metadata.distribution("postfader-fl-studio-mcp")
@@ -62,6 +67,15 @@ def main(argv=None) -> int:
     except Exception as error:  # pragma: no cover - exercised in clean installs
         failures.append("installed Plugin Atlas could not be loaded: %s" % error)
 
+    try:
+        descriptors = load_bundled_descriptors()
+        if not descriptors.descriptors:
+            failures.append("installed Sound Selection descriptors are empty")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append(
+            "installed Sound Selection descriptors could not be loaded: %s" % error
+        )
+
     bridge = bridge_source_path().read_bytes()
     if any(byte >= 128 for byte in bridge):
         failures.append("installed bridge is not pure ASCII")
@@ -74,6 +88,17 @@ def main(argv=None) -> int:
         for item in json.loads(args.manifest.read_text(encoding="utf-8"))["tools"]
     }
     installed_names = {tool.name for tool in asyncio.run(mcp.list_tools())}
+    if len(installed_names) != EXPECTED_TOOL_COUNT:
+        failures.append(
+            "installed MCP tool count is not %d: %d"
+            % (EXPECTED_TOOL_COUNT, len(installed_names))
+        )
+    installed_resources = asyncio.run(mcp.list_resources())
+    if len(installed_resources) != EXPECTED_RESOURCE_COUNT:
+        failures.append(
+            "installed MCP resource count is not %d: %d"
+            % (EXPECTED_RESOURCE_COUNT, len(installed_resources))
+        )
     if installed_names != manifest_names:
         failures.append(
             "installed MCP tool surface differs from manifest: %s"
@@ -96,8 +121,8 @@ def main(argv=None) -> int:
             print("  - %s" % failure)
         return 1
     print(
-        "installed wheel verified: version %s, %d tools, platform lock acquired"
-        % (args.expected_version, len(installed_names))
+        "installed wheel verified: version %s, %d tools, %d resources, platform lock acquired"
+        % (args.expected_version, len(installed_names), len(installed_resources))
     )
     return 0
 

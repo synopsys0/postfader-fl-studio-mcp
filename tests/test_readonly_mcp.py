@@ -12,6 +12,7 @@ import tempfile
 import threading
 import time
 
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
@@ -20,7 +21,9 @@ sys.path.insert(0, ROOT)
 
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
+
 from fl_studio_mcp.bridge_install import expected_bridge_deployment  # noqa: E402
+
 
 # The installed bridge carries this stamp. The source-tree fixture has the
 # installer placeholder, so inject the digest a real installation reports.
@@ -104,6 +107,24 @@ MIX_READ_TOOLS = {
     "mix_get_plan",
     "mix_finish_assessment",
 }
+PRESET_READ_TOOLS = {
+    "plugins_list_presets",
+    "plugins_get_current_preset",
+    "plugins_inspect_pad_map",
+}
+SOUND_SELECTION_READ_TOOLS = {
+    "sound_selection_inventory",
+    "sound_selection_plan",
+    "sound_selection_get",
+    "sound_selection_create_variation",
+    "sound_selection_history_status",
+}
+PRESET_MUTATING_TOOLS = {"fl_select_plugin_preset"}
+SOUND_SELECTION_MUTATING_TOOLS = {"sound_selection_apply"}
+SOUND_SELECTION_WORKFLOW_TOOLS = {
+    "sound_selection_record_feedback",
+    "sound_selection_history_reset",
+}
 WORKFLOW_STATE_TOOLS = {
     "mix_start_peak_watch",
     "mix_stop_peak_watch",
@@ -161,6 +182,11 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     *CREATIVE_READ_TOOLS,
     *CREATIVE_FL_TOOLS,
     *FILE_MUTATING_TOOLS,
+    *PRESET_READ_TOOLS,
+    *SOUND_SELECTION_READ_TOOLS,
+    *PRESET_MUTATING_TOOLS,
+    *SOUND_SELECTION_MUTATING_TOOLS,
+    *SOUND_SELECTION_WORKFLOW_TOOLS,
     # File measurement, not FL control.
     "audio_analyze_file",
     "audio_compare_files",
@@ -263,6 +289,12 @@ WRITE_CALLS = {
     },
     "fl_trigger_note": {"channel_index": 0, "note": 60, "velocity": 100},
 }
+PRESET_WRITE_CALLS = {
+    "fl_select_plugin_preset": {
+        "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 1},
+        "preset_name": "Preset 1",
+    },
+}
 
 
 def check(label, condition, detail=""):
@@ -323,7 +355,24 @@ def fingerprint():
                 )
                 for track in _state.TRACKS
             ],
-            "channels": [vars(channel) for channel in _state.CHANNELS],
+            "channels": [
+                {
+                    **{
+                        key: value
+                        for key, value in vars(channel).items()
+                        if key != "generator_plugin"
+                    },
+                    "generator_plugin": {
+                        "name": channel.generator_plugin.name,
+                        "names": channel.generator_plugin.param_names,
+                        "values": channel.generator_plugin.values,
+                        "presets": channel.generator_plugin.presets,
+                        "current_preset": channel.generator_plugin.current_preset,
+                        "pads": channel.generator_plugin.pads,
+                    },
+                }
+                for channel in _state.CHANNELS
+            ],
             "undo": _state.UNDO,
             "playing": _state.PLAYING,
             "recording": _state.RECORDING,
@@ -390,6 +439,9 @@ async def run():
                 capabilities_resource["connection"]["compatible"] is True,
                 capabilities_resource,
             )
+            session_fingerprint = capabilities_resource["connection"][
+                "session_fingerprint"
+            ]
             status_resource = resource_payload(
                 await session.read_resource("fl://status")
             )
@@ -473,6 +525,9 @@ async def run():
                     | PLAN_APPLY_TOOLS
                     | CREATIVE_FL_TOOLS
                     | FILE_MUTATING_TOOLS
+                    | PRESET_MUTATING_TOOLS
+                    | SOUND_SELECTION_MUTATING_TOOLS
+                    | SOUND_SELECTION_WORKFLOW_TOOLS
                 ),
             )
             check(
@@ -595,6 +650,57 @@ async def run():
                     if tool.name in FILE_MUTATING_TOOLS
                 ),
                 sorted(FILE_MUTATING_TOOLS),
+            )
+            check(
+                "preset and Sound Selection read tools are annotated read-only",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is True
+                    for tool in tools
+                    if tool.name in PRESET_READ_TOOLS | SOUND_SELECTION_READ_TOOLS
+                ),
+                sorted(PRESET_READ_TOOLS | SOUND_SELECTION_READ_TOOLS),
+            )
+            check(
+                "preset and Sound Selection applications are mutating",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is False
+                    and tool.annotations.open_world_hint is True
+                    for tool in tools
+                    if tool.name in PRESET_MUTATING_TOOLS | SOUND_SELECTION_MUTATING_TOOLS
+                ),
+                sorted(PRESET_MUTATING_TOOLS | SOUND_SELECTION_MUTATING_TOOLS),
+            )
+            check(
+                "Sound Selection feedback is closed-world workflow state",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is False
+                    and tool.annotations.idempotent_hint is False
+                    and tool.annotations.open_world_hint is False
+                    for tool in tools
+                    if tool.name == "sound_selection_record_feedback"
+                ),
+                "sound_selection_record_feedback",
+            )
+            check(
+                "Sound Selection history reset is an idempotent local deletion",
+                all(
+                    tool.annotations
+                    and tool.annotations.read_only_hint is False
+                    and tool.annotations.destructive_hint is True
+                    and tool.annotations.idempotent_hint is True
+                    and tool.annotations.open_world_hint is False
+                    for tool in tools
+                    if tool.name == "sound_selection_history_reset"
+                ),
+                "sound_selection_history_reset",
             )
             by_name = {tool.name: tool for tool in tools}
             check(
@@ -743,6 +849,53 @@ async def run():
                     bool(getattr(rejected, "is_error", False)),
                     rejected,
                 )
+
+            # Exact preset selection is a verified project mutation too, but
+            # its contract has preset identity guards rather than the generic
+            # expected-before field used by the older write set.
+            for name, arguments in PRESET_WRITE_CALLS.items():
+                refusal = await session.call_tool(name, arguments)
+                text = " ".join(
+                    block.text
+                    for block in refusal.content
+                    if getattr(block, "type", None) == "text"
+                )
+                check(
+                    "%s refused before write mode was enabled" % name,
+                    bool(getattr(refusal, "is_error", False))
+                    and "fl_set_write_mode" in text
+                    and "confirm_user_present=true" in text,
+                    text,
+                )
+                rejected = await session.call_tool(name, dict(arguments, nudge_by=0.1))
+                check(
+                    "%s rejects an unknown argument" % name,
+                    bool(getattr(rejected, "is_error", False)),
+                    rejected,
+                )
+
+            # Palette application must fail closed on missing conversational
+            # authorization before it can resolve a process-local plan or
+            # reach any FL write boundary.
+            unauthorized_palette = await session.call_tool(
+                "sound_selection_apply",
+                {
+                    "palette": "missing",
+                    "session_fingerprint": session_fingerprint,
+                    "authorized_to_modify": False,
+                },
+            )
+            unauthorized_text = " ".join(
+                block.text
+                for block in unauthorized_palette.content
+                if getattr(block, "type", None) == "text"
+            )
+            check(
+                "sound_selection_apply requires explicit authorization",
+                bool(getattr(unauthorized_palette, "is_error", False))
+                and "explicit authorization" in unauthorized_text,
+                unauthorized_text,
+            )
 
             state_before_mode = fingerprint()
             unconfirmed = await session.call_tool(

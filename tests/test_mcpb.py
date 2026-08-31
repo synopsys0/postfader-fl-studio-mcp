@@ -101,7 +101,7 @@ class MCPBPackagingTests(unittest.TestCase):
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 75)
-        self.assertEqual(len(names), 99)
+        self.assertEqual(len(names), 111)
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"
@@ -153,6 +153,17 @@ class MCPBPackagingTests(unittest.TestCase):
         self.assertIn(
             "fl_studio_mcp/plugin_atlas_data/manifests/atlas.json",
             MCPB_REQUIRED,
+        )
+
+    def test_bundle_checker_requires_the_complete_sound_selection_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/sound_selection/__init__.py",
+                "fl_studio_mcp/sound_selection/models.py",
+                "fl_studio_mcp/sound_selection/data/__init__.py",
+                "fl_studio_mcp/sound_selection/data/descriptors-v1.json",
+            }
+            <= MCPB_REQUIRED
         )
 
     def test_bundle_entry_point_exists(self) -> None:

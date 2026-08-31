@@ -9,6 +9,18 @@ def channelCount(globalCount=False):
     return len(_state.CHANNELS)
 
 
+def rerollLoopStarterLoop(index, useGlobalIndex=True):
+    if not useGlobalIndex:
+        raise ValueError("Loop Starter reroll requires global indexing")
+    if index < 0 or index >= len(_state.CHANNELS):
+        raise IndexError(index)
+    # The public fake cannot model FL Cloud's selected loop identity. Record
+    # the dispatch only so callers must preserve dispatch-only semantics.
+    _state.CHANNELS[index].loop_starter_rerolls = (
+        getattr(_state.CHANNELS[index], "loop_starter_rerolls", 0) + 1
+    )
+
+
 def getChannelName(index, useGlobalIndex=False):
     return _c(index).name
 

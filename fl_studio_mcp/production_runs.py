@@ -44,10 +44,29 @@ from .creative import (
 )
 from .performance import TrackBController, TrackBInspector
 from .readonly_inspector import ReadOnlyInspector
+from .sound_selection.executor import (
+    SoundSelectionApplyResult,
+    convert_plugin_pad_map,
+)
+from .sound_selection.models import (
+    MAX_ROLE_COUNT,
+    DrumPadMap,
+    SoundFeedbackRequest,
+    SoundPaletteAssignment,
+    SoundPalettePlan,
+    SoundPaletteState,
+    SoundPaletteVariationPlan,
+    SoundSelectionRequest,
+)
 from .track_b_contracts import (
     SESSION_FINGERPRINT_PATTERN,
+    ChannelGeneratorTarget,
+    ExpectedPluginPresetState,
+    PluginPadMap,
+    PluginTarget,
     TrackBVerifiedMutation,
     VerifiedPatternSelectionWrite,
+    VerifiedPluginPresetSelection,
 )
 from .verified_writer import WriteModeManager
 from .workflows import (
@@ -60,6 +79,7 @@ from .workflows import (
 
 
 MAX_PRODUCTION_OPERATIONS = 64
+MAX_PRODUCTION_OUTPUTS = MAX_PRODUCTION_OPERATIONS * 8
 MAX_PRODUCTION_ITERATIONS = 16
 MAX_PRODUCTION_RUNS = 64
 MAX_RUN_TEXT = 1024
@@ -86,6 +106,7 @@ ChangeCategory: TypeAlias = Literal[
     "tempo",
     "routing",
     "plugin_parameters",
+    "sound_selection",
 ]
 TargetKind: TypeAlias = Literal["mixer_track", "channel", "pattern", "playlist_track"]
 BlockerCategory: TypeAlias = Literal[
@@ -153,7 +174,7 @@ class ProductionScope(ProductionRunModel):
         default_factory=tuple, max_length=MAX_TARGETS
     )
     additional_allowed_changes: tuple[ChangeCategory, ...] = Field(
-        default_factory=tuple, max_length=11
+        default_factory=tuple, max_length=12
     )
 
     @model_validator(mode="after")
@@ -175,6 +196,8 @@ class ProductionPreservation(ProductionRunModel):
     arrangement: StrictBool = False
     mixer_state: StrictBool = False
     pattern_identity: StrictBool = False
+    sound_palette: StrictBool = False
+    sound_roles: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
     targets: tuple[ProductionTarget, ...] = Field(
         default_factory=tuple, max_length=MAX_TARGETS
     )
@@ -186,6 +209,14 @@ class ProductionPreservation(ProductionRunModel):
             raise ValueError(
                 "preserve.named_elements must contain non-empty text up to 128 characters"
             )
+        if any(not item.strip() or len(item) > 64 for item in self.sound_roles):
+            raise ValueError(
+                "preserve.sound_roles must contain non-empty role IDs up to 64 characters"
+            )
+        if len({item.casefold() for item in self.sound_roles}) != len(
+            self.sound_roles
+        ):
+            raise ValueError("preserve.sound_roles must not contain duplicates")
         return self
 
 
@@ -220,7 +251,7 @@ class ProductionRunRequest(ProductionRunModel):
     brief: str = Field(min_length=1, max_length=MAX_RUN_TEXT)
     scope: ProductionScope
     preserve: ProductionPreservation = Field(default_factory=ProductionPreservation)
-    allowed_changes: tuple[ChangeCategory, ...] = Field(min_length=1, max_length=11)
+    allowed_changes: tuple[ChangeCategory, ...] = Field(min_length=1, max_length=12)
     creative_direction: CreativeDirection = Field(default_factory=CreativeDirection)
     completion_target: str = Field(min_length=1, max_length=MAX_RUN_TEXT)
     interaction_policy: InteractionPolicy = "execute_once"
@@ -244,7 +275,30 @@ class OperationOutputReference(ProductionRunModel):
         max_length=64,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
     )
-    output: Literal["note_sequence"] = "note_sequence"
+    output: Literal[
+        "note_sequence",
+        "sound_palette",
+        "palette_assignment",
+        "generator_target",
+        "drum_map",
+        "selected_preset",
+        "section_variation",
+    ] = "note_sequence"
+    role_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9][a-z0-9_.-]*$",
+    )
+
+    @model_validator(mode="after")
+    def validate_selector(self) -> "OperationOutputReference":
+        role_outputs = {"palette_assignment", "generator_target"}
+        if self.output in role_outputs and self.role_id is None:
+            raise ValueError(f"{self.output} references require role_id")
+        if self.output not in role_outputs and self.role_id is not None:
+            raise ValueError("role_id is only valid for role-scoped palette outputs")
+        return self
 
 
 class ProductionOperationBase(ProductionRunModel):
@@ -330,6 +384,16 @@ class GenerateDrumsOperation(ProductionOperationBase):
     seed: GeneratorSeed = 0
     swing: float = Field(default=0.0, ge=0.0, le=0.49)
     tempo_bpm: float = Field(default=120.0, ge=10.0, le=522.0)
+    drum_map: DrumPadMap | OperationOutputReference | None = None
+
+    @model_validator(mode="after")
+    def validate_drum_map_reference(self) -> "GenerateDrumsOperation":
+        if (
+            isinstance(self.drum_map, OperationOutputReference)
+            and self.drum_map.output != "drum_map"
+        ):
+            raise ValueError("generate_drums requires a drum_map output reference")
+        return self
 
 
 class PreparePatternOperation(ProductionOperationBase):
@@ -348,9 +412,23 @@ class SelectPatternOperation(ProductionOperationBase):
 class WriteNoteSequenceOperation(ProductionOperationBase):
     operation: Literal["write_note_sequence"] = "write_note_sequence"
     sequence: NoteSequence | OperationOutputReference
-    channel_index: int = Field(ge=0)
+    channel_index: int | OperationOutputReference
     pattern_number: int = Field(ge=1, le=999)
     mode: Literal["append", "replace"] = "append"
+
+    @model_validator(mode="after")
+    def validate_channel_reference(self) -> "WriteNoteSequenceOperation":
+        if isinstance(self.channel_index, int):
+            if self.channel_index < 0:
+                raise ValueError("channel_index must be non-negative")
+        elif self.channel_index.output not in {
+            "generator_target",
+            "palette_assignment",
+        }:
+            raise ValueError(
+                "write_note_sequence channel references need a generator_target or palette_assignment output"
+            )
+        return self
 
 
 class TransformPianoRollOperation(ProductionOperationBase):
@@ -382,6 +460,140 @@ class ApplyVerifiedBatchOperation(ProductionOperationBase):
     )
 
 
+class PlanSoundPaletteOperation(ProductionOperationBase):
+    operation: Literal["plan_sound_palette"] = "plan_sound_palette"
+    request: SoundSelectionRequest
+
+
+class ApplySoundPaletteOperation(ProductionOperationBase):
+    operation: Literal["apply_sound_palette"] = "apply_sound_palette"
+    palette: SoundPalettePlan | SoundPaletteVariationPlan | OperationOutputReference
+    role_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_palette_reference(self) -> "ApplySoundPaletteOperation":
+        if (
+            isinstance(self.palette, OperationOutputReference)
+            and self.palette.output not in {"sound_palette", "section_variation"}
+        ):
+            raise ValueError(
+                "apply_sound_palette requires a sound_palette or section_variation output"
+            )
+        if any(not item.strip() or len(item) > 64 for item in self.role_ids):
+            raise ValueError("role_ids must contain non-empty IDs up to 64 characters")
+        if len({item.casefold() for item in self.role_ids}) != len(self.role_ids):
+            raise ValueError("role_ids must not contain duplicates")
+        return self
+
+
+class CreateSoundPaletteVariationOperation(ProductionOperationBase):
+    operation: Literal["create_sound_palette_variation"] = (
+        "create_sound_palette_variation"
+    )
+    palette: str | OperationOutputReference
+    request: SoundSelectionRequest
+    section: str = Field(min_length=1, max_length=128)
+    replace_roles: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_variation_reference(self) -> "CreateSoundPaletteVariationOperation":
+        if (
+            isinstance(self.palette, OperationOutputReference)
+            and self.palette.output != "sound_palette"
+        ):
+            raise ValueError(
+                "create_sound_palette_variation requires a sound_palette output"
+            )
+        if any(not item.strip() or len(item) > 64 for item in self.replace_roles):
+            raise ValueError(
+                "replace_roles must contain non-empty IDs up to 64 characters"
+            )
+        if len({item.casefold() for item in self.replace_roles}) != len(
+            self.replace_roles
+        ):
+            raise ValueError("replace_roles must not contain duplicates")
+        return self
+
+
+class SelectPluginPresetOperation(ProductionOperationBase):
+    operation: Literal["select_plugin_preset"] = "select_plugin_preset"
+    target: PluginTarget | OperationOutputReference
+    preset_name: str | None = Field(default=None, min_length=1, max_length=256)
+    preset_index: int | None = Field(default=None, ge=0, le=999_999)
+    expected_current: ExpectedPluginPresetState | None = None
+    target_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    max_navigation_steps: int = Field(default=64, ge=0, le=256)
+    settle_tick_limit: int = Field(default=1, ge=1, le=8)
+
+    @model_validator(mode="after")
+    def require_preset_identity(self) -> "SelectPluginPresetOperation":
+        if self.preset_name is None and self.preset_index is None:
+            raise ValueError("preset_name or preset_index is required")
+        if (
+            isinstance(self.target, OperationOutputReference)
+            and self.target.output not in {"generator_target", "palette_assignment"}
+        ):
+            raise ValueError(
+                "select_plugin_preset target requires a generator_target or palette_assignment output"
+            )
+        return self
+
+
+class InspectDrumMapOperation(ProductionOperationBase):
+    operation: Literal["inspect_drum_map"] = "inspect_drum_map"
+    target: PluginTarget | OperationOutputReference
+    required_roles: tuple[str, ...] = Field(
+        default=("kick", "snare", "closed_hat"), max_length=32
+    )
+
+    @model_validator(mode="after")
+    def validate_target_reference(self) -> "InspectDrumMapOperation":
+        if (
+            isinstance(self.target, OperationOutputReference)
+            and self.target.output not in {"generator_target", "palette_assignment"}
+        ):
+            raise ValueError(
+                "inspect_drum_map target requires a generator_target or palette_assignment output"
+            )
+        if any(not item.strip() or len(item) > 64 for item in self.required_roles):
+            raise ValueError("required_roles contain an invalid role")
+        return self
+
+
+class SelectDrumKitOperation(ProductionOperationBase):
+    operation: Literal["select_drum_kit"] = "select_drum_kit"
+    target: PluginTarget | OperationOutputReference
+    preset_name: str | None = Field(default=None, min_length=1, max_length=256)
+    preset_index: int | None = Field(default=None, ge=0, le=999_999)
+    expected_current: ExpectedPluginPresetState | None = None
+    target_fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    max_navigation_steps: int = Field(default=64, ge=0, le=256)
+    settle_tick_limit: int = Field(default=1, ge=1, le=8)
+    required_roles: tuple[str, ...] = Field(
+        default=("kick", "snare", "closed_hat"), max_length=32
+    )
+
+    @model_validator(mode="after")
+    def validate_drum_kit(self) -> "SelectDrumKitOperation":
+        if self.preset_name is None and self.preset_index is None:
+            raise ValueError("preset_name or preset_index is required")
+        if (
+            isinstance(self.target, OperationOutputReference)
+            and self.target.output not in {"generator_target", "palette_assignment"}
+        ):
+            raise ValueError(
+                "select_drum_kit target requires a generator_target or palette_assignment output"
+            )
+        if any(not item.strip() or len(item) > 64 for item in self.required_roles):
+            raise ValueError("required_roles contain an invalid role")
+        return self
+
+
+class RecordSoundFeedbackOperation(ProductionOperationBase):
+    operation: Literal["record_sound_feedback"] = "record_sound_feedback"
+    feedback: SoundFeedbackRequest
+
+
 class UnavailableProductionOperation(ProductionOperationBase):
     """Closed capability probes that Production Runs must reject before mutation."""
 
@@ -405,6 +617,13 @@ ProductionOperation = Annotated[
     | AddSectionMarkersOperation
     | RecordAutomationValueOperation
     | ApplyVerifiedBatchOperation
+    | PlanSoundPaletteOperation
+    | ApplySoundPaletteOperation
+    | CreateSoundPaletteVariationOperation
+    | SelectPluginPresetOperation
+    | InspectDrumMapOperation
+    | SelectDrumKitOperation
+    | RecordSoundFeedbackOperation
     | UnavailableProductionOperation,
     Field(discriminator="operation"),
 ]
@@ -423,6 +642,30 @@ class ProductionRunPlan(ProductionRunModel):
     )
 
 
+class SelectedDrumKitReceipt(ProductionRunModel):
+    """Verified kit selection plus the map read after that exact preset."""
+
+    selection: VerifiedPluginPresetSelection
+    drum_map: DrumPadMap
+    required_roles: tuple[str, ...] = Field(max_length=32)
+    missing_roles: tuple[str, ...] = Field(default_factory=tuple, max_length=32)
+
+    @property
+    def verified(self) -> bool:
+        return self.selection.verified and not self.missing_roles
+
+
+class SoundFeedbackReceipt(ProductionRunModel):
+    """Truthful local workflow receipt; this never claims an FL mutation."""
+
+    palette_id: str = Field(min_length=1, max_length=128)
+    role_id: str | None = Field(default=None, min_length=1, max_length=64)
+    verdict: Literal["accepted", "rejected", "neutral"]
+    persisted: bool
+    history_path: str | None = Field(default=None, max_length=4096)
+    project_mutated: Literal[False] = False
+
+
 ProductionResultPayload = (
     NoteSequence
     | PatternPreparation
@@ -431,6 +674,15 @@ ProductionResultPayload = (
     | ArrangementMarkerReceipt
     | AutomationRecordReceipt
     | VerifiedBatchResult
+    | SoundPalettePlan
+    | SoundPaletteState
+    | SoundPaletteVariationPlan
+    | SoundPaletteAssignment
+    | SoundSelectionApplyResult
+    | DrumPadMap
+    | VerifiedPluginPresetSelection
+    | SelectedDrumKitReceipt
+    | SoundFeedbackReceipt
 )
 
 
@@ -455,8 +707,8 @@ class ProductionOperationReceipt(ProductionRunModel):
                 raise ValueError(
                     "generated receipts must be known, verified, and read-only"
                 )
-            if not isinstance(self.result, NoteSequence):
-                raise ValueError("generated receipts need a NoteSequence result")
+            if self.result is None:
+                raise ValueError("generated receipts need a typed result")
         elif self.status == "verified":
             if not self.mutating or not self.outcome_known or not self.verified:
                 raise ValueError("verified receipts must describe a verified mutation")
@@ -477,8 +729,49 @@ class ProductionOperationReceipt(ProductionRunModel):
 
 class ProductionGeneratedOutput(ProductionRunModel):
     operation_id: str = Field(min_length=1, max_length=64)
-    output: Literal["note_sequence"] = "note_sequence"
-    value: NoteSequence
+    output: Literal[
+        "note_sequence",
+        "sound_palette",
+        "palette_assignment",
+        "generator_target",
+        "drum_map",
+        "selected_preset",
+        "section_variation",
+    ] = "note_sequence"
+    role_id: str | None = Field(default=None, min_length=1, max_length=64)
+    value: (
+        NoteSequence
+        | SoundPalettePlan
+        | SoundPaletteState
+        | SoundPaletteAssignment
+        | ChannelGeneratorTarget
+        | DrumPadMap
+        | VerifiedPluginPresetSelection
+        | SoundPaletteVariationPlan
+    )
+    target_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+
+    @model_validator(mode="after")
+    def validate_output_value(self) -> "ProductionGeneratedOutput":
+        expected: dict[str, tuple[type[Any], ...]] = {
+            "note_sequence": (NoteSequence,),
+            "sound_palette": (SoundPalettePlan, SoundPaletteState),
+            "palette_assignment": (SoundPaletteAssignment,),
+            "generator_target": (ChannelGeneratorTarget,),
+            "drum_map": (DrumPadMap,),
+            "selected_preset": (VerifiedPluginPresetSelection,),
+            "section_variation": (SoundPaletteVariationPlan,),
+        }
+        if not isinstance(self.value, expected[self.output]):
+            raise ValueError(f"{self.output} output carries an incompatible value")
+        if self.output in {"palette_assignment", "generator_target"}:
+            if self.role_id is None:
+                raise ValueError(f"{self.output} output requires role_id")
+        elif self.role_id is not None:
+            raise ValueError("role_id is only valid for role-scoped outputs")
+        return self
 
 
 class ProductionBlocker(ProductionRunModel):
@@ -508,7 +801,7 @@ class ProductionRunValidation(ProductionRunModel):
     unsupported_operations: tuple[str, ...] = Field(
         default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
     )
-    expected_mutation_categories: tuple[ChangeCategory, ...] = Field(max_length=11)
+    expected_mutation_categories: tuple[ChangeCategory, ...] = Field(max_length=12)
     session_fingerprint: str | None = Field(
         default=None, pattern=SESSION_FINGERPRINT_PATTERN
     )
@@ -546,7 +839,7 @@ class ProductionRunState(ProductionRunModel):
         default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
     )
     generated_outputs: tuple[ProductionGeneratedOutput, ...] = Field(
-        default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
+        default_factory=tuple, max_length=MAX_PRODUCTION_OUTPUTS
     )
     blockers: tuple[ProductionBlocker, ...] = Field(
         default_factory=tuple, max_length=MAX_RUN_BLOCKERS
@@ -570,9 +863,12 @@ class ProductionRunState(ProductionRunModel):
             raise ValueError("operation receipts must not be rewritten or duplicated")
         if not set(self.completed_operations).issubset(receipt_ids):
             raise ValueError("completed operations must have receipts")
-        output_ids = [item.operation_id for item in self.generated_outputs]
-        if len(output_ids) != len(set(output_ids)):
-            raise ValueError("generated outputs must have unique operation IDs")
+        output_keys = [
+            (item.operation_id, item.output, item.role_id)
+            for item in self.generated_outputs
+        ]
+        if len(output_keys) != len(set(output_keys)):
+            raise ValueError("generated output selectors must be unique")
         return self
 
 
@@ -646,6 +942,7 @@ _SCOPE_BASE_CHANGES: dict[str, set[ChangeCategory]] = {
         "tempo",
         "routing",
         "plugin_parameters",
+        "sound_selection",
     },
     "mix_only": {
         "mixer",
@@ -670,6 +967,7 @@ _SCOPE_BASE_CHANGES: dict[str, set[ChangeCategory]] = {
         "playlist_metadata",
         "routing",
         "plugin_parameters",
+        "sound_selection",
     },
 }
 
@@ -765,6 +1063,11 @@ def _generate_sequence(
             seed=operation.seed,
             tempo_bpm=operation.tempo_bpm,
         )
+    drum_map = (
+        operation.drum_map
+        if isinstance(operation.drum_map, DrumPadMap)
+        else None
+    )
     return compose_drums(
         style=operation.style,
         bars=operation.bars,
@@ -772,6 +1075,7 @@ def _generate_sequence(
         seed=operation.seed,
         swing=operation.swing,
         tempo_bpm=operation.tempo_bpm,
+        drum_map=drum_map,
     )
 
 
@@ -824,27 +1128,61 @@ def _project_state_digest(project: ProjectSummary) -> str:
 
 
 def _is_mutating(operation: ProductionOperation) -> bool:
-    return not isinstance(operation, _GENERATOR_TYPES)
+    return _requires_project_write(operation) or isinstance(
+        operation, RecordSoundFeedbackOperation
+    )
+
+
+def _requires_project_write(operation: ProductionOperation) -> bool:
+    return not isinstance(
+        operation,
+        (
+            *_GENERATOR_TYPES,
+            PlanSoundPaletteOperation,
+            CreateSoundPaletteVariationOperation,
+            InspectDrumMapOperation,
+            RecordSoundFeedbackOperation,
+        ),
+    )
+
+
+def _output_types(operation: ProductionOperation) -> tuple[str, ...]:
+    if isinstance(operation, _GENERATOR_TYPES):
+        return ("note_sequence",)
+    if isinstance(operation, (PlanSoundPaletteOperation, ApplySoundPaletteOperation)):
+        return ("sound_palette", "palette_assignment", "generator_target")
+    if isinstance(operation, CreateSoundPaletteVariationOperation):
+        return ("section_variation", "palette_assignment", "generator_target")
+    if isinstance(operation, InspectDrumMapOperation):
+        return ("drum_map",)
+    if isinstance(operation, SelectPluginPresetOperation):
+        return ("selected_preset",)
+    if isinstance(operation, SelectDrumKitOperation):
+        return ("selected_preset", "drum_map")
+    if isinstance(operation, RecordSoundFeedbackOperation):
+        return ()
+    if isinstance(operation, PreparePatternOperation):
+        return ("pattern_preparation",)
+    if isinstance(operation, SelectPatternOperation):
+        return ("pattern_selection",)
+    if isinstance(operation, _PIANO_ROLL_TYPES):
+        return ("piano_roll_dispatch",)
+    if isinstance(operation, AddSectionMarkersOperation):
+        return ("arrangement_marker_receipt",)
+    if isinstance(operation, RecordAutomationValueOperation):
+        return ("automation_record_receipt",)
+    if isinstance(operation, ApplyVerifiedBatchOperation):
+        return ("verified_batch_receipt",)
+    if isinstance(operation, UnavailableProductionOperation):
+        return ()
+    raise AssertionError("unhandled production operation")
 
 
 def _output_type(operation: ProductionOperation) -> str | None:
-    if isinstance(operation, _GENERATOR_TYPES):
-        return "note_sequence"
-    if isinstance(operation, PreparePatternOperation):
-        return "pattern_preparation"
-    if isinstance(operation, SelectPatternOperation):
-        return "pattern_selection"
-    if isinstance(operation, _PIANO_ROLL_TYPES):
-        return "piano_roll_dispatch"
-    if isinstance(operation, AddSectionMarkersOperation):
-        return "arrangement_marker_receipt"
-    if isinstance(operation, RecordAutomationValueOperation):
-        return "automation_record_receipt"
-    if isinstance(operation, ApplyVerifiedBatchOperation):
-        return "verified_batch_receipt"
-    if isinstance(operation, UnavailableProductionOperation):
-        return None
-    raise AssertionError("unhandled production operation")
+    """Compatibility helper for existing single-output validation."""
+
+    outputs = _output_types(operation)
+    return outputs[0] if outputs else None
 
 
 def _operation_categories(
@@ -852,6 +1190,19 @@ def _operation_categories(
 ) -> tuple[ChangeCategory, ...]:
     if isinstance(operation, _GENERATOR_TYPES):
         return ("composition",)
+    if isinstance(
+        operation,
+        (
+            PlanSoundPaletteOperation,
+            ApplySoundPaletteOperation,
+            CreateSoundPaletteVariationOperation,
+            SelectPluginPresetOperation,
+            InspectDrumMapOperation,
+            SelectDrumKitOperation,
+            RecordSoundFeedbackOperation,
+        ),
+    ):
+        return ("sound_selection",)
     if isinstance(operation, (PreparePatternOperation, SelectPatternOperation)):
         return ("pattern_metadata",)
     if isinstance(operation, _PIANO_ROLL_TYPES):
@@ -887,10 +1238,32 @@ def _required_capabilities(
         if isinstance(operation, _GENERATOR_TYPES):
             add("host_side_creative_generation")
             continue
+        if isinstance(
+            operation,
+            (PlanSoundPaletteOperation, CreateSoundPaletteVariationOperation),
+        ):
+            add("loaded_sound_inventory")
+            add("deterministic_sound_palette_planning")
+            continue
+        if isinstance(operation, InspectDrumMapOperation):
+            add("compatible_live_fl_bridge")
+            add("plugin_pad_map_readback")
+            continue
+        if isinstance(operation, RecordSoundFeedbackOperation):
+            add("bounded_local_sound_history")
+            continue
         add("compatible_live_fl_bridge")
         add("runtime_write_mode_control")
         add("session_fingerprint_preconditions")
-        if isinstance(operation, _PIANO_ROLL_TYPES):
+        if isinstance(operation, ApplySoundPaletteOperation):
+            add("verified_plugin_preset_selection")
+            add("deterministic_sound_palette_application")
+        elif isinstance(operation, SelectPluginPresetOperation):
+            add("verified_plugin_preset_selection")
+        elif isinstance(operation, SelectDrumKitOperation):
+            add("verified_plugin_preset_selection")
+            add("plugin_pad_map_readback")
+        elif isinstance(operation, _PIANO_ROLL_TYPES):
             add("armed_piano_roll_script_bridge")
         elif isinstance(operation, (PreparePatternOperation, SelectPatternOperation)):
             add("pattern_selection_and_metadata")
@@ -957,10 +1330,40 @@ def _operation_targets(operation: ProductionOperation) -> list[ProductionTarget]
     if isinstance(operation, (PreparePatternOperation, SelectPatternOperation)):
         return [ProductionTarget(kind="pattern", index=operation.pattern_number)]
     if isinstance(operation, _PIANO_ROLL_TYPES):
-        return [
-            ProductionTarget(kind="channel", index=operation.channel_index),
-            ProductionTarget(kind="pattern", index=operation.pattern_number),
-        ]
+        targets = [ProductionTarget(kind="pattern", index=operation.pattern_number)]
+        if isinstance(operation.channel_index, int):
+            targets.insert(
+                0, ProductionTarget(kind="channel", index=operation.channel_index)
+            )
+        return targets
+    if isinstance(
+        operation,
+        (SelectPluginPresetOperation, InspectDrumMapOperation, SelectDrumKitOperation),
+    ) and not isinstance(operation.target, OperationOutputReference):
+        target = operation.target
+        if target.kind == "mixer_effect":
+            return [ProductionTarget(kind="mixer_track", index=target.track_index)]
+        return [ProductionTarget(kind="channel", index=target.channel_index)]
+    if isinstance(operation, ApplySoundPaletteOperation) and isinstance(
+        operation.palette, (SoundPalettePlan, SoundPaletteVariationPlan)
+    ):
+        targets: list[ProductionTarget] = []
+        selected_roles = {item.casefold() for item in operation.role_ids}
+        for assignment in operation.palette.assignments:
+            if selected_roles and assignment.role_id.casefold() not in selected_roles:
+                continue
+            target = assignment.target
+            if target is None:
+                continue
+            if target.kind == "mixer_effect":
+                targets.append(
+                    ProductionTarget(kind="mixer_track", index=target.track_index)
+                )
+            else:
+                targets.append(
+                    ProductionTarget(kind="channel", index=target.channel_index)
+                )
+        return targets
     if isinstance(operation, RecordAutomationValueOperation):
         return [
             ProductionTarget(
@@ -1066,7 +1469,7 @@ def _validate_scope_and_authorization(
     allowed_by_scope = set(_SCOPE_BASE_CHANGES[request.scope.kind])
     allowed_by_scope.update(request.scope.additional_allowed_changes)
     explicit_changes = set(request.allowed_changes)
-    mutating_remainder = False
+    project_mutating_remainder = False
 
     for operation in operations[start_index:]:
         if isinstance(operation, UnavailableProductionOperation):
@@ -1085,7 +1488,8 @@ def _validate_scope_and_authorization(
                 )
         if not _is_mutating(operation):
             continue
-        mutating_remainder = True
+        if _requires_project_write(operation):
+            project_mutating_remainder = True
         categories = _operation_categories(operation)
         if request.interaction_policy == "plan_only":
             blockers.append(
@@ -1127,6 +1531,7 @@ def _validate_scope_and_authorization(
             "plugin_parameters": preserve.mixer_state,
             "automation": preserve.mixer_state,
             "pattern_metadata": preserve.pattern_identity,
+            "sound_selection": preserve.sound_palette,
         }
         for category in categories:
             if forbidden.get(category, False):
@@ -1137,6 +1542,29 @@ def _validate_scope_and_authorization(
                         f"Operation {operation.operation_id!r} would change preserved {category.replace('_', ' ')}.",
                         operation_id=operation.operation_id,
                     )
+                )
+        if isinstance(operation, ApplySoundPaletteOperation) and preserve.sound_roles:
+            preserved_roles = {item.casefold() for item in preserve.sound_roles}
+            if isinstance(operation.palette, SoundPalettePlan):
+                changed_roles = {
+                    item.role_id.casefold()
+                    for item in operation.palette.assignments
+                    if not operation.role_ids
+                    or item.role_id.casefold()
+                    in {role.casefold() for role in operation.role_ids}
+                }
+                for role_id in sorted(changed_roles.intersection(preserved_roles)):
+                    blockers.append(
+                        _blocker(
+                            "scope",
+                            "preserved_sound_role",
+                            f"Operation {operation.operation_id!r} would change preserved sound role {role_id!r}.",
+                            operation_id=operation.operation_id,
+                        )
+                    )
+            else:
+                warnings.append(
+                    f"Operation {operation.operation_id!r} references a planned palette; preserved sound roles will be checked again before its first preset change."
                 )
         targets = _operation_targets(operation)
         for target in targets:
@@ -1189,7 +1617,7 @@ def _validate_scope_and_authorization(
                     )
 
     if (
-        mutating_remainder
+        project_mutating_remainder
         and request.interaction_policy != "plan_only"
         and not request.authorized_to_modify
     ):
@@ -1243,6 +1671,68 @@ def _structural_validation(
                 "duplicate_operation_id",
                 f"Operation ID {operation_id!r} is duplicated.",
                 operation_id=operation_id,
+            )
+        )
+
+    def estimated_palette_roles(
+        operation: ApplySoundPaletteOperation,
+        *,
+        seen: frozenset[str] = frozenset(),
+    ) -> int:
+        if operation.role_ids:
+            return len(operation.role_ids)
+        if isinstance(
+            operation.palette, (SoundPalettePlan, SoundPaletteVariationPlan)
+        ):
+            return len(operation.palette.assignments)
+        if operation.operation_id in seen:
+            return MAX_ROLE_COUNT
+        producer_index = positions.get(operation.palette.operation_id)
+        if producer_index is None:
+            return MAX_ROLE_COUNT
+        producer = operations[producer_index]
+        if isinstance(producer, PlanSoundPaletteOperation):
+            return len(producer.request.roles)
+        if isinstance(producer, CreateSoundPaletteVariationOperation):
+            return len(producer.request.roles)
+        if isinstance(producer, ApplySoundPaletteOperation):
+            return estimated_palette_roles(
+                producer, seen=seen | {operation.operation_id}
+            )
+        return MAX_ROLE_COUNT
+
+    estimated_outputs = 0
+    for operation in operations:
+        if isinstance(operation, PlanSoundPaletteOperation):
+            estimated_outputs += 1 + len(operation.request.roles) * 2
+        elif isinstance(operation, ApplySoundPaletteOperation):
+            estimated_outputs += 1 + estimated_palette_roles(operation) * 2
+        elif isinstance(operation, CreateSoundPaletteVariationOperation):
+            estimated_outputs += 1 + len(operation.request.roles) * 2
+        else:
+            estimated_outputs += len(
+                {
+                    output
+                    for output in _output_types(operation)
+                    if output
+                    not in {
+                        "palette_assignment",
+                        "generator_target",
+                        "pattern_preparation",
+                        "pattern_selection",
+                        "piano_roll_dispatch",
+                        "arrangement_marker_receipt",
+                        "automation_record_receipt",
+                        "verified_batch_receipt",
+                    }
+                }
+            )
+    if estimated_outputs > MAX_PRODUCTION_OUTPUTS:
+        blockers.append(
+            _blocker(
+                "malformed_plan",
+                "generated_output_limit_exceeded",
+                f"This plan may produce {estimated_outputs} typed outputs; Production Runs store at most {MAX_PRODUCTION_OUTPUTS}.",
             )
         )
 
@@ -1316,22 +1806,46 @@ def _structural_validation(
                         operation_id=operation.operation_id,
                     )
                 )
+        for reference in _operation_references(operation):
+            producer_index = positions.get(reference.operation_id)
+            if producer_index is None or producer_index >= index:
+                continue
+            producer = operations[producer_index]
+            if reference.output not in _output_types(producer):
+                blockers.append(
+                    _blocker(
+                        "malformed_plan",
+                        "incompatible_output_reference",
+                        f"Operation {operation.operation_id!r} needs {reference.output!r}, but {producer.operation_id!r} produces {', '.join(_output_types(producer)) or 'no typed output'}.",
+                        operation_id=operation.operation_id,
+                    )
+                )
+                continue
+            if reference.role_id is not None:
+                palette: SoundPalettePlan | None = None
+                if isinstance(producer, ApplySoundPaletteOperation) and isinstance(
+                    producer.palette, SoundPalettePlan
+                ):
+                    palette = producer.palette
+                if palette is not None and not any(
+                    item.role_id.casefold() == reference.role_id.casefold()
+                    for item in palette.assignments
+                ):
+                    blockers.append(
+                        _blocker(
+                            "malformed_plan",
+                            "missing_palette_role_reference",
+                            f"Operation {operation.operation_id!r} refers to role {reference.role_id!r}, which the earlier palette does not assign.",
+                            operation_id=operation.operation_id,
+                        )
+                    )
         if isinstance(operation, WriteNoteSequenceOperation) and isinstance(
             operation.sequence, OperationOutputReference
         ):
             producer_index = positions.get(operation.sequence.operation_id)
             if producer_index is not None and producer_index < index:
                 producer = operations[producer_index]
-                if _output_type(producer) != operation.sequence.output:
-                    blockers.append(
-                        _blocker(
-                            "malformed_plan",
-                            "incompatible_output_reference",
-                            f"Operation {operation.operation_id!r} needs a note sequence, but {producer.operation_id!r} produces {_output_type(producer)!r}.",
-                            operation_id=operation.operation_id,
-                        )
-                    )
-                else:
+                if operation.sequence.output in _output_types(producer):
                     note_count = generated_note_counts.get(producer.operation_id)
                     if note_count is not None and not (
                         1 <= note_count <= MAX_PIANO_ROLL_NOTES
@@ -1344,7 +1858,22 @@ def _structural_validation(
                                 operation_id=operation.operation_id,
                             )
                         )
-        elif isinstance(operation, WriteNoteSequenceOperation):
+        if isinstance(operation, ApplySoundPaletteOperation) and isinstance(
+            operation.palette, (SoundPalettePlan, SoundPaletteVariationPlan)
+        ):
+            if operation.palette.blockers:
+                blockers.append(
+                    _blocker(
+                        "unavailable_in_project",
+                        "sound_palette_has_blockers",
+                        f"Operation {operation.operation_id!r} cannot apply a palette that has unresolved blockers.",
+                        operation_id=operation.operation_id,
+                        evidence=operation.palette.blockers[:16],
+                    )
+                )
+        if isinstance(operation, WriteNoteSequenceOperation) and isinstance(
+            operation.sequence, NoteSequence
+        ):
             note_count = operation.sequence.note_count
             if not 1 <= note_count <= MAX_PIANO_ROLL_NOTES:
                 blockers.append(
@@ -1742,8 +2271,23 @@ def _live_validation(
     """Inspect only current capabilities needed by the unexecuted remainder."""
 
     operations = plan.operations[start_index:]
-    mutating = [operation for operation in operations if _is_mutating(operation)]
-    if not mutating or request.interaction_policy == "plan_only":
+    project_mutating = [
+        operation for operation in operations if _requires_project_write(operation)
+    ]
+    live_reading = [
+        operation
+        for operation in operations
+        if isinstance(
+            operation,
+            (
+                PlanSoundPaletteOperation,
+                CreateSoundPaletteVariationOperation,
+                InspectDrumMapOperation,
+            ),
+        )
+    ]
+    live_operations = [*project_mutating, *live_reading]
+    if not live_operations:
         return [], [], None, None
 
     blockers: list[ProductionBlocker] = []
@@ -1765,7 +2309,7 @@ def _live_validation(
             None,
             None,
         )
-    if not connection.bridge_provenance_verified:
+    if project_mutating and not connection.bridge_provenance_verified:
         blockers.append(
             _blocker(
                 "setup_or_session",
@@ -1774,7 +2318,7 @@ def _live_validation(
                 evidence=(connection.bridge_provenance,),
             )
         )
-    if not connection.runtime_write_mode_control:
+    if project_mutating and not connection.runtime_write_mode_control:
         blockers.append(
             _blocker(
                 "setup_or_session",
@@ -1793,7 +2337,7 @@ def _live_validation(
         )
         return blockers, warnings, None, None
 
-    if any(isinstance(operation, _PIANO_ROLL_TYPES) for operation in mutating):
+    if any(isinstance(operation, _PIANO_ROLL_TYPES) for operation in project_mutating):
         try:
             piano = PIANO_ROLL.status()
         except Exception as exc:
@@ -1827,13 +2371,15 @@ def _live_validation(
         )
         return blockers, warnings, session, None
 
-    project_digest = _project_state_digest(project)
+    project_digest = (
+        _project_state_digest(project) if project_mutating else None
+    )
 
     track_inspector = TrackBInspector()
     blockers.extend(
         _validate_live_targets(
             request,
-            mutating,
+            live_operations,
             project,
             connection,
             inspector,
@@ -1842,7 +2388,7 @@ def _live_validation(
     )
     blockers.extend(
         _validate_live_operation_capabilities(
-            mutating,
+            live_operations,
             project,
             inspector,
             track_inspector,
@@ -1869,7 +2415,10 @@ def _live_validation(
             )
         )
     else:
-        if _project_state_digest(final_project) != project_digest:
+        if (
+            project_digest is not None
+            and _project_state_digest(final_project) != project_digest
+        ):
             blockers.append(
                 _blocker(
                     "setup_or_session",
@@ -1946,43 +2495,484 @@ def validate_production_run(
 
 def _resolve_sequence(
     operation: WriteNoteSequenceOperation,
-    outputs: dict[str, ProductionGeneratedOutput],
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
 ) -> NoteSequence:
     if isinstance(operation.sequence, NoteSequence):
         return operation.sequence
-    output = outputs.get(operation.sequence.operation_id)
-    if output is None or output.output != operation.sequence.output:
-        # Complete validation and ordered execution should make this
-        # unreachable. Keep it fail-closed in case registry state is corrupt.
+    value = _resolve_output_reference(operation.sequence, outputs)
+    if not isinstance(value, NoteSequence):
+        raise ValueError("the referenced output is not a note sequence")
+    return value
+
+
+def _output_key(
+    operation_id: str, output: str, role_id: str | None
+) -> tuple[str, str, str | None]:
+    return operation_id, output, None if role_id is None else role_id.casefold()
+
+
+def _resolve_output_record(
+    reference: OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> ProductionGeneratedOutput:
+    output = outputs.get(
+        _output_key(reference.operation_id, reference.output, reference.role_id)
+    )
+    if output is None and reference.role_id is None:
+        # Preserve the private adapter shape used by v0.20 tests and callers;
+        # registry-owned state always uses the fully typed selector key.
+        output = cast(Any, outputs).get(reference.operation_id)
+    if output is None:
         raise ValueError(
-            f"note sequence output {operation.sequence.operation_id!r} is unavailable"
+            f"{reference.output} output {reference.operation_id!r}"
+            + (
+                ""
+                if reference.role_id is None
+                else f" for role {reference.role_id!r}"
+            )
+            + " is unavailable"
         )
-    return output.value
+    return cast(ProductionGeneratedOutput, output)
+
+
+def _resolve_output_reference(
+    reference: OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> object:
+    return _resolve_output_record(reference, outputs).value
+
+
+def _resolve_plugin_target_with_proof(
+    value: PluginTarget | OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> tuple[PluginTarget, str | None]:
+    if not isinstance(value, OperationOutputReference):
+        return value, None
+    output = _resolve_output_record(value, outputs)
+    resolved = output.value
+    if isinstance(resolved, ChannelGeneratorTarget):
+        return resolved, output.target_fingerprint
+    if isinstance(resolved, SoundPaletteAssignment):
+        if resolved.target is None:
+            raise ValueError(
+                f"palette role {resolved.role_id!r} has no loaded plug-in target"
+            )
+        assignment_fingerprint = resolved.target_fingerprint
+        output_fingerprint = output.target_fingerprint
+        if (
+            assignment_fingerprint is not None
+            and output_fingerprint is not None
+            and assignment_fingerprint != output_fingerprint
+        ):
+            raise ValueError(
+                f"palette role {resolved.role_id!r} has conflicting target fingerprints"
+            )
+        return resolved.target, assignment_fingerprint or output_fingerprint
+    raise ValueError("the referenced palette output does not identify a plug-in target")
+
+
+def _resolve_plugin_target(
+    value: PluginTarget | OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> PluginTarget:
+    return _resolve_plugin_target_with_proof(value, outputs)[0]
+
+
+def _resolve_operation_plugin_target(
+    value: PluginTarget | OperationOutputReference,
+    expected_fingerprint: str | None,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> tuple[PluginTarget, str | None]:
+    target, referenced_fingerprint = _resolve_plugin_target_with_proof(
+        value, outputs
+    )
+    if (
+        expected_fingerprint is not None
+        and referenced_fingerprint is not None
+        and expected_fingerprint != referenced_fingerprint
+    ):
+        raise ValueError(
+            "the operation target_fingerprint does not match the referenced target"
+        )
+    if (
+        isinstance(value, OperationOutputReference)
+        and expected_fingerprint is None
+        and referenced_fingerprint is None
+    ):
+        raise ValueError(
+            "a referenced plug-in target must carry target_fingerprint proof"
+        )
+    return target, expected_fingerprint or referenced_fingerprint
+
+
+def _resolve_channel_index(
+    value: int | OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> int:
+    return _resolve_channel_target(value, outputs)[0]
+
+
+def _resolve_channel_target(
+    value: int | OperationOutputReference,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> tuple[int, str | None]:
+    """Resolve a Piano Roll channel and retain any typed target proof."""
+
+    if isinstance(value, int):
+        return value, None
+    target, target_fingerprint = _resolve_plugin_target_with_proof(value, outputs)
+    if not isinstance(target, ChannelGeneratorTarget):
+        raise ValueError("Piano Roll writes require a Channel Rack generator target")
+    return target.channel_index, target_fingerprint
+
+
+def _resolve_drum_map(
+    value: DrumPadMap | OperationOutputReference | None,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> DrumPadMap | None:
+    if value is None or isinstance(value, DrumPadMap):
+        return value
+    resolved = _resolve_output_reference(value, outputs)
+    if not isinstance(resolved, DrumPadMap):
+        raise ValueError("the referenced output is not a drum map")
+    return resolved
+
+
+def _semantic_drum_map(
+    observed: PluginPadMap,
+    *,
+    required_roles: tuple[str, ...],
+) -> DrumPadMap:
+    result = convert_plugin_pad_map(
+        observed,
+        observed.plugin.target,
+        target_fingerprint=observed.plugin.target_fingerprint,
+        required_roles=required_roles,
+    )
+    if result is None:
+        raise ValueError("FL did not return a usable plug-in pad map")
+    return result
+
+
+def _generated_outputs_for(
+    operation: ProductionOperation,
+    result: ProductionResultPayload,
+) -> tuple[ProductionGeneratedOutput, ...]:
+    rows: list[ProductionGeneratedOutput] = []
+
+    def add(
+        output: str,
+        value: object,
+        role_id: str | None = None,
+        *,
+        target_fingerprint: str | None = None,
+    ) -> None:
+        rows.append(
+            ProductionGeneratedOutput(
+                operation_id=operation.operation_id,
+                output=cast(Any, output),
+                role_id=role_id,
+                value=cast(Any, value),
+                target_fingerprint=target_fingerprint,
+            )
+        )
+
+    if isinstance(result, NoteSequence):
+        add("note_sequence", result)
+    elif isinstance(result, SoundSelectionApplyResult):
+        add("sound_palette", result.state)
+        verified_ids = {
+            item.assignment_id
+            for item in result.assignment_receipts
+            if item.verified
+        }
+        for assignment in result.assignment_scope:
+            if assignment.assignment_id not in verified_ids:
+                continue
+            add(
+                "palette_assignment",
+                assignment,
+                assignment.role_id,
+                target_fingerprint=assignment.target_fingerprint,
+            )
+            if isinstance(assignment.target, ChannelGeneratorTarget):
+                add(
+                    "generator_target",
+                    assignment.target,
+                    assignment.role_id,
+                    target_fingerprint=assignment.target_fingerprint,
+                )
+    elif isinstance(result, (SoundPalettePlan, SoundPaletteState)):
+        add("sound_palette", result)
+        for assignment in result.assignments:
+            add(
+                "palette_assignment",
+                assignment,
+                assignment.role_id,
+                target_fingerprint=assignment.target_fingerprint,
+            )
+            if isinstance(assignment.target, ChannelGeneratorTarget):
+                add(
+                    "generator_target",
+                    assignment.target,
+                    assignment.role_id,
+                    target_fingerprint=assignment.target_fingerprint,
+                )
+    elif isinstance(result, SoundPaletteVariationPlan):
+        add("section_variation", result)
+        for assignment in result.assignments:
+            add(
+                "palette_assignment",
+                assignment,
+                assignment.role_id,
+                target_fingerprint=assignment.target_fingerprint,
+            )
+            if isinstance(assignment.target, ChannelGeneratorTarget):
+                add(
+                    "generator_target",
+                    assignment.target,
+                    assignment.role_id,
+                    target_fingerprint=assignment.target_fingerprint,
+                )
+    elif isinstance(result, DrumPadMap):
+        add("drum_map", result)
+    elif isinstance(result, VerifiedPluginPresetSelection):
+        add("selected_preset", result)
+    elif isinstance(result, SelectedDrumKitReceipt):
+        add("selected_preset", result.selection)
+        if result.verified:
+            add("drum_map", result.drum_map)
+    return tuple(rows)
+
+
+def _read_only_result_blocker(
+    operation: ProductionOperation,
+    result: ProductionResultPayload,
+) -> ProductionBlocker | None:
+    if isinstance(result, SoundPalettePlan) and result.blockers:
+        return _blocker(
+            "unavailable_in_project",
+            "sound_palette_planning_blocked",
+            result.blockers[0],
+            operation_id=operation.operation_id,
+            evidence=result.blockers[:16],
+        )
+    if isinstance(result, SoundPaletteVariationPlan) and result.blockers:
+        return _blocker(
+            "unavailable_in_project",
+            "sound_palette_variation_blocked",
+            result.blockers[0],
+            operation_id=operation.operation_id,
+            evidence=result.blockers[:16],
+        )
+    if isinstance(operation, InspectDrumMapOperation) and isinstance(
+        result, DrumPadMap
+    ):
+        missing = result.missing_required(operation.required_roles)
+        if missing:
+            return _blocker(
+                "unavailable_in_project",
+                "required_drum_roles_unmapped",
+                "The selected drum instrument does not expose mappings for: "
+                + ", ".join(missing)
+                + ".",
+                operation_id=operation.operation_id,
+                evidence=tuple(missing),
+            )
+    return None
 
 
 def _operation_dependencies(operation: ProductionOperation) -> tuple[str, ...]:
     dependencies = list(operation.after)
-    if isinstance(operation, WriteNoteSequenceOperation) and isinstance(
-        operation.sequence, OperationOutputReference
-    ):
-        dependencies.append(operation.sequence.operation_id)
+    dependencies.extend(
+        reference.operation_id for reference in _operation_references(operation)
+    )
     return tuple(dict.fromkeys(dependencies))
+
+
+def _operation_references(
+    operation: ProductionOperation,
+) -> tuple[OperationOutputReference, ...]:
+    references: list[OperationOutputReference] = []
+    if isinstance(operation, GenerateDrumsOperation) and isinstance(
+        operation.drum_map, OperationOutputReference
+    ):
+        references.append(operation.drum_map)
+    if isinstance(operation, WriteNoteSequenceOperation):
+        if isinstance(operation.sequence, OperationOutputReference):
+            references.append(operation.sequence)
+        if isinstance(operation.channel_index, OperationOutputReference):
+            references.append(operation.channel_index)
+    if isinstance(operation, ApplySoundPaletteOperation) and isinstance(
+        operation.palette, OperationOutputReference
+    ):
+        references.append(operation.palette)
+    if isinstance(operation, CreateSoundPaletteVariationOperation) and isinstance(
+        operation.palette, OperationOutputReference
+    ):
+        references.append(operation.palette)
+    if isinstance(
+        operation,
+        (
+            SelectPluginPresetOperation,
+            InspectDrumMapOperation,
+            SelectDrumKitOperation,
+        ),
+    ) and isinstance(operation.target, OperationOutputReference):
+        references.append(operation.target)
+    return tuple(references)
 
 
 def _dispatch_operation(
     operation: ProductionOperation,
     *,
     session_fingerprint: str | None,
-    outputs: dict[str, ProductionGeneratedOutput],
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
 ) -> ProductionResultPayload:
     """Adapt one production operation to an existing PostFader implementation."""
 
+    if isinstance(operation, GenerateDrumsOperation):
+        return compose_drums(
+            style=operation.style,
+            bars=operation.bars,
+            beats_per_bar=operation.beats_per_bar,
+            seed=operation.seed,
+            swing=operation.swing,
+            tempo_bpm=operation.tempo_bpm,
+            drum_map=_resolve_drum_map(operation.drum_map, outputs),
+        )
     if isinstance(operation, _GENERATOR_TYPES):
         return _generate_sequence(operation)
+    if isinstance(operation, PlanSoundPaletteOperation):
+        from .sound_selection.executor import SOUND_SELECTION
+
+        return SOUND_SELECTION.plan(operation.request)
+    if isinstance(operation, CreateSoundPaletteVariationOperation):
+        from .sound_selection.executor import SOUND_SELECTION
+
+        if isinstance(operation.palette, str):
+            palette_id = operation.palette
+        else:
+            source = _resolve_output_reference(operation.palette, outputs)
+            if not isinstance(source, (SoundPalettePlan, SoundPaletteState)):
+                raise ValueError("the referenced output is not a sound palette")
+            palette_id = source.palette_id
+        return SOUND_SELECTION.create_variation(
+            palette_id,
+            operation.request,
+            section=operation.section,
+            replace_roles=operation.replace_roles,
+        )
+    if isinstance(operation, InspectDrumMapOperation):
+        target = _resolve_plugin_target(operation.target, outputs)
+        observed = TrackBInspector().inspect_plugin_pad_map(target=target)
+        return _semantic_drum_map(
+            observed,
+            required_roles=operation.required_roles,
+        )
+    if isinstance(operation, RecordSoundFeedbackOperation):
+        from .sound_selection.executor import SOUND_SELECTION
+
+        recorded = SOUND_SELECTION.record_feedback(operation.feedback)
+        if isinstance(recorded, SoundFeedbackReceipt):
+            return recorded
+        persisted = bool(getattr(recorded, "persisted", recorded))
+        history_path = getattr(recorded, "history_path", None)
+        if history_path is None:
+            history_path = getattr(getattr(recorded, "history", None), "path", None)
+        return SoundFeedbackReceipt(
+            palette_id=operation.feedback.palette_id,
+            role_id=operation.feedback.role_id,
+            verdict=operation.feedback.verdict,
+            persisted=persisted,
+            history_path=history_path,
+        )
     if isinstance(operation, UnavailableProductionOperation):
         raise ValueError(_UNAVAILABLE_OPERATION_MESSAGES[operation.operation])
     if session_fingerprint is None:
         raise ValueError("a project mutation requires the captured session fingerprint")
+    if isinstance(operation, ApplySoundPaletteOperation):
+        from .sound_selection.executor import SOUND_SELECTION
+
+        if isinstance(
+            operation.palette, (SoundPalettePlan, SoundPaletteVariationPlan)
+        ):
+            palette: SoundPalettePlan | SoundPaletteVariationPlan | str = (
+                operation.palette
+            )
+        else:
+            source = _resolve_output_reference(operation.palette, outputs)
+            if isinstance(source, SoundPalettePlan):
+                palette = source
+            elif isinstance(source, SoundPaletteState):
+                palette = source.palette_id
+            elif isinstance(source, SoundPaletteVariationPlan):
+                palette = source
+            else:
+                raise ValueError(
+                    "the referenced output is not a sound palette or section variation"
+                )
+        result = SOUND_SELECTION.apply(
+            palette,
+            session_fingerprint=session_fingerprint,
+            authorized_to_modify=True,
+            role_ids=operation.role_ids,
+            write_mode_already_enabled=True,
+        )
+        if not isinstance(result, SoundSelectionApplyResult):
+            raise ValueError("Sound Selection returned an invalid application result")
+        return result
+    if isinstance(operation, SelectPluginPresetOperation):
+        target, target_fingerprint = _resolve_operation_plugin_target(
+            operation.target, operation.target_fingerprint, outputs
+        )
+        return TrackBController().select_plugin_preset(
+            target=target,
+            preset_name=operation.preset_name,
+            preset_index=operation.preset_index,
+            expected_current=operation.expected_current,
+            session_fingerprint=session_fingerprint,
+            target_fingerprint=target_fingerprint,
+            max_navigation_steps=operation.max_navigation_steps,
+            settle_tick_limit=operation.settle_tick_limit,
+        )
+    if isinstance(operation, SelectDrumKitOperation):
+        target, target_fingerprint = _resolve_operation_plugin_target(
+            operation.target, operation.target_fingerprint, outputs
+        )
+        selection = TrackBController().select_plugin_preset(
+            target=target,
+            preset_name=operation.preset_name,
+            preset_index=operation.preset_index,
+            expected_current=operation.expected_current,
+            session_fingerprint=session_fingerprint,
+            target_fingerprint=target_fingerprint,
+            max_navigation_steps=operation.max_navigation_steps,
+            settle_tick_limit=operation.settle_tick_limit,
+        )
+        if not selection.verified:
+            return selection
+        observed = TrackBInspector().inspect_plugin_pad_map(target=target)
+        if observed.session_fingerprint != session_fingerprint:
+            raise ValueError("FL changed sessions before the selected drum map was read")
+        observed_fingerprint = observed.plugin.target_fingerprint
+        if (
+            target_fingerprint is not None
+            and observed_fingerprint != target_fingerprint
+        ):
+            raise ValueError(
+                "FL changed the selected drum target before its pad map was read"
+            )
+        drum_map = _semantic_drum_map(
+            observed,
+            required_roles=operation.required_roles,
+        )
+        return SelectedDrumKitReceipt(
+            selection=selection,
+            drum_map=drum_map,
+            required_roles=operation.required_roles,
+            missing_roles=drum_map.missing_required(operation.required_roles),
+        )
     if isinstance(operation, PreparePatternOperation):
         return prepare_empty_pattern(
             name=operation.name,
@@ -1999,13 +2989,26 @@ def _dispatch_operation(
         )
     if isinstance(operation, WriteNoteSequenceOperation):
         sequence = _resolve_sequence(operation, outputs)
+        channel_index, target_fingerprint = _resolve_channel_target(
+            operation.channel_index, outputs
+        )
+        if target_fingerprint is None:
+            return write_piano_roll_notes(
+                sequence.notes,
+                channel_index=channel_index,
+                pattern_number=operation.pattern_number,
+                mode=operation.mode,
+                auto_trigger=True,
+                session_fingerprint=session_fingerprint,
+            )
         return write_piano_roll_notes(
             sequence.notes,
-            channel_index=operation.channel_index,
+            channel_index=channel_index,
             pattern_number=operation.pattern_number,
             mode=operation.mode,
             auto_trigger=True,
             session_fingerprint=session_fingerprint,
+            target_fingerprint=target_fingerprint,
         )
     if isinstance(operation, TransformPianoRollOperation):
         return transform_piano_roll(
@@ -2036,6 +3039,237 @@ def _dispatch_operation(
             session_fingerprint=session_fingerprint,
         )
     raise AssertionError("unhandled production operation")
+
+
+def _production_target_from_plugin(target: PluginTarget) -> ProductionTarget:
+    if target.kind == "mixer_effect":
+        return ProductionTarget(kind="mixer_track", index=target.track_index)
+    return ProductionTarget(kind="channel", index=target.channel_index)
+
+
+def _runtime_target_allowed(
+    request: ProductionRunRequest,
+    operation: ProductionOperation,
+    target: PluginTarget,
+) -> ProductionBlocker | None:
+    production_target = _production_target_from_plugin(target)
+    for preserved in request.preserve.targets:
+        if _same_index_target(production_target, preserved) and not _target_explicitly_allowed(
+            operation, production_target
+        ):
+            return _blocker(
+                "scope",
+                "preserved_target",
+                f"Operation {operation.operation_id!r} targets preserved {production_target.kind} {production_target.index}.",
+                operation_id=operation.operation_id,
+            )
+    if request.scope.kind != "selected_targets":
+        return None
+    indexed = tuple(
+        item
+        for item in request.scope.targets
+        if item.kind == production_target.kind and item.index is not None
+    )
+    if any(_same_index_target(production_target, item) for item in indexed):
+        return None
+    named = tuple(
+        item
+        for item in request.scope.targets
+        if item.kind == production_target.kind and item.name is not None
+    )
+    if named:
+        try:
+            if production_target.kind == "channel":
+                live_names = {
+                    item.channel_index: item.name
+                    for item in TrackBInspector().list_channels().channels
+                }
+            else:
+                live_names = {
+                    item.index: item.name
+                    for item in ReadOnlyInspector()
+                    .list_mixer_tracks(only_used=False, include_peaks=False)
+                    .tracks
+                }
+        except Exception as exc:
+            return _blocker(
+                "setup_or_session",
+                "dynamic_sound_target_check_failed",
+                f"Operation {operation.operation_id!r} could not resolve its selected target before writing: {exc}",
+                operation_id=operation.operation_id,
+            )
+        name = live_names.get(cast(int, production_target.index), "")
+        if any(item.name and item.name.casefold() == name.casefold() for item in named):
+            return None
+    return _blocker(
+        "scope",
+        "target_outside_scope",
+        f"Operation {operation.operation_id!r} resolved to {production_target.kind} {production_target.index}, outside the selected targets.",
+        operation_id=operation.operation_id,
+    )
+
+
+def _runtime_preflight_blocker(
+    request: ProductionRunRequest,
+    operation: ProductionOperation,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+    *,
+    expected_session: str | None,
+) -> ProductionBlocker | None:
+    """Resolve dynamic references and enforce scope before write mode changes."""
+
+    try:
+        if isinstance(operation, ApplySoundPaletteOperation):
+            if isinstance(
+                operation.palette,
+                (SoundPalettePlan, SoundPaletteVariationPlan),
+            ):
+                palette: SoundPalettePlan | SoundPaletteState | SoundPaletteVariationPlan = (
+                    operation.palette
+                )
+            else:
+                resolved = _resolve_output_reference(operation.palette, outputs)
+                if not isinstance(
+                    resolved,
+                    (SoundPalettePlan, SoundPaletteState, SoundPaletteVariationPlan),
+                ):
+                    raise ValueError(
+                        "the referenced output is not a sound palette or section variation"
+                    )
+                palette = resolved
+            palette_blockers = palette.blockers
+            if isinstance(palette, SoundPaletteVariationPlan):
+                from .sound_selection.executor import SOUND_SELECTION
+
+                lookup = SOUND_SELECTION.lookup(palette.base_palette_id)
+                if not lookup.found or lookup.state is None:
+                    return _blocker(
+                        "setup_or_session",
+                        "sound_palette_process_state_missing",
+                        "This section variation needs its process-local base Sound Palette. Plan it again in this MCP process before applying the variation.",
+                        operation_id=operation.operation_id,
+                    )
+                palette_session = lookup.state.session_identity
+                palette_blockers = tuple(
+                    dict.fromkeys((*lookup.state.blockers, *palette.blockers))
+                )
+            elif isinstance(palette, SoundPalettePlan):
+                palette_session = palette.inventory_session_fingerprint
+            else:
+                palette_session = palette.session_identity
+            if palette_blockers:
+                return _blocker(
+                    "unavailable_in_project",
+                    "sound_palette_has_blockers",
+                    palette_blockers[0],
+                    operation_id=operation.operation_id,
+                    evidence=palette_blockers[:16],
+                )
+            if (
+                expected_session is not None
+                and palette_session is not None
+                and palette_session != expected_session
+            ):
+                return _blocker(
+                    "setup_or_session",
+                    "sound_palette_session_changed",
+                    "The sound palette belongs to a different FL bridge session.",
+                    operation_id=operation.operation_id,
+                )
+            selected_roles = {item.casefold() for item in operation.role_ids}
+            available_roles = {
+                item.role_id.casefold() for item in palette.assignments
+            }
+            missing_roles = selected_roles - available_roles
+            if missing_roles:
+                return _blocker(
+                    "malformed_plan",
+                    "sound_palette_role_missing",
+                    "The sound palette does not assign requested roles: "
+                    + ", ".join(sorted(missing_roles))
+                    + ".",
+                    operation_id=operation.operation_id,
+                    evidence=tuple(sorted(missing_roles)),
+                )
+            preserved_roles = {
+                item.casefold() for item in request.preserve.sound_roles
+            }
+            for assignment in palette.assignments:
+                if selected_roles and assignment.role_id.casefold() not in selected_roles:
+                    continue
+                if assignment.role_id.casefold() in preserved_roles:
+                    return _blocker(
+                        "scope",
+                        "preserved_sound_role",
+                        f"Operation {operation.operation_id!r} would change preserved sound role {assignment.role_id!r}.",
+                        operation_id=operation.operation_id,
+                    )
+                if assignment.target is None:
+                    return _blocker(
+                        "unavailable_in_project",
+                        "sound_assignment_target_missing",
+                        f"Sound role {assignment.role_id!r} has no loaded target.",
+                        operation_id=operation.operation_id,
+                    )
+                denied = _runtime_target_allowed(
+                    request, operation, assignment.target
+                )
+                if denied is not None:
+                    return denied
+            return None
+        if isinstance(operation, WriteNoteSequenceOperation) and isinstance(
+            operation.channel_index, OperationOutputReference
+        ):
+            target, target_fingerprint = _resolve_plugin_target_with_proof(
+                operation.channel_index, outputs
+            )
+            if not isinstance(target, ChannelGeneratorTarget):
+                raise ValueError(
+                    "Piano Roll writes require a Channel Rack generator target"
+                )
+            if target_fingerprint is None:
+                return _blocker(
+                    "malformed_plan",
+                    "target_fingerprint_unavailable",
+                    f"Operation {operation.operation_id!r} references a plug-in target without target_fingerprint proof.",
+                    operation_id=operation.operation_id,
+                )
+            return _runtime_target_allowed(request, operation, target)
+        if isinstance(
+            operation, (SelectPluginPresetOperation, SelectDrumKitOperation)
+        ) and isinstance(
+            operation.target, OperationOutputReference
+        ):
+            target, target_fingerprint = _resolve_plugin_target_with_proof(
+                operation.target, outputs
+            )
+            if (
+                operation.target_fingerprint is not None
+                and target_fingerprint is not None
+                and operation.target_fingerprint != target_fingerprint
+            ):
+                return _blocker(
+                    "malformed_plan",
+                    "target_fingerprint_mismatch",
+                    f"Operation {operation.operation_id!r} target_fingerprint does not match its referenced target.",
+                    operation_id=operation.operation_id,
+                )
+            if operation.target_fingerprint is None and target_fingerprint is None:
+                return _blocker(
+                    "malformed_plan",
+                    "target_fingerprint_unavailable",
+                    f"Operation {operation.operation_id!r} references a plug-in target without target_fingerprint proof.",
+                    operation_id=operation.operation_id,
+                )
+            return _runtime_target_allowed(request, operation, target)
+    except Exception as exc:
+        return _blocker(
+            "malformed_plan",
+            "dynamic_output_reference_unavailable",
+            f"Operation {operation.operation_id!r} could not resolve its earlier output: {exc}",
+            operation_id=operation.operation_id,
+        )
+    return None
 
 
 def _capture_project_state(expected_session: str) -> tuple[str | None, str]:
@@ -2096,6 +3330,54 @@ def _classify_mutation_result(
                 else "The verified batch returned an unverified mutation receipt."
             ),
         )
+    if isinstance(result, SoundSelectionApplyResult):
+        receipts = {
+            item.assignment_id: item for item in result.assignment_receipts
+        }
+        failed = tuple(
+            assignment.role_id
+            for assignment in result.assignment_scope
+            if assignment.assignment_id not in receipts
+            or not receipts[assignment.assignment_id].verified
+        )
+        verified = not failed and not result.blockers
+        if verified:
+            return True, True, ""
+        return (
+            True,
+            False,
+            result.blockers[0]
+            if result.blockers
+            else "Sound Selection did not verify palette roles: "
+            + ", ".join(failed)
+            + ".",
+        )
+    if isinstance(result, SoundPaletteState):
+        failed = tuple(item for item in result.apply_receipts if not item.verified)
+        verified = result.status == "applied" and not failed and bool(
+            result.apply_receipts or not result.assignments
+        )
+        if verified:
+            return True, True, ""
+        return (
+            True,
+            False,
+            result.blockers[0]
+            if result.blockers
+            else "Sound Selection did not verify every requested preset assignment.",
+        )
+    if isinstance(result, SelectedDrumKitReceipt):
+        if result.verified:
+            return True, True, ""
+        return (
+            True,
+            False,
+            "The drum preset changed, but required pad roles are not mapped: "
+            + ", ".join(result.missing_roles)
+            + ".",
+        )
+    if isinstance(result, SoundFeedbackReceipt):
+        return True, True, ""
     if isinstance(result, (PatternPreparation, TrackBVerifiedMutation)):
         if result.verified:
             return True, True, ""
@@ -2125,7 +3407,9 @@ def _classify_mutation_result(
 class _RunRecord:
     plan: ProductionRunPlan
     state: ProductionRunState
-    outputs: dict[str, ProductionGeneratedOutput] = field(default_factory=dict)
+    outputs: dict[
+        tuple[str, str, str | None], ProductionGeneratedOutput
+    ] = field(default_factory=dict)
     stop_requested: bool = False
     claimed: bool = False
     in_flight_operation_id: str | None = None
@@ -2288,7 +3572,7 @@ class ProductionRunRegistry:
         start_index: int,
     ) -> ProductionRunState | None:
         mutation_pending = any(
-            _is_mutating(operation)
+            _requires_project_write(operation)
             for operation in record.plan.operations[start_index:]
         )
         if not mutation_pending:
@@ -2406,7 +3690,7 @@ class ProductionRunRegistry:
             error=f"{type(error).__name__}: {error}"[:2048],
         )
         checkpoint: str | None = None
-        if _is_mutating(operation) and session_fingerprint is not None:
+        if _requires_project_write(operation) and session_fingerprint is not None:
             checkpoint, _checkpoint_reason = _capture_project_state(
                 session_fingerprint
             )
@@ -2421,11 +3705,15 @@ class ProductionRunRegistry:
             state = record.state.model_copy(update=failure_update)
             record.state = state
         blocker = _blocker(
-            "unknown_outcome" if _is_mutating(operation) else "malformed_plan",
+            (
+                "unknown_outcome"
+                if _requires_project_write(operation)
+                else "malformed_plan"
+            ),
             "operation_failed_unknown",
             (
                 f"Operation {operation.operation_id!r} stopped with an unknown mutation outcome. It was not retried."
-                if _is_mutating(operation)
+                if _requires_project_write(operation)
                 else f"Operation {operation.operation_id!r} failed: {error}"
             ),
             operation_id=operation.operation_id,
@@ -2458,12 +3746,6 @@ class ProductionRunRegistry:
                 }
             )
             record.state = state
-        mode_failure = self._enable_write_mode(
-            record, validation=validation, start_index=start_index
-        )
-        if mode_failure is not None:
-            return self._result(mode_failure)
-
         session = record.state.session_fingerprint
         for index in range(start_index, len(record.plan.operations)):
             operation = record.plan.operations[index]
@@ -2491,7 +3773,24 @@ class ProductionRunRegistry:
                 )
                 return self._result(state)
 
-            if _is_mutating(operation):
+            if _requires_project_write(operation):
+                runtime_blocker = _runtime_preflight_blocker(
+                    record.state.request,
+                    operation,
+                    record.outputs,
+                    expected_session=record.state.session_fingerprint,
+                )
+                if runtime_blocker is not None:
+                    state = self._finish_blocked(record, runtime_blocker)
+                    return self._result(state)
+                if not record.state.write_mode_enabled_once:
+                    mode_failure = self._enable_write_mode(
+                        record,
+                        validation=validation,
+                        start_index=index,
+                    )
+                    if mode_failure is not None:
+                        return self._result(mode_failure)
                 if session is None:
                     state = self._finish_blocked(
                         record,
@@ -2542,11 +3841,8 @@ class ProductionRunRegistry:
                     session_fingerprint=session,
                 )
 
-            if isinstance(result, NoteSequence):
-                output = ProductionGeneratedOutput(
-                    operation_id=operation.operation_id,
-                    value=result,
-                )
+            if not _is_mutating(operation):
+                generated = _generated_outputs_for(operation, result)
                 receipt = ProductionOperationReceipt(
                     operation_index=index,
                     operation_id=operation.operation_id,
@@ -2558,13 +3854,34 @@ class ProductionRunRegistry:
                     result=result,
                 )
                 with self._lock:
-                    record.outputs[operation.operation_id] = output
+                    if (
+                        len(record.state.generated_outputs) + len(generated)
+                        > MAX_PRODUCTION_OUTPUTS
+                    ):
+                        state = self._finish_blocked(
+                            record,
+                            _blocker(
+                                "malformed_plan",
+                                "generated_output_limit_exceeded",
+                                "This run reached its bounded typed-output limit before another project change.",
+                                operation_id=operation.operation_id,
+                            ),
+                        )
+                        return self._result(state)
+                    for output in generated:
+                        record.outputs[
+                            _output_key(
+                                output.operation_id,
+                                output.output,
+                                output.role_id,
+                            )
+                        ] = output
                     state = record.state.model_copy(
                         update={
                             "receipts": (*record.state.receipts, receipt),
                             "generated_outputs": (
                                 *record.state.generated_outputs,
-                                output,
+                                *generated,
                             ),
                             "completed_operations": (
                                 *record.state.completed_operations,
@@ -2575,6 +3892,14 @@ class ProductionRunRegistry:
                         }
                     )
                     record.state = state
+                blocker = _read_only_result_blocker(operation, result)
+                if blocker is not None:
+                    state = self._finish_blocked(
+                        record,
+                        blocker,
+                        current_operation_index=index + 1,
+                    )
+                    return self._result(state)
                 continue
 
             try:
@@ -2591,8 +3916,9 @@ class ProductionRunRegistry:
                 )
             checkpoint_digest: str | None = None
             checkpoint_reason = ""
-            if session is not None:
+            if _requires_project_write(operation) and session is not None:
                 checkpoint_digest, checkpoint_reason = _capture_project_state(session)
+            generated = _generated_outputs_for(operation, result) if verified else ()
             receipt = ProductionOperationReceipt(
                 operation_index=index,
                 operation_id=operation.operation_id,
@@ -2604,8 +3930,35 @@ class ProductionRunRegistry:
                 result=result,
             )
             with self._lock:
+                if (
+                    len(record.state.generated_outputs) + len(generated)
+                    > MAX_PRODUCTION_OUTPUTS
+                ):
+                    state = self._finish_blocked(
+                        record,
+                        _blocker(
+                            "malformed_plan",
+                            "generated_output_limit_exceeded",
+                            "This run reached its bounded typed-output limit before another project change.",
+                            operation_id=operation.operation_id,
+                        ),
+                        current_operation_index=index + 1,
+                    )
+                    return self._result(state)
+                for output in generated:
+                    record.outputs[
+                        _output_key(
+                            output.operation_id,
+                            output.output,
+                            output.role_id,
+                        )
+                    ] = output
                 update: dict[str, Any] = {
                     "receipts": (*record.state.receipts, receipt),
+                    "generated_outputs": (
+                        *record.state.generated_outputs,
+                        *generated,
+                    ),
                     "current_operation_index": index + 1,
                     "updated_at": _now(),
                 }
@@ -2618,7 +3971,11 @@ class ProductionRunRegistry:
                     update["project_state_digest"] = checkpoint_digest
                 state = record.state.model_copy(update=update)
                 record.state = state
-            if verified and checkpoint_digest is None:
+            if (
+                verified
+                and _requires_project_write(operation)
+                and checkpoint_digest is None
+            ):
                 state = self._finish_blocked(
                     record,
                     _blocker(

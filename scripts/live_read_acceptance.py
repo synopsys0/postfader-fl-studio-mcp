@@ -55,6 +55,11 @@ def parse_args(argv=None):
     parser.add_argument("--pattern", type=int, default=1)
     parser.add_argument("--channel", type=int, default=0)
     parser.add_argument(
+        "--sound-selection-channel",
+        type=int,
+        help="Global channel index used for the Sound Selection pad-map read; defaults to --channel.",
+    )
+    parser.add_argument(
         "--midi-port",
         help="Exact virtual MIDI endpoint name. Omit to keep native MIDI disabled.",
     )
@@ -84,6 +89,7 @@ async def async_main(args, *, checkpoint=None):
         pattern_number=args.pattern,
         channel_index=args.channel,
         fixture_root=ROOT / "tests" / "fixtures" / "audio",
+        sound_selection_channel_index=args.sound_selection_channel,
     )
     if args.plan:
         value = {

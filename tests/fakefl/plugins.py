@@ -6,8 +6,7 @@ def _get(index, slotIndex):
         # channel rack generator
         if index >= len(_state.CHANNELS):
             return None
-        name = _state.CHANNELS[index].name
-        return _state.Plugin(name, [("Volume", 0.8), ("Pan", 0.5)])
+        return _state.CHANNELS[index].generator_plugin
     if index >= len(_state.TRACKS):
         return None
     return _state.TRACKS[index].slots.get(slotIndex)
@@ -114,15 +113,24 @@ def getParamValueString(paramIndex, index, slotIndex=-1, pickupMode=-1,
 
 
 def getPresetCount(index, slotIndex=-1, useGlobalIndex=False):
-    return 12
+    p = _get(index, slotIndex)
+    if p is None:
+        raise TypeError("no plugin")
+    return len(p.presets)
 
 
 def nextPreset(index, slotIndex=-1, useGlobalIndex=False):
-    pass
+    p = _get(index, slotIndex)
+    if p is None or not p.presets:
+        raise TypeError("no preset")
+    p.current_preset = (p.current_preset + 1) % len(p.presets)
 
 
 def prevPreset(index, slotIndex=-1, useGlobalIndex=False):
-    pass
+    p = _get(index, slotIndex)
+    if p is None or not p.presets:
+        raise TypeError("no preset")
+    p.current_preset = (p.current_preset - 1) % len(p.presets)
 
 
 def getColor(index, slotIndex=-1, flag=0, useGlobalIndex=False):
@@ -130,4 +138,34 @@ def getColor(index, slotIndex=-1, flag=0, useGlobalIndex=False):
 
 
 def getName(index, slotIndex=-1, flag=0, paramIndex=0, useGlobalIndex=False):
+    p = _get(index, slotIndex)
+    if p is None:
+        raise TypeError("no plugin")
+    if flag == getattr(__import__("midi"), "FPN_Preset", 6):
+        if paramIndex == getattr(__import__("midi"), "GPN_GetCurrentPreset", -1):
+            return p.presets[p.current_preset] if p.presets else ""
+        return p.presets[paramIndex]
+    if flag == getattr(__import__("midi"), "FPN_Semitone", 2):
+        return "Note %d" % paramIndex
     return getPluginName(index, slotIndex)
+
+
+def getPadInfo(index, slotIndex=-1, paramOption=0, paramIndex=-1,
+               useGlobalIndex=False):
+    import midi
+
+    p = _get(index, slotIndex)
+    if p is None:
+        raise TypeError("no plugin")
+    if paramOption == getattr(midi, "PAD_Count", 0):
+        return len(p.pads)
+    pad = p.pads[paramIndex]
+    if paramOption == getattr(midi, "PAD_Semitone", 1):
+        return pad.get("semitone")
+    if paramOption == getattr(midi, "PAD_Color", 2):
+        return pad.get("color")
+    if paramOption == getattr(midi, "PAD_Empty", 3):
+        return int(bool(pad.get("empty")))
+    if paramOption == getattr(midi, "PAD_Muted", 4):
+        return int(bool(pad.get("muted")))
+    raise ValueError("unknown pad option")

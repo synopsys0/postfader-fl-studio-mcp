@@ -52,6 +52,10 @@ from fl_studio_mcp.music_analysis import (  # noqa: E402
     analyze_tempo_and_key,
     transcribe_monophonic,
 )
+from fl_studio_mcp.sound_selection.models import (  # noqa: E402
+    DrumPadMap,
+    DrumRoleMapping,
+)
 from fl_studio_mcp.verified_writer import VerifiedWritesUnavailable  # noqa: E402
 
 
@@ -114,6 +118,29 @@ class CreativeTests(unittest.TestCase):
             self._bridge_write_state
         )
 
+    @staticmethod
+    def _drum_map(*roles: str) -> DrumPadMap:
+        pitches = {
+            "kick": 48,
+            "snare": 49,
+            "closed_hat": 50,
+            "open_hat": 51,
+        }
+        return DrumPadMap(
+            map_id="test-drum-map",
+            pad_count=len(roles),
+            mappings=tuple(
+                DrumRoleMapping(
+                    role=role,
+                    pad_index=index,
+                    midi_note=pitches[role],
+                    confidence=1.0,
+                    source="user_explicit",
+                )
+                for index, role in enumerate(roles)
+            ),
+        )
+
     def test_composition_is_deterministic_and_scale_bounded(self) -> None:
         chords = compose_chord_progression(
             ["I", "vi", "IV", "V7"], root="C", collection="major"
@@ -146,6 +173,46 @@ class CreativeTests(unittest.TestCase):
         self.assertTrue(bass.notes)
         self.assertGreater(drums.note_count, 40)
         self.assertIn("General MIDI", drums.warnings[0])
+
+    def test_typed_drum_map_retargets_roles_without_general_midi_warning(self) -> None:
+        drum_map = self._drum_map("kick", "snare", "closed_hat", "open_hat")
+        first = compose_drums(style="house", bars=2, seed=11, drum_map=drum_map)
+        second = compose_drums(style="house", bars=2, seed=11, drum_map=drum_map)
+
+        self.assertEqual(first.note_digest_sha256, second.note_digest_sha256)
+        self.assertEqual(first.warnings, [])
+        self.assertTrue({48, 49, 50, 51}.issubset({note.pitch for note in first.notes}))
+        self.assertTrue(all(note.pitch not in {36, 38, 42, 46} for note in first.notes))
+        trap = compose_drums(
+            style="trap",
+            bars=1,
+            seed=11,
+            drum_map=self._drum_map("kick", "snare", "closed_hat"),
+        )
+        self.assertTrue(trap.notes)
+        self.assertNotIn(51, {note.pitch for note in trap.notes})
+
+    def test_typed_drum_map_requires_roles_used_by_style_without_fallback(self) -> None:
+        with self.assertRaisesRegex(ValueError, "closed_hat"):
+            compose_drums(
+                style="dnb",
+                bars=1,
+                drum_map=self._drum_map("kick", "snare"),
+            )
+
+        with self.assertRaisesRegex(ValueError, "open_hat"):
+            compose_drums(
+                style="house",
+                bars=1,
+                drum_map=self._drum_map("kick", "snare", "closed_hat"),
+            )
+
+        with self.assertRaises(TypeError):
+            compose_drums(
+                style="dnb",
+                bars=1,
+                drum_map={"kick": 48},  # type: ignore[arg-type]
+            )
 
     def test_type1_midi_export_is_reopened_and_event_verified(self) -> None:
         track = MidiTrackSpec(
