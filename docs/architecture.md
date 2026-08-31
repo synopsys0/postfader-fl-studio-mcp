@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current public surface contains 99 tools and 8 resources.
+controller script. The current public surface contains 111 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -15,6 +15,7 @@ fl_studio_mcp/mcp_server.py
         ├── performance.py ────────┼── bridge_client.py
         ├── workflows.py ──────────┤
         ├── production_runs.py ────┤
+        ├── sound_selection/ ───────┤
         ├── mixing.py ─────────────┤
         ├── plugin_atlas_mcp.py ───┤
         ├── creative.py ───────────┤
@@ -38,7 +39,7 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 99 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 111 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
@@ -87,11 +88,13 @@ effect.
 Before dispatch, every mutation also requires the running bridge's stamped
 source SHA-256 to match the bridge packaged with the server. Reads remain
 available when provenance is missing or stale, but carry an explicit warning.
-An optional 32-character bridge-lifetime session fingerprint and typed
-`expected_before` state can close stale-decision races; the bridge rechecks
-both after resolving the target and immediately before it requests undo or
-mutates FL. The fingerprint is a concurrency token, not authentication or a
-durable project identity.
+Direct verified writes accept an optional 32-character bridge-lifetime session
+fingerprint and typed `expected_before` state to close stale-decision races;
+the bridge rechecks both after resolving the target and immediately before it
+requests undo or mutates FL. The high-level `sound_selection_apply` workflow
+requires that fingerprint in its public MCP contract because its palette
+service cannot apply without a live session token. The fingerprint is a
+concurrency token, not authentication or a durable project identity.
 
 ### Workflow engine
 
@@ -112,6 +115,24 @@ process-local registry, and ordered executor. It delegates composition and
 Piano Roll work to `creative.py` and direct project mutations to the existing
 verified writers and batch executor. The connected AI remains the creative
 planner; PostFader never embeds a model or interprets arbitrary chat itself.
+
+### Sound Selection
+
+`fl_studio_mcp/sound_selection/` keeps live sound inventory, bounded preset
+pages, descriptor evidence, deterministic scoring, palette planning,
+section-scoped variations, local usage history, and verified application
+separate from the MCP registration and Production Run executor. Its service
+uses the existing target-aware Track B model for mixer effects and global
+Channel Rack generators. Planning is metadata-only and read-only; application
+revalidates the loaded target and delegates exact preset navigation to the
+verified Track B controller. Atlas enriches product knowledge but never
+establishes loaded state or write permission. Loop Starter rerolling remains a
+separate dispatch-only path because FL exposes no stable selected-loop identity.
+
+The local history store is schema-versioned, bounded, thread-safe, and atomic.
+It contains only sound-choice usage and explicit feedback, never prompts,
+audio, project files, credentials, or transcripts. A plan does not update it;
+only successfully verified assignments may record usage.
 
 ### Creative pack
 
@@ -185,10 +206,10 @@ table:
 
 | Surface | Gate | Commands |
 | --- | --- | --- |
-| Read-only | Always | 15 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets, patterns, Playlist tracks, history, and sequencer reads |
+| Read-only | Always | 18 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets/pad maps, patterns, Playlist tracks, history, and sequencer reads |
 | Session capability control | Always; enabling requires confirmation and the current session fingerprint | `session.set_write_mode` |
-| Direct state changes | Current bridge session reports write mode | 39 MCP setters backed by 39 direct bridge commands across transport/project, mixer, channels, plug-ins, patterns, Playlist tracks, and sequencer state |
-| Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `creative.prepare_piano_roll`, `arrangement.add_markers`, and `automation.record_value` |
+| Direct state changes | Current bridge session reports write mode | 40 MCP setters backed by 40 direct bridge commands across transport/project, mixer, channels, plug-ins/presets, patterns, Playlist tracks, and sequencer state |
+| Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `channels.rerollLoopStarterLoop`, `creative.prepare_piano_roll`, `arrangement.add_markers`, and `automation.record_value` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
 the bridge's `available` list.

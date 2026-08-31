@@ -31,6 +31,11 @@ The AI client should preserve the user's intent when it builds the request:
   `plan_only` requests. The plans and generated material can be reviewed, but
   no write mode or project mutation is enabled.
 
+When the user delegates sound choice, the AI should include Sound Selection in
+the same run: inventory the loaded pool, plan the palette, apply it when the
+request authorizes changes, then write notes using the returned role targets.
+The user does not need a special Sound Selection command.
+
 The user does not need to say any of those policy names. They are internal
 run semantics inferred by the connected AI from the current request. A clear
 request to change the open project supplies task-scoped authorization when the
@@ -73,15 +78,34 @@ operation union supports:
 - applying supported Piano Roll transforms such as quantize, transpose,
   humanize, duplicate, delete, and clear;
 - adding section markers;
-- recording one supported automation value; and
+- recording one supported automation value;
+- planning and applying a Sound Palette, creating a section-scoped palette
+  variation, selecting an exact loaded plug-in preset or drum kit, inspecting a
+  drum map, and recording explicit local sound feedback; and
 - applying an existing closed verified batch of supported mixer, channel,
   pattern, Playlist-track metadata/state, tempo, routing, and loaded plug-in
   parameter changes.
 
-Generated sequences are structured outputs, not opaque Python objects. A later
-operation may refer to an earlier operation's output by operation ID when the
-reference type is compatible. References must point backward to an earlier
-operation, and the complete plan is validated before any project mutation.
+Generated sequences and sound palettes are structured outputs, not opaque
+Python objects. The sound operations are:
+
+| Operation | Result and use |
+| --- | --- |
+| `plan_sound_palette` | Read-only `sound_palette`, `palette_assignment`, and `generator_target` outputs. Planning does not change FL or history. |
+| `apply_sound_palette` | Authorized, verified application of a prior palette; returns a `sound_palette` state and per-role receipts. |
+| `create_sound_palette_variation` | Read-only `section_variation` plus changed `palette_assignment`/`generator_target` outputs; anchors remain unchanged unless explicitly replaced. |
+| `select_plugin_preset` | Exact `selected_preset` receipt for a loaded generator or mixer effect. |
+| `select_drum_kit` | Exact `selected_preset`, followed by a `drum_map` read and required-role validation. |
+| `inspect_drum_map` | Read-only `drum_map` output from a loaded target. |
+| `record_sound_feedback` | Explicit local accepted, rejected, or neutral feedback; no FL mutation. |
+
+A later operation may refer to an earlier output by operation ID when the
+reference type is compatible. `write_note_sequence.channel_index` accepts a
+`palette_assignment` or `generator_target` reference, and
+`generate_drums.drum_map` accepts a `drum_map` reference. Drum-map and target
+references can also feed the drum inspection/selection operations. References
+must point backward to an earlier operation, and the complete plan is
+validated before any project mutation.
 
 ## Execution and receipts
 
@@ -123,6 +147,14 @@ enables the in-memory write gate once and carries the captured session
 fingerprint through its operations; a session reload or changed target stops
 the run before the next mutation.
 
+Sound Palette application revalidates the loaded target and session before
+each exact preset sequence. It applies assignments in deterministic role order,
+records only successful verified assignments in local Sound Selection history,
+and keeps completed receipts immutable. A failed or unverified preset selection
+stops dependent operations; the run never retries an ambiguous mutation or
+claims rollback. Continuations should reference the existing palette and use a
+variation request so anchors remain stable across sections.
+
 ## Process-local lifetime
 
 Run state is held in a bounded, thread-safe registry in the PostFader MCP
@@ -134,6 +166,12 @@ may have expired from the bounded registry.
 
 PostFader changes the open project but does not save it automatically. Save a
 version manually in FL Studio after reviewing the receipts and warnings.
+
+Sound Selection chooses only from generators and effects already loaded in the
+current project. Atlas-only products can be recommended but cannot become run
+assignments, and PostFader cannot insert, remove, or replace plug-ins through
+the supported backend. Loop Starter is a separate explicit source strategy;
+its reroll has dispatch-only identity and is not a verified palette assignment.
 
 ## FL Studio boundaries
 

@@ -24,6 +24,14 @@ the specific control tested. Generic loaded-plug-in discovery remains
 available for unprofiled effects and Channel Rack generators through the
 existing plug-in tools.
 
+Sound Selection uses Atlas as one descriptor and role-suitability source when
+planning a palette. A product known to Atlas but absent from the live inventory
+can be recommended as a next step, but it cannot be assigned or selected by a
+run. A loaded product with no Atlas record remains eligible through its runtime
+name, target kind, preset identity, and user direction, with lower semantic
+confidence. Atlas adapter metadata does not replace live target validation or
+exact preset readback.
+
 ## Bundled snapshot
 
 The checked-in snapshot is dated 2026-08-30 and describes FL Studio 26.1.5.
@@ -146,5 +154,6 @@ Channel Rack generators remain distinct even when their display names are
 identical. It preserves generic discovery for names with no Atlas record.
 
 See [Tool and command reference](tool-contracts.md) for exact request and
-response contracts, and [Plug-in support](plugin-support.md) for the separate
-runtime parameter and compatibility-evidence workflow.
+response contracts, [Sound Selection](sound-selection.md) for palette and
+preset-selection behavior, and [Plug-in support](plugin-support.md) for the
+separate runtime parameter and compatibility-evidence workflow.

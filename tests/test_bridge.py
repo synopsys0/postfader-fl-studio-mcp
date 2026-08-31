@@ -537,6 +537,7 @@ def check_lean_writes(c):
               "mixer.set_send_level",
               "plugin.set_param", "plugin.set_param_display",
               "plugin.set_param_option",
+              "plugin.select_preset",
               "transport.set_playing", "transport.stop",
               "transport.set_song_position", "transport.set_loop_mode",
               "transport.set_tempo", "transport.set_recording",
@@ -550,6 +551,7 @@ def check_lean_writes(c):
               "automation.record_value",
               "channel.set_identity", "channel.route_to_mixer",
               "sequencer.set", "channel.trigger_note",
+              "channels.rerollLoopStarterLoop",
           })
     check("the write surface is exactly the published set",
           w.LEAN_WRITE_COMMANDS == published_writes,

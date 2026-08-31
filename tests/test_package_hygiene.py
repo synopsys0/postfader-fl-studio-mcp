@@ -368,6 +368,14 @@ with mock.patch.object(
             "fl_studio_mcp.plugin_atlas_data",
             declared["tool"]["setuptools"]["packages"],
         )
+        self.assertIn(
+            "fl_studio_mcp.sound_selection",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.sound_selection.data",
+            declared["tool"]["setuptools"]["packages"],
+        )
 
         atlas_data = files("fl_studio_mcp.plugin_atlas_data")
         source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
@@ -375,6 +383,13 @@ with mock.patch.object(
             relative = path.relative_to(source_data)
             with self.subTest(atlas_data=relative.as_posix()):
                 self.assertTrue(atlas_data.joinpath(*relative.parts).is_file())
+
+        sound_data = files("fl_studio_mcp.sound_selection.data")
+        source_sound_data = ROOT / "fl_studio_mcp" / "sound_selection" / "data"
+        for path in source_sound_data.rglob("*.json"):
+            relative = path.relative_to(source_sound_data)
+            with self.subTest(sound_data=relative.as_posix()):
+                self.assertTrue(sound_data.joinpath(*relative.parts).is_file())
 
     def test_runtime_modules_do_not_import_the_fl_controller_body(self) -> None:
         # `_bridge` has no __init__.py, but its directory may still be found as
@@ -390,6 +405,7 @@ with mock.patch.object(
         modules = list(package.glob("*.py"))
         modules.extend((package / "plugin_atlas").rglob("*.py"))
         modules.extend((package / "plugin_atlas_data").rglob("*.py"))
+        modules.extend((package / "sound_selection").rglob("*.py"))
         for module in modules:
             tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
             imports = []
@@ -438,12 +454,17 @@ with mock.patch.object(
                 "fl_studio_mcp._bridge",
                 "fl_studio_mcp.plugin_atlas",
                 "fl_studio_mcp.plugin_atlas_data",
+                "fl_studio_mcp.sound_selection",
+                "fl_studio_mcp.sound_selection.data",
             ],
         )
         self.assertFalse(metadata["tool"]["setuptools"]["include-package-data"])
         self.assertEqual(
             metadata["tool"]["setuptools"]["package-data"],
-            {"fl_studio_mcp.plugin_atlas_data": ["*.json", "**/*.json"]},
+            {
+                "fl_studio_mcp.plugin_atlas_data": ["*.json", "**/*.json"],
+                "fl_studio_mcp.sound_selection.data": ["*.json", "**/*.json"],
+            },
         )
 
     def test_offline_prototype_is_not_in_the_public_package(self) -> None:
@@ -564,6 +585,31 @@ with mock.patch.object(
                 for path in verifier.ATLAS_DATA_FILES
             )
         )
+
+    def test_distribution_verifier_pins_sound_selection_modules_and_data(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.SOUND_SELECTION_RUNTIME_MODULES)
+        self.assertTrue(verifier.SOUND_SELECTION_DATA_FILES)
+        self.assertLessEqual(
+            verifier.SOUND_SELECTION_RUNTIME_MODULES,
+            verifier.RUNTIME_MODULES,
+        )
+        self.assertTrue(
+            all(
+                path.startswith("fl_studio_mcp/sound_selection/data/")
+                and path.endswith(".json")
+                for path in verifier.SOUND_SELECTION_DATA_FILES
+            )
+        )
+        self.assertIn(
+            "/scripts/live_sound_selection_acceptance.py",
+            verifier.SDIST_REQUIRED_SUFFIXES,
+        )
+
+    def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 111)
+        self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
 
 
 if __name__ == "__main__":

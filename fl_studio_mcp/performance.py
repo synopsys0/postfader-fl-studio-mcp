@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timezone
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import TypeAdapter
 
@@ -28,6 +28,12 @@ from .track_b_contracts import (
     MAX_PATTERN_NAME_LENGTH,
     MAX_PATTERN_NUMBER,
     MAX_PLAYLIST_TRACK_NAME_LENGTH,
+    MAX_PLUGIN_PAD_COUNT,
+    MAX_PLUGIN_PRESET_COUNT,
+    MAX_PLUGIN_PRESET_NAME_LENGTH,
+    MAX_PLUGIN_PRESET_PAGE_SIZE,
+    MAX_PRESET_NAVIGATION_STEPS,
+    MAX_PRESET_SETTLE_TICKS,
     MAX_STEP_COUNT,
     MAX_VERIFIED_STEP_COUNT,
     PLAYBACK_SPEED_OMISSION_REASON,
@@ -64,6 +70,7 @@ from .track_b_contracts import (
     ExpectedStopState,
     ExpectedTempoState,
     LiveNoteDispatch,
+    LoopStarterRerollDispatch,
     LoopMode,
     MixerEffectTarget,
     NormalizedPluginTarget,
@@ -72,6 +79,14 @@ from .track_b_contracts import (
     PatternList,
     PatternSummary,
     PluginPresetCount,
+    PluginPresetPage,
+    PluginCurrentPreset,
+    PluginPad,
+    PluginPadMap,
+    PluginPresetRecord,
+    PluginPresetState,
+    ExpectedPluginPresetState,
+    VerifiedPluginPresetSelection,
     PluginTarget,
     ChannelGeneratorTarget,
     StepCellUpdate,
@@ -204,6 +219,19 @@ TRACK_B_MCP_TOOL_NAMES = frozenset(
         "fl_list_playlist_tracks",
         "fl_set_playlist_track_identity",
         "fl_set_playlist_track_state",
+    }
+)
+TRACK_B_PRESET_READ_COMMANDS = frozenset(
+    {
+        "plugin.presets",
+        "plugin.current_preset",
+        "plugin.pad_map",
+    }
+)
+TRACK_B_PRESET_MUTATION_COMMANDS = frozenset(
+    {
+        "plugin.select_preset",
+        "channels.rerollLoopStarterLoop",
     }
 )
 TARGET_AWARE_EXISTING_PLUGIN_TOOLS = frozenset(
@@ -475,7 +503,7 @@ def _require_global_index_scope(payload: dict[str, Any], label: str) -> None:
         )
 
 
-def _dirty(value: Any) -> int | None:
+def _dirty(value: Any) -> Literal[0, 1, 2] | None:
     return value if type(value) is int and value in (0, 1, 2) else None
 
 
@@ -554,7 +582,7 @@ def _loop_mode(value: Any, label: str) -> LoopMode | None:
 class TrackBReadGateway:
     """Narrow adapter for idempotent Track B observations."""
 
-    ALLOWED_COMMANDS = TRACK_B_READ_COMMANDS
+    ALLOWED_COMMANDS = TRACK_B_READ_COMMANDS | TRACK_B_PRESET_READ_COMMANDS
 
     def __init__(self, client: BridgeLike | None = None):
         self._client = client or get_client()
@@ -581,7 +609,7 @@ class TrackBReadGateway:
 class TrackBMutationGateway:
     """Adapter for commands whose ambiguous outcomes must never be replayed."""
 
-    ALLOWED_COMMANDS = TRACK_B_MUTATION_COMMANDS
+    ALLOWED_COMMANDS = TRACK_B_MUTATION_COMMANDS | TRACK_B_PRESET_MUTATION_COMMANDS
 
     def __init__(self, client: BridgeLike | None = None):
         self._client = client or get_client()
@@ -975,11 +1003,220 @@ class TrackBInspector(_ConnectionController):
                 raw,
                 list(connection.warnings)
                 + [
-                    "FL exposes a preset count but no authoritative current-preset "
-                    "index/name getter, so stable next/previous mutations are omitted."
+                    "This legacy count-only observation carries no current-preset "
+                    "identity; use list_plugin_presets or get_plugin_current_preset "
+                    "when identity is required."
                 ],
             ),
         )
+
+    def list_plugin_presets(
+        self,
+        *,
+        target: PluginTarget | dict[str, Any] | None = None,
+        track_index: int | None = None,
+        slot_index: int | None = None,
+        allow_master: bool = False,
+        start: int = 0,
+        limit: int = 64,
+        include_current: bool = True,
+        include_empty_names: bool = False,
+    ) -> PluginPresetPage:
+        """Read one bounded preset page for an explicit plug-in target."""
+        resolved = normalize_plugin_target(
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            allow_master=allow_master,
+        )
+        page_start = _strict_int(start, "start", low=0, high=MAX_PLUGIN_PRESET_COUNT)
+        page_limit = _strict_int(
+            limit, "limit", low=1, high=MAX_PLUGIN_PRESET_PAGE_SIZE
+        )
+        if type(include_current) is not bool:
+            raise ValueError("include_current must be true or false")
+        if type(include_empty_names) is not bool:
+            raise ValueError("include_empty_names must be true or false")
+        connection = self._require_compatible()
+        raw = self.gateway.call(
+            "plugin.presets",
+            **_plugin_bridge_arguments(resolved),
+            start=page_start,
+            limit=page_limit,
+            include_current=include_current,
+            include_empty_names=include_empty_names,
+        )
+        _command_matches(raw, "plugin.presets")
+        _echoed_plugin_target(raw, resolved)
+        count = _strict_int(
+            raw.get("preset_count"),
+            "preset_count",
+            low=0,
+            high=MAX_PLUGIN_PRESET_COUNT,
+        )
+        echoed_start = _strict_int(
+            raw.get("start"), "preset page start", low=0, high=MAX_PLUGIN_PRESET_COUNT
+        )
+        if echoed_start != page_start:
+            raise ValueError("FL bridge returned a different preset page start")
+        echoed_limit = _strict_int(
+            raw.get("limit"), "preset page limit", low=1, high=MAX_PLUGIN_PRESET_PAGE_SIZE
+        )
+        if echoed_limit != page_limit:
+            raise ValueError("FL bridge returned a different preset page limit")
+        rows = _plugin_preset_records(raw.get("presets"))
+        returned = _strict_int(
+            raw.get("returned_count"), "returned_count", low=0, high=MAX_PLUGIN_PRESET_PAGE_SIZE
+        )
+        if returned != len(rows):
+            raise ValueError("FL bridge returned a contradictory preset row count")
+        scanned = _strict_int(
+            raw.get("scanned_count"), "scanned_count", low=0, high=MAX_PLUGIN_PRESET_COUNT
+        )
+        has_more = _strict_bool(raw, "has_more")
+        partial = _strict_bool(raw, "partial")
+        truncated = _strict_bool(raw, "truncated")
+        next_start = raw.get("next_start")
+        if next_start is not None:
+            next_start = _strict_int(
+                next_start, "next_start", low=0, high=MAX_PLUGIN_PRESET_COUNT
+            )
+        duplicate_names = _preset_text_list(
+            raw.get("duplicate_names"), "duplicate_names"
+        )
+        blank_indices = _preset_index_list(
+            raw.get("blank_name_indices"), "blank_name_indices"
+        )
+        current_name = _optional_preset_name(raw.get("current_preset_name"))
+        current_index = raw.get("current_preset_index")
+        if current_index is not None:
+            current_index = _strict_int(
+                current_index,
+                "current_preset_index",
+                low=0,
+                high=MAX_PLUGIN_PRESET_COUNT - 1,
+            )
+        status = _preset_identity_status(raw.get("current_preset_status"))
+        parameter_count = _strict_int(
+            raw.get("param_count"), "reported parameter count", low=0
+        )
+        return PluginPresetPage(
+            observed_at=_now(),
+            plugin=_targeted_plugin_summary(raw, resolved, parameter_count),
+            preset_count=count,
+            start=page_start,
+            limit=page_limit,
+            scanned_count=scanned,
+            returned_count=returned,
+            has_more=has_more,
+            next_start=next_start,
+            presets=rows,
+            current_preset_name=current_name,
+            current_preset_index=current_index,
+            current_preset_status=status,
+            duplicate_names=duplicate_names,
+            blank_name_indices=blank_indices,
+            partial=partial,
+            truncated=truncated,
+            truncated_by=raw.get("truncated_by"),
+            session_fingerprint=_session_fingerprint(raw),
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    def get_plugin_current_preset(
+        self,
+        *,
+        target: PluginTarget | dict[str, Any] | None = None,
+        track_index: int | None = None,
+        slot_index: int | None = None,
+        allow_master: bool = False,
+    ) -> PluginCurrentPreset:
+        """Read current preset identity and a uniquely resolved index."""
+        resolved = normalize_plugin_target(
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            allow_master=allow_master,
+        )
+        connection = self._require_compatible()
+        raw = self.gateway.call(
+            "plugin.current_preset", **_plugin_bridge_arguments(resolved)
+        )
+        _command_matches(raw, "plugin.current_preset")
+        _echoed_plugin_target(raw, resolved)
+        count = _strict_int(
+            raw.get("preset_count"),
+            "preset_count",
+            low=0,
+            high=MAX_PLUGIN_PRESET_COUNT,
+        )
+        parameter_count = _strict_int(
+            raw.get("param_count"), "reported parameter count", low=0
+        )
+        state = _plugin_preset_state(raw, "current_preset")
+        return PluginCurrentPreset(
+            observed_at=_now(),
+            plugin=_targeted_plugin_summary(raw, resolved, parameter_count),
+            preset_count=count,
+            current_preset_name=state.name,
+            current_preset_index=state.index,
+            current_preset_status=state.identity_status,
+            session_fingerprint=_session_fingerprint(raw),
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    def inspect_plugin_pad_map(
+        self,
+        *,
+        target: PluginTarget | dict[str, Any] | None = None,
+        track_index: int | None = None,
+        slot_index: int | None = None,
+        allow_master: bool = False,
+    ) -> PluginPadMap:
+        """Read a generic plug-in pad map, including unsupported fields."""
+        resolved = normalize_plugin_target(
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            allow_master=allow_master,
+        )
+        connection = self._require_compatible()
+        raw = self.gateway.call(
+            "plugin.pad_map", **_plugin_bridge_arguments(resolved)
+        )
+        _command_matches(raw, "plugin.pad_map")
+        _echoed_plugin_target(raw, resolved)
+        count = _strict_int(
+            raw.get("pad_count"), "pad_count", low=0, high=MAX_PLUGIN_PAD_COUNT
+        )
+        pads = _plugin_pads(raw.get("pads"))
+        complete = _strict_bool(raw, "complete")
+        if complete and len(pads) != count:
+            raise ValueError("FL bridge returned an incomplete pad map marked complete")
+        parameter_count = _strict_int(
+            raw.get("param_count"), "reported parameter count", low=0
+        )
+        return PluginPadMap(
+            observed_at=_now(),
+            plugin=_targeted_plugin_summary(raw, resolved, parameter_count),
+            pad_count=count,
+            pads=pads,
+            complete=complete,
+            session_fingerprint=_session_fingerprint(raw),
+            project_dirty_flag=_dirty(raw.get("unsaved_changes")),
+            warnings=_warnings(raw, list(connection.warnings)),
+        )
+
+    # Short aliases keep the low-level read surface easy to discover without
+    # creating a second protocol command or a second implementation.
+    plugin_presets = list_plugin_presets
+    plugin_current_preset = get_plugin_current_preset
+    plugin_pad_map = inspect_plugin_pad_map
+    plugins_list_presets = list_plugin_presets
+    plugins_get_current_preset = get_plugin_current_preset
+    plugins_inspect_pad_map = inspect_plugin_pad_map
 
     def scan_loaded_plugins(
         self, *, only_used: bool = False
@@ -1028,6 +1265,9 @@ class TrackBInspector(_ConnectionController):
                         reported_parameter_count=_optional_int(
                             slot_row.get("param_count")
                         ),
+                        target_fingerprint=_optional_sha256(
+                            slot_row.get("target_fingerprint")
+                        ),
                         mix_level_normalized=_optional_float(
                             slot_row.get("mix_level")
                         ),
@@ -1052,6 +1292,9 @@ class TrackBInspector(_ConnectionController):
                         None
                         if row.get("plugin_user_name") in (None, "")
                         else str(row["plugin_user_name"])
+                    ),
+                    target_fingerprint=_optional_sha256(
+                        row.get("target_fingerprint")
                     ),
                     reported_parameter_count=_optional_int(
                         row.get("reported_parameter_count")
@@ -1300,6 +1543,245 @@ class TrackBController(_ConnectionController):
             )
         return raw
 
+    def select_plugin_preset(
+        self,
+        *,
+        target: PluginTarget | dict[str, Any] | None = None,
+        track_index: int | None = None,
+        slot_index: int | None = None,
+        allow_master: bool = False,
+        preset_name: str | None = None,
+        preset_index: int | None = None,
+        expected_current: ExpectedPluginPresetState | dict[str, Any] | None = None,
+        session_fingerprint: str | None = None,
+        target_fingerprint: str | None = None,
+        max_navigation_steps: int = 64,
+        settle_tick_limit: int = 1,
+    ) -> VerifiedPluginPresetSelection:
+        """Select an exact preset and require a later-tick identity readback."""
+        resolved = normalize_plugin_target(
+            target=target,
+            track_index=track_index,
+            slot_index=slot_index,
+            allow_master=allow_master,
+        )
+        if preset_name is not None:
+            if not isinstance(preset_name, str) or not preset_name:
+                raise ValueError("preset_name must be a non-empty exact text value")
+            if len(preset_name) > MAX_PLUGIN_PRESET_NAME_LENGTH:
+                raise ValueError("preset_name must be at most 256 characters")
+        if preset_index is not None:
+            preset_index = _strict_int(
+                preset_index,
+                "preset_index",
+                low=0,
+                high=MAX_PLUGIN_PRESET_COUNT - 1,
+            )
+        if preset_name is None and preset_index is None:
+            raise ValueError("preset_name or preset_index is required")
+        max_steps = _strict_int(
+            max_navigation_steps,
+            "max_navigation_steps",
+            low=0,
+            high=MAX_PRESET_NAVIGATION_STEPS,
+        )
+        settle_ticks = _strict_int(
+            settle_tick_limit,
+            "settle_tick_limit",
+            low=1,
+            high=MAX_PRESET_SETTLE_TICKS,
+        )
+        if target_fingerprint is not None:
+            if (
+                not isinstance(target_fingerprint, str)
+                or len(target_fingerprint) != 64
+                or any(c not in "0123456789abcdef" for c in target_fingerprint)
+            ):
+                raise ValueError(
+                    "target_fingerprint must be 64 lowercase hex characters"
+                )
+        guard: ExpectedPluginPresetState | None
+        if expected_current is None:
+            guard = None
+        elif isinstance(expected_current, ExpectedPluginPresetState):
+            guard = expected_current
+        else:
+            guard = ExpectedPluginPresetState.model_validate(
+                expected_current, strict=True
+            )
+        arguments: dict[str, Any] = _plugin_bridge_arguments(resolved)
+        if preset_name is not None:
+            arguments["preset_name"] = preset_name
+        if preset_index is not None:
+            arguments["preset_index"] = preset_index
+        if target_fingerprint is not None:
+            arguments["target_fingerprint"] = target_fingerprint
+        arguments["max_navigation_steps"] = max_steps
+        arguments["settle_tick_limit"] = settle_ticks
+        raw = self._call(
+            "plugin.select_preset",
+            arguments,
+            session_fingerprint=session_fingerprint,
+            expected_before=guard,
+        )
+        _echoed_plugin_target(raw, resolved)
+        requested_name = raw.get("requested_preset_name")
+        if requested_name is not None:
+            requested_name = _require_preset_name(requested_name, "requested_preset_name")
+        requested_index = raw.get("requested_preset_index")
+        if requested_index is not None:
+            requested_index = _strict_int(
+                requested_index,
+                "requested_preset_index",
+                low=0,
+                high=MAX_PLUGIN_PRESET_COUNT - 1,
+            )
+        if preset_name is not None and requested_name != preset_name:
+            raise ValueError(
+                "FL bridge echoed a different requested preset name"
+            )
+        if preset_index is not None and requested_index != preset_index:
+            raise ValueError(
+                "FL bridge echoed a different requested preset index"
+            )
+        before = _plugin_preset_state(raw, "before")
+        after = _plugin_preset_state(raw, "after")
+        if guard is not None:
+            if guard.name is not None and before.name != guard.name:
+                raise ValueError(
+                    "FL bridge returned a before preset name that differs "
+                    "from expected_current"
+                )
+            if guard.index is not None and before.index != guard.index:
+                raise ValueError(
+                    "FL bridge returned a before preset index that differs "
+                    "from expected_current"
+                )
+        outcome = raw.get("outcome")
+        if outcome not in {"verified", "not_reached", "unknown"}:
+            raise ValueError("FL bridge returned an invalid preset selection outcome")
+        verified = _strict_bool(raw, "verified")
+        if verified != (outcome == "verified"):
+            raise ValueError("FL bridge returned contradictory preset verification")
+        direction = raw.get("navigation_direction")
+        if direction not in {"none", "next", "prev", "fallback_next"}:
+            raise ValueError("FL bridge returned an invalid preset navigation direction")
+        steps = _strict_int(
+            raw.get("navigation_steps"),
+            "navigation_steps",
+            low=0,
+            high=MAX_PRESET_NAVIGATION_STEPS,
+        )
+        echoed_max = _strict_int(
+            raw.get("max_navigation_steps"),
+            "max_navigation_steps",
+            low=0,
+            high=MAX_PRESET_NAVIGATION_STEPS,
+        )
+        if echoed_max != max_steps:
+            raise ValueError("FL bridge returned a different navigation bound")
+        echoed_settle = _strict_int(
+            raw.get("settle_tick_limit"),
+            "settle_tick_limit",
+            low=1,
+            high=MAX_PRESET_SETTLE_TICKS,
+        )
+        if echoed_settle != settle_ticks:
+            raise ValueError("FL bridge returned a different settle-tick bound")
+        parameter_count = _strict_int(
+            raw.get("param_count"), "reported parameter count", low=0
+        )
+        target_fp = _optional_sha256(raw.get("target_fingerprint"))
+        if target_fingerprint is not None and target_fp != target_fingerprint:
+            raise ValueError(
+                "FL bridge returned a different plug-in target fingerprint"
+            )
+        return VerifiedPluginPresetSelection(
+            applied_at=_now(),
+            verified=verified,
+            verification_summary=(
+                "FL read the requested preset identity back on a later idle tick."
+                if verified
+                else "FL did not provide a verified readback of the requested preset."
+            ),
+            target=_public_plugin_target(resolved),
+            plugin=_targeted_plugin_summary(raw, resolved, parameter_count),
+            requested_preset_name=requested_name,
+            requested_preset_index=requested_index,
+            before=before,
+            after=after,
+            outcome=cast(Any, outcome),
+            navigation_direction=cast(Any, direction),
+            navigation_steps=steps,
+            max_navigation_steps=echoed_max,
+            settle_tick_limit=echoed_settle,
+            target_fingerprint=target_fp,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(
+                raw,
+                [] if verified else [UNVERIFIED_WARNING],
+            ),
+            **_precondition_fields(raw),
+        )
+
+    def reroll_loop_starter_loop(
+        self,
+        *,
+        channel_index: int,
+        channel_fingerprint: str | None = None,
+        session_fingerprint: str | None = None,
+        expected_before: ExpectedChannelTargetState | dict[str, Any] | None = None,
+    ) -> LoopStarterRerollDispatch:
+        """Dispatch one explicit Loop Starter reroll without sound proof."""
+        channel = _strict_int(channel_index, "channel_index", low=0)
+        if channel_fingerprint is not None:
+            if expected_before is not None:
+                raise ValueError(
+                    "pass channel_fingerprint or expected_before, not both"
+                )
+            expected_before = ExpectedChannelTargetState(
+                channel_fingerprint=channel_fingerprint
+            )
+        elif expected_before is not None and not isinstance(
+            expected_before, ExpectedChannelTargetState
+        ):
+            expected_before = ExpectedChannelTargetState.model_validate(
+                expected_before, strict=True
+            )
+        raw = self._call(
+            "channels.rerollLoopStarterLoop",
+            {"channel": channel, "index_scope": "global"},
+            session_fingerprint=session_fingerprint,
+            expected_before=expected_before,
+        )
+        _echoed_index(raw, "channel", channel)
+        _require_global_index_scope(raw, "Loop Starter reroll")
+        dispatched = _strict_bool(raw, "dispatched")
+        if raw.get("identity_verified") is not False or raw.get("verified") is not False:
+            raise ValueError(
+                "FL bridge reported Loop Starter identity proof it cannot provide"
+            )
+        before_fp = _optional_sha256(raw.get("before_channel_fingerprint"))
+        after_fp = _optional_sha256(raw.get("after_channel_fingerprint"))
+        return LoopStarterRerollDispatch(
+            observed_at=_now(),
+            channel_index=channel,
+            before_channel_fingerprint=before_fp,
+            after_channel_fingerprint=after_fp,
+            dispatched=dispatched,
+            undo_point_created=_optional_bool(raw.get("undo_point_created")),
+            warnings=_warnings(
+                raw,
+                [
+                    "Loop Starter reroll is dispatch-only; the selected loop identity is not verified."
+                ],
+            ),
+            **_precondition_fields(raw),
+        )
+
+    reroll_loop_starter = reroll_loop_starter_loop
+    fl_select_plugin_preset = select_plugin_preset
+
     def set_playing(
         self,
         *,
@@ -1355,8 +1837,10 @@ class TrackBController(_ConnectionController):
         playing_verified = _strict_field_bool(fields, "playing")
         position_verified = _strict_field_bool(fields, "position")
         verified = _strict_bool(raw, "verified")
-        after = raw.get("after") if isinstance(raw.get("after"), dict) else {}
-        before = raw.get("before") if isinstance(raw.get("before"), dict) else {}
+        after_value = raw.get("after")
+        before_value = raw.get("before")
+        after = after_value if isinstance(after_value, dict) else {}
+        before = before_value if isinstance(before_value, dict) else {}
         after_playing = _optional_bool(after.get("playing"))
         after_position = _optional_float(after.get("position"))
         _require_verified_value(
@@ -3127,6 +3611,7 @@ def _targeted_plugin_summary(
         target=_public_plugin_target(target),
         name=str(payload.get("plugin") or ""),
         user_name=user_name,
+        target_fingerprint=_optional_sha256(payload.get("target_fingerprint")),
         reported_parameter_count=count,
         mix_level_normalized=(
             _optional_float(payload.get("mix_level"))
@@ -3134,6 +3619,151 @@ def _targeted_plugin_summary(
             else None
         ),
     )
+
+
+def _optional_sha256(value: Any) -> str | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(char not in "0123456789abcdef" for char in value)
+    ):
+        raise ValueError("FL bridge returned a malformed SHA-256 fingerprint")
+    return value
+
+
+def _require_preset_name(value: Any, label: str) -> str:
+    if not isinstance(value, str) or len(value) > MAX_PLUGIN_PRESET_NAME_LENGTH:
+        raise ValueError(f"FL bridge returned a malformed {label}")
+    return value
+
+
+def _optional_preset_name(value: Any) -> str | None:
+    return None if value is None else _require_preset_name(value, "preset name")
+
+
+def _preset_identity_status(value: Any) -> Any:
+    allowed = {
+        "stable",
+        "blank",
+        "ambiguous",
+        "unsupported",
+        "unresolved",
+        "not_requested",
+    }
+    if value not in allowed:
+        raise ValueError("FL bridge returned an invalid preset identity status")
+    return value
+
+
+def _plugin_preset_state(raw: Any, label: str) -> PluginPresetState:
+    payload = _snapshot_payload(raw, f"{label} preset state")
+    value = payload.get(label)
+    if not isinstance(value, dict):
+        prefix = "current_preset_" if label == "current_preset" else f"{label}_"
+        value = {
+            "name": payload.get(prefix + "name"),
+            "index": payload.get(prefix + "index"),
+            "identity_status": payload.get(prefix + "status"),
+        }
+    name = _optional_preset_name(value.get("name"))
+    index = value.get("index")
+    if index is not None:
+        index = _strict_int(
+            index,
+            f"{label} preset index",
+            low=0,
+            high=MAX_PLUGIN_PRESET_COUNT - 1,
+        )
+    status = _preset_identity_status(value.get("identity_status"))
+    return PluginPresetState(name=name, index=index, identity_status=status)
+
+
+def _plugin_preset_records(raw: Any) -> list[PluginPresetRecord]:
+    if not isinstance(raw, list) or len(raw) > MAX_PLUGIN_PRESET_PAGE_SIZE:
+        raise ValueError("FL bridge returned a malformed preset page")
+    rows: list[PluginPresetRecord] = []
+    previous = -1
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("FL bridge returned a malformed preset row")
+        index = _strict_int(
+            item.get("index"),
+            "preset index",
+            low=0,
+            high=MAX_PLUGIN_PRESET_COUNT - 1,
+        )
+        if index <= previous:
+            raise ValueError("FL bridge returned non-canonical preset ordering")
+        previous = index
+        name = _require_preset_name(item.get("name"), "preset name")
+        current = item.get("is_current", False)
+        if type(current) is not bool:
+            raise ValueError("FL bridge returned malformed preset current flag")
+        rows.append(PluginPresetRecord(index=index, name=name, is_current=current))
+    return rows
+
+
+def _preset_text_list(raw: Any, label: str) -> list[str]:
+    if not isinstance(raw, list) or len(raw) > MAX_PLUGIN_PRESET_PAGE_SIZE:
+        raise ValueError(f"FL bridge returned malformed {label}")
+    values = [_require_preset_name(value, label) for value in raw]
+    if values != sorted(set(values)):
+        raise ValueError(f"FL bridge returned non-canonical {label}")
+    return values
+
+
+def _preset_index_list(raw: Any, label: str) -> list[int]:
+    if not isinstance(raw, list) or len(raw) > MAX_PLUGIN_PRESET_PAGE_SIZE:
+        raise ValueError(f"FL bridge returned malformed {label}")
+    values = [
+        _strict_int(
+            value,
+            label,
+            low=0,
+            high=MAX_PLUGIN_PRESET_COUNT - 1,
+        )
+        for value in raw
+    ]
+    if values != sorted(set(values)):
+        raise ValueError(f"FL bridge returned non-canonical {label}")
+    return values
+
+
+def _plugin_pads(raw: Any) -> list[PluginPad]:
+    if not isinstance(raw, list) or len(raw) > MAX_PLUGIN_PAD_COUNT:
+        raise ValueError("FL bridge returned a malformed pad map")
+    pads: list[PluginPad] = []
+    for expected_index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValueError("FL bridge returned a malformed pad row")
+        index = _strict_int(
+            item.get("pad_index"),
+            "pad_index",
+            low=0,
+            high=MAX_PLUGIN_PAD_COUNT - 1,
+        )
+        if index != expected_index:
+            raise ValueError("FL bridge returned non-canonical pad ordering")
+        semitone = item.get("semitone")
+        if semitone is not None:
+            semitone = _strict_int(semitone, "pad semitone", low=0, high=127)
+        color = _bridge_color(item.get("color"), "pad")
+        empty = _optional_bool(item.get("empty"))
+        muted = _optional_bool(item.get("muted"))
+        semitone_name = _optional_preset_name(item.get("semitone_name"))
+        pads.append(
+            PluginPad(
+                pad_index=index,
+                semitone=semitone,
+                color=color,
+                empty=empty,
+                muted=muted,
+                semitone_name=semitone_name,
+            )
+        )
+    return pads
 
 
 def _plugin_parameter_snapshot(raw: Any) -> PluginParameterSnapshot:
@@ -3351,6 +3981,8 @@ __all__ = [
     "TEMPO_READBACK_TOLERANCE",
     "TRACK_B_MUTATION_COMMANDS",
     "TRACK_B_MCP_TOOL_NAMES",
+    "TRACK_B_PRESET_READ_COMMANDS",
+    "TRACK_B_PRESET_MUTATION_COMMANDS",
     "TRACK_B_READ_COMMANDS",
     "TARGET_AWARE_EXISTING_PLUGIN_TOOLS",
     "TrackBBoundaryViolation",

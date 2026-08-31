@@ -18,10 +18,10 @@ inside the FL Studio project already open.
 
 PostFader connects Claude, Codex, Cursor, and other local MCP clients to the
 project open in FL Studio. Inspect mixer routing and loaded plug-ins, diagnose
-exported mixes, control the session, generate MIDI parts, and prepare patterns
-and arrangement markers through 99 tools and 8 live resources. Guided packages
-support Windows and macOS. PostFader starts read-only and never saves
-automatically.
+exported mixes, choose coherent sound palettes, control the session, generate
+MIDI parts, and prepare patterns and arrangement markers through 111 tools and
+8 live resources. Guided packages support Windows and macOS. PostFader starts
+read-only and never saves automatically.
 
 ## Long description
 
@@ -39,9 +39,12 @@ synchronized vocal and instrumental renders for likely masking, watch mixer
 peaks during playback, and use your AI to turn selected findings into
 reviewable mix plans. Generate chords, melody, bass, and drums; export
 multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio;
-and prepare patterns, section markers, or Piano Roll transforms.
+and prepare patterns, section markers, or Piano Roll transforms. Sound Selection
+can choose a coherent role-based palette from loaded generators, verify exact
+preset navigation, preserve anchors across sections, and map reported drum
+pads.
 
-The v0.20 surface contains 99 tools and 8 live resources. Guided Windows and
+The v0.20 surface contains 111 tools and 8 live resources. Guided Windows and
 macOS packages, dedicated Codex packages, a Claude Desktop MCPB, and Python
 distributions cover different setup needs. PostFader starts read-only, requires
 session-only authorization for writes, never saves automatically, and reads
@@ -58,7 +61,10 @@ service, account, or telemetry.
   Master protection.
 - Supported direct setters use later-update readback; weaker evidence is
   labeled partial or unverified.
-- The current public surface has 99 tools and 8 live resources.
+- The current public surface has 111 tools and 8 live resources.
+- Sound Selection plans and applies exact loaded presets, coherent role-based
+  palettes, section variations, and reported drum maps; it does not insert
+  plug-ins or claim that a preset was heard.
 - Guided setup connects the local package, Universal Bridge, virtual MIDI
   selection, client configuration, and doctor checks; it does not install a
   virtual MIDI provider.
@@ -98,6 +104,7 @@ Do not add `remote MCP`, `hosted service`, `telemetry`, `rollback`, or
 | Latest release | [GitHub releases/latest](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest) |
 | Setup guide | [docs/setup.md](setup.md) |
 | Tool contracts | [docs/tool-contracts.md](tool-contracts.md) |
+| Sound Selection | [docs/sound-selection.md](sound-selection.md) |
 | Security policy | [SECURITY.md](../SECURITY.md) |
 | Plug-in matrix | [docs/plugin-matrix.md](plugin-matrix.md) |
 | Issue tracker | [GitHub Issues](https://github.com/synopsys0/postfader-fl-studio-mcp/issues) |

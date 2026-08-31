@@ -66,9 +66,9 @@ class PluginAtlasMCPTests(unittest.TestCase):
             adapters=(adapter,),
         )
 
-    def test_four_generic_atlas_tools_are_registered_at_99_total(self) -> None:
+    def test_four_generic_atlas_tools_are_registered_at_111_total(self) -> None:
         tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 99)
+        self.assertEqual(len(tools), 111)
         names = {tool.name for tool in tools}
         self.assertEqual(
             names & {

@@ -1,0 +1,163 @@
+"""Sound Selection core: immutable models, descriptors, scoring, and palette state.
+
+This package is deliberately free of bridge/MCP imports.  Integration layers can
+inventory live Track B targets and feed the resulting typed observations here;
+planning remains deterministic and side-effect free.
+"""
+
+from .descriptors import (
+    DESCRIPTOR_DATA_FILE,
+    DESCRIPTOR_SCHEMA_VERSION,
+    DescriptorCatalog,
+    DescriptorLoadError,
+    DescriptorRule,
+    DescriptorVocabulary,
+    classify_preset_name,
+    descriptor_names,
+    descriptors_for_product,
+    load_bundled_descriptors,
+    load_descriptor_catalog,
+    load_descriptor_vocabulary,
+    merge_descriptor_evidence,
+)
+from .history import (
+    DEFAULT_HISTORY_FILENAME,
+    DEFAULT_MAX_FEEDBACK,
+    DEFAULT_MAX_RECORDS,
+    HISTORY_PATH_ENV,
+    HISTORY_SCHEMA_VERSION,
+    MAX_HISTORY_COUNTER,
+    MAX_HISTORY_FEEDBACK,
+    MAX_HISTORY_RECORDS,
+    MAX_HISTORY_SERIALIZED_BYTES,
+    BoundedSoundSelectionHistory,
+    HistoryCorruptionError,
+    HistoryWriteError,
+    LocalSoundSelectionHistory,
+    SelectionHistoryStore,
+    SoundHistoryDocument,
+    SoundHistoryFeedback,
+    SoundHistoryRecord,
+    SoundHistoryResetResult,
+    SoundHistoryStatus,
+    SoundSelectionHistory,
+    resolve_history_path,
+)
+from .inventory import (
+    LoadedSoundInventory,
+    LoadedTargetInventory,
+    expand_inventory,
+    inventory_fingerprint,
+)
+from .models import *  # noqa: F403
+from .palette import (
+    MAX_PALETTE_STATES,
+    PalettePlanner,
+    PaletteStateRegistry,
+    SoundPalettePlanner,
+    SoundPaletteRegistry,
+    SoundPaletteStateRegistry,
+    create_palette_variation,
+    create_sound_palette_variation,
+    plan_palette,
+    plan_sound_palette,
+    sound_selection_create_variation,
+    sound_selection_plan,
+)
+from .preset_catalog import (
+    CurrentPresetObservation,
+    PresetCatalog,
+    PresetPage,
+    PresetRecord,
+    resolve_preset_name,
+)
+from .scoring import (
+    CandidateScorer,
+    SoundSelectionScorer,
+    preset_matches,
+    product_matches,
+    rank_candidates,
+    rank_sound_candidates,
+    score_candidate,
+    score_candidates,
+    score_sound_candidate,
+    score_sound_candidates,
+    select_best_candidate,
+)
+
+
+__all__ = [
+    "BoundedSoundSelectionHistory",
+    "CurrentPresetObservation",
+    "DEFAULT_HISTORY_FILENAME",
+    "DEFAULT_MAX_FEEDBACK",
+    "DEFAULT_MAX_RECORDS",
+    "DESCRIPTOR_DATA_FILE",
+    "DESCRIPTOR_SCHEMA_VERSION",
+    "DescriptorCatalog",
+    "DescriptorLoadError",
+    "DescriptorRule",
+    "DescriptorVocabulary",
+    "HISTORY_PATH_ENV",
+    "HISTORY_SCHEMA_VERSION",
+    "HistoryCorruptionError",
+    "HistoryWriteError",
+    "LoadedSoundInventory",
+    "LoadedTargetInventory",
+    "LocalSoundSelectionHistory",
+    "MAX_PALETTE_STATES",
+    "MAX_HISTORY_FEEDBACK",
+    "MAX_HISTORY_COUNTER",
+    "MAX_HISTORY_RECORDS",
+    "MAX_HISTORY_SERIALIZED_BYTES",
+    "PalettePlanner",
+    "PaletteStateRegistry",
+    "PresetCatalog",
+    "PresetPage",
+    "PresetRecord",
+    "SelectionHistoryStore",
+    "SoundHistoryDocument",
+    "SoundHistoryFeedback",
+    "SoundHistoryRecord",
+    "SoundHistoryResetResult",
+    "SoundHistoryStatus",
+    "SoundPaletteRegistry",
+    "SoundPalettePlanner",
+    "SoundPaletteStateRegistry",
+    "SoundSelectionHistory",
+    "classify_preset_name",
+    "create_palette_variation",
+    "create_sound_palette_variation",
+    "descriptor_names",
+    "descriptors_for_product",
+    "expand_inventory",
+    "inventory_fingerprint",
+    "load_bundled_descriptors",
+    "load_descriptor_catalog",
+    "load_descriptor_vocabulary",
+    "merge_descriptor_evidence",
+    "plan_palette",
+    "plan_sound_palette",
+    "product_matches",
+    "preset_matches",
+    "rank_candidates",
+    "rank_sound_candidates",
+    "resolve_history_path",
+    "resolve_preset_name",
+    "score_candidate",
+    "score_candidates",
+    "score_sound_candidate",
+    "score_sound_candidates",
+    "select_best_candidate",
+    "CandidateScorer",
+    "SoundSelectionScorer",
+    "sound_selection_create_variation",
+    "sound_selection_plan",
+]
+
+from .models import __all__ as _MODEL_EXPORTS
+
+
+__all__ = list(  # pyright: ignore[reportUnsupportedDunderAll]
+    dict.fromkeys((*__all__, *_MODEL_EXPORTS))
+)

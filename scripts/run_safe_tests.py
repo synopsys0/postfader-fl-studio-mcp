@@ -68,6 +68,15 @@ SAFE_TESTS = (
     "tests/test_mixing.py",
     "tests/test_creative.py",
     "tests/test_production_runs.py",
+    "tests/test_preset_bridge.py",
+    "tests/test_preset_contracts.py",
+    "tests/test_preset_performance.py",
+    "tests/test_sound_selection_core.py",
+    "tests/test_sound_selection_history.py",
+    "tests/test_sound_selection_scoring.py",
+    "tests/test_sound_selection_service.py",
+    "tests/test_sound_selection_production_runs.py",
+    "tests/test_sound_selection_mcp.py",
 )
 
 

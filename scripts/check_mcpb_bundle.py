@@ -23,13 +23,22 @@ ATLAS_REQUIRED.update(
 )
 ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_data/__init__.py")
 ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_mcp.py")
+SOUND_SELECTION_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "sound_selection"
+SOUND_SELECTION_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.py")
+}
+SOUND_SELECTION_REQUIRED.update(
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.json")
+)
 REQUIRED = {
     "manifest.json",
     "mcpb_entry.py",
     "pyproject.toml",
     "fl_studio_mcp/mcp_server.py",
     "fl_studio_mcp/_bridge/device_UniversalBridge.py",
-} | ATLAS_REQUIRED
+} | ATLAS_REQUIRED | SOUND_SELECTION_REQUIRED
 FORBIDDEN_PARTS = {
     ".git",
     ".github",

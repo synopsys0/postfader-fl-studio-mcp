@@ -11,6 +11,7 @@ import types
 import unittest
 from unittest import mock
 
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
@@ -19,8 +20,14 @@ sys.path.insert(0, ROOT)
 
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
+from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
-from fl_studio_mcp.bridge_client import BridgeClient, BridgeError, MAX_WIRE_ID  # noqa: E402
+from fl_studio_mcp.bridge_client import (  # noqa: E402
+    MAX_WIRE_ID,
+    BridgeClient,
+    BridgeError,
+)
 from fl_studio_mcp.bridge_install import (  # noqa: E402
     BridgeInstallError,
     expected_bridge_deployment,
@@ -50,13 +57,13 @@ from fl_studio_mcp.contracts import (  # noqa: E402
     VerifiedPluginParameterWrite,
     WriteModeChange,
 )
+from fl_studio_mcp.mcp_server import mcp  # noqa: E402
 from fl_studio_mcp.readonly_inspector import (  # noqa: E402
     IncompatibleFLStudio,
     ReadOnlyGateway,
     ReadOnlyInspector,
     ReadOnlyViolation,
 )
-from fl_studio_mcp.mcp_server import mcp  # noqa: E402
 from fl_studio_mcp.verified_writer import (  # noqa: E402
     VerifiedWriter,
     VerifiedWritesUnavailable,
@@ -68,8 +75,6 @@ from fl_studio_mcp.verified_writer import (  # noqa: E402
     WriteModeManager,
     WriteModeUnavailable,
 )
-from mcp.server.mcpserver.exceptions import ToolError  # noqa: E402
-from pydantic import ValidationError  # noqa: E402
 
 
 class DirectFakeClient:
@@ -288,7 +293,24 @@ def state_fingerprint():
                 }
                 for track in _state.TRACKS
             ],
-            "channels": [vars(channel) for channel in _state.CHANNELS],
+            "channels": [
+                {
+                    **{
+                        key: value
+                        for key, value in vars(channel).items()
+                        if key != "generator_plugin"
+                    },
+                    "generator_plugin": {
+                        "name": channel.generator_plugin.name,
+                        "names": channel.generator_plugin.param_names,
+                        "values": channel.generator_plugin.values,
+                        "presets": channel.generator_plugin.presets,
+                        "current_preset": channel.generator_plugin.current_preset,
+                        "pads": channel.generator_plugin.pads,
+                    },
+                }
+                for channel in _state.CHANNELS
+            ],
             "undo": _state.UNDO,
             "playing": _state.PLAYING,
             "recording": _state.RECORDING,
@@ -1050,6 +1072,24 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "fl_get_project_history",
             "fl_get_plugin_preset_count",
         }
+        preset_read_tools = {
+            "plugins_list_presets",
+            "plugins_get_current_preset",
+            "plugins_inspect_pad_map",
+        }
+        sound_selection_read_tools = {
+            "sound_selection_inventory",
+            "sound_selection_plan",
+            "sound_selection_get",
+            "sound_selection_create_variation",
+            "sound_selection_history_status",
+        }
+        preset_mutating_tools = {"fl_select_plugin_preset"}
+        sound_selection_mutating_tools = {"sound_selection_apply"}
+        sound_selection_workflow_tools = {
+            "sound_selection_record_feedback",
+            "sound_selection_history_reset",
+        }
         production_read_tools = {
             "postfader_validate_run",
             "postfader_get_run",
@@ -1160,7 +1200,12 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             | plan_apply_tools
             | creative_read_tools
             | creative_fl_tools
-            | file_mutating_tools,
+            | file_mutating_tools
+            | preset_read_tools
+            | sound_selection_read_tools
+            | preset_mutating_tools
+            | sound_selection_mutating_tools
+            | sound_selection_workflow_tools,
         )
         # Still no render, rollback ceremony, project save, or reflective
         # escape hatch, whatever it might be called.
@@ -1181,6 +1226,8 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         by_name = {tool.name: tool for tool in tools}
         for name in (
             read_tools
+            | preset_read_tools
+            | sound_selection_read_tools
             | production_read_tools
             | audio_tools
             | mix_read_tools
@@ -1231,6 +1278,14 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 self.assertIs(annotations.destructive_hint, True)
                 self.assertIs(annotations.idempotent_hint, False)
                 self.assertIs(annotations.open_world_hint, True)
+        for name in preset_mutating_tools | sound_selection_mutating_tools:
+            with self.subTest(tool=name):
+                annotations = by_name[name].annotations
+                self.assertIsNotNone(annotations)
+                self.assertIs(annotations.read_only_hint, False)
+                self.assertIs(annotations.destructive_hint, True)
+                self.assertIs(annotations.idempotent_hint, False)
+                self.assertIs(annotations.open_world_hint, True)
         annotations = by_name["fl_trigger_note"].annotations
         self.assertIsNotNone(annotations)
         self.assertIs(annotations.read_only_hint, False)
@@ -1248,6 +1303,18 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 self.assertIs(annotations.read_only_hint, False)
                 self.assertIs(annotations.destructive_hint, False)
                 self.assertIs(annotations.idempotent_hint, False)
+        feedback_annotations = by_name["sound_selection_record_feedback"].annotations
+        self.assertIsNotNone(feedback_annotations)
+        self.assertIs(feedback_annotations.read_only_hint, False)
+        self.assertIs(feedback_annotations.destructive_hint, False)
+        self.assertIs(feedback_annotations.idempotent_hint, False)
+        self.assertIs(feedback_annotations.open_world_hint, False)
+        reset_annotations = by_name["sound_selection_history_reset"].annotations
+        self.assertIsNotNone(reset_annotations)
+        self.assertIs(reset_annotations.read_only_hint, False)
+        self.assertIs(reset_annotations.destructive_hint, True)
+        self.assertIs(reset_annotations.idempotent_hint, True)
+        self.assertIs(reset_annotations.open_world_hint, False)
         plan_annotations = by_name["mix_apply_plan"].annotations
         self.assertIsNotNone(plan_annotations)
         self.assertIs(plan_annotations.read_only_hint, False)

@@ -74,6 +74,8 @@ packages = [
     "fl_studio_mcp._bridge",
     "fl_studio_mcp.plugin_atlas",
     "fl_studio_mcp.plugin_atlas_data",
+    "fl_studio_mcp.sound_selection",
+    "fl_studio_mcp.sound_selection.data",
 ]
 
 [tool.setuptools.package-data]
@@ -81,6 +83,7 @@ packages = [
 # machine-readable shard in the installed wheel; the loader resolves the
 # manifest's relative paths through importlib.resources.
 "fl_studio_mcp.plugin_atlas_data" = ["*.json", "**/*.json"]
+"fl_studio_mcp.sound_selection.data" = ["*.json", "**/*.json"]
 
 # The bridge directory intentionally has no __init__.py and no runtime module
 # imports it: the controller body is executable only inside FL Studio. List the

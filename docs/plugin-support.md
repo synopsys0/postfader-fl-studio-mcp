@@ -39,6 +39,32 @@ rows are compatibility/write evidence, not product knowledge and not a gate on
 generic discovery. Neither surface can insert, remove, or reorder a plug-in;
 neither can save or render a project or read FL Studio's live audio output.
 
+Sound Selection builds on this same distinction. It chooses only among the
+loaded targets observed in the current project, while Atlas-only products are
+recommendations rather than executable assignments. A loaded but unprofiled
+plug-in remains eligible for palette planning with lower semantic confidence.
+
+## Presets and drum maps
+
+The preset tools are target-aware and work for both mixer effects and global
+Channel Rack generators. `plugins_list_presets` returns bounded pages of FL's
+reported index/name rows, count, current identity, blank names, duplicate
+names, and partial/truncated status. `plugins_get_current_preset` reports a
+current index only when the name can be resolved uniquely. `fl_select_plugin_preset`
+accepts an exact name or index; duplicate names require an index.
+
+Preset navigation uses FL's `nextPreset`/`prevPreset` path within explicit
+navigation and settling limits and succeeds only after later-idle-tick current
+preset readback matches the requested identity. It reports the path and the
+undo evidence FL exposed. Dispatch is not proof, and an ambiguous outcome is
+never retried or rolled back.
+
+`plugins_inspect_pad_map` reads FL's generic pad API, including semitone/MIDI
+note, color, empty, muted, and reported name fields. Sound Selection uses that
+observation to build semantic drum roles without assuming General MIDI. The
+fixed General MIDI map in `compose_drums` remains an explicit fallback only
+when no reported map is supplied.
+
 ## How support works for what can be reached
 
 Generic plug-in discovery is identity-independent: there is no allowlist that a
@@ -220,6 +246,7 @@ FL's scripting API has no function for these, so no plug-in supports them:
   backend;
 - bypassing a slot or changing its wet/dry mix — FL ignores both when a script
   drives them;
+- hearing, auditioning, or measuring the live output of a selected preset;
 - reading audio, rendering, or saving the project.
 
 See [FL Studio constraints](fl-constraints.md) for the full list.

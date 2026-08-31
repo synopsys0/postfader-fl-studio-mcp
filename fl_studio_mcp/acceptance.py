@@ -112,7 +112,7 @@ async def authoritative_tool_surface() -> ToolSurface:
                 "required", ()
             )
         )
-        & {"watch_id", "plan_id"}
+        & {"watch_id", "plan_id", "palette_id"}
     )
     reads = tuple(name for name in all_reads if name not in set(workflow_reads))
 
@@ -445,6 +445,7 @@ def read_acceptance_arguments(
     pattern_number: int,
     channel_index: int,
     fixture_root: str | os.PathLike[str],
+    sound_selection_channel_index: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Build bounded large-read arguments for every current read tool."""
 
@@ -452,6 +453,11 @@ def read_acceptance_arguments(
     reference = fixtures / "reference_mix.wav"
     candidate = fixtures / "candidate_delayed_minus6db.wav"
     vocal = fixtures / "boundary_impulses.wav"
+    sound_channel = (
+        channel_index
+        if sound_selection_channel_index is None
+        else sound_selection_channel_index
+    )
     return {
         "fl_get_capabilities": {},
         "fl_get_project_summary": {},
@@ -513,6 +519,30 @@ def read_acceptance_arguments(
                 "slot_index": plugin_slot_index,
             }
         },
+        "plugins_list_presets": {
+            "target": {
+                "kind": "mixer_effect",
+                "track_index": plugin_track_index,
+                "slot_index": plugin_slot_index,
+            },
+            "start": 0,
+            "limit": 64,
+            "include_current": True,
+            "include_empty_names": False,
+        },
+        "plugins_get_current_preset": {
+            "target": {
+                "kind": "mixer_effect",
+                "track_index": plugin_track_index,
+                "slot_index": plugin_slot_index,
+            }
+        },
+        "plugins_inspect_pad_map": {
+            "target": {
+                "kind": "channel_generator",
+                "channel_index": sound_channel,
+            }
+        },
         "fl_get_step_sequence": {
             "pattern_number": pattern_number,
             "channel_index": channel_index,
@@ -560,6 +590,30 @@ def read_acceptance_arguments(
             "instrumental_path": os.fspath(reference),
             "max_seconds": 30.0,
         },
+        "sound_selection_inventory": {
+            "request": {
+                "brief": "Inspect a bounded loaded sound pool for acceptance.",
+                "source_strategy": "mixed",
+                "allow_effect_presets": False,
+                "persist_history": False,
+            },
+            "only_used": False,
+            "include_effects": False,
+            "preset_start": 0,
+            "preset_limit": 64,
+            "include_current": True,
+            "include_empty_names": False,
+            "include_pad_maps": True,
+            "include_atlas": True,
+        },
+        "sound_selection_plan": {
+            "request": {
+                "brief": "Plan one bounded acceptance sound palette.",
+                "source_strategy": "mixed",
+                "persist_history": False,
+            }
+        },
+        "sound_selection_history_status": {},
         "postfader_validate_run": {
             "request": {
                 "brief": "Generate a bounded read-only melody proposal.",

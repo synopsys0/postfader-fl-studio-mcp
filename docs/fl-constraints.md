@@ -16,6 +16,13 @@ Neither surface adds capabilities that FL Studio does not expose here. In
 particular, Atlas and the matrix cannot insert, remove, or reorder plug-ins,
 save or render a project, or read FL Studio's live audio output.
 
+Sound Selection follows the same boundary: it chooses only from generators and
+effects already loaded in the open project. Atlas-only products can be
+recommended, but they cannot be loaded or assigned by PostFader. Load the
+instrument pool manually before planning a palette. Loop Starter is separate
+and must be requested explicitly; its reroll exposes dispatch but no stable
+selected-loop identity.
+
 ## The embedded Python environment cannot use files or sockets
 
 Inside FL Studio's MIDI-script interpreter, low-level file construction can
@@ -84,6 +91,24 @@ control surface is much smaller:
 The reported count is therefore only an address-space upper bound. Parameter
 scans are paged, omit padding, and stop before treating the MIDI CC block as a
 plug-in surface.
+
+## Preset identity and drum-pad reads are bounded
+
+FL's preset APIs expose a reported count, current-preset name, and
+`nextPreset`/`prevPreset` navigation, but not a universal durable preset UUID.
+PostFader therefore reads bounded index/name pages and reports duplicate or
+blank names explicitly. A current index is used only when it resolves
+uniquely. Exact selection accepts a name and/or index, refuses ambiguous names,
+uses a bounded shortest navigation path when possible, and verifies the
+requested identity after later idle ticks. Unknown or unverified mutation
+outcomes are not replayed or rolled back; FL's `undo_point_created` evidence is
+reported as observed, including `null` when unavailable.
+
+`plugins.getPadInfo` is similarly optional and generic. When exposed,
+PostFader reads each pad's semitone/MIDI note, color, empty/muted flags, and
+reported name, then derives semantic drum roles. It cannot assume General MIDI
+note numbers or invent a missing kick, snare, or hat. A Sound Selection drum
+plan with required unmapped roles blocks before Piano Roll note writing.
 
 ## Same-tick readback can return the previous value
 

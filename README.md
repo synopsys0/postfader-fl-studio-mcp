@@ -28,7 +28,7 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**99 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**111 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
@@ -133,6 +133,26 @@ control-adapter evidence, and the three honest availability states. See the
 [Plugin Atlas guide](docs/plugin-atlas.md) or inspect the installed bundle with
 `postfader-plugin-atlas`.
 
+### 🎚️ Choose a coherent sound palette
+
+> “Create a melodic bass track and choose all the sounds yourself.”
+>
+> “Keep the lead in Drop B, but make the bass and texture feel bigger.”
+
+Sound Selection turns that direction into a deterministic palette chosen from
+the generators and effects already loaded in the project. It can select a
+product and exact preset for each role, preserve core identity sounds, plan a
+section variation, map a drum kit's reported pads, and pass role targets into a
+Production Run. User preferences and exclusions always win; balanced planning
+uses bounded local recency only to distinguish similarly suitable choices.
+
+Sound Selection does not use random preset roulette or pretend to hear FL
+Studio's output. It reads preset identity back after bounded navigation, keeps
+explicit local feedback and usage history separate from project state, and
+reports a concise blocker when the requested sound is not loaded. Load the
+instrument pool manually, then see the [Sound Selection guide](docs/sound-selection.md)
+for examples and exact boundaries.
+
 ### 🎹 Compose, transform, and organize musical ideas
 
 > “Create an eight-bar D Dorian melody with a bassline and drum pattern.”
@@ -225,6 +245,8 @@ run lifetime, and FL Studio limitations.
 - Read undo/redo history bounds and edit the current step sequence.
 - Discover and control supported parameters exposed by loaded effects and
   generators.
+- Plan and apply a coherent sound palette with exact preset verification,
+  drum-pad mapping, continuity, and bounded novelty.
 - Read bundled Plugin Atlas product knowledge and compare it with observed
   loaded plug-ins without turning the catalog into a runtime allowlist.
 
@@ -388,6 +410,7 @@ first write test, and disable write mode when you are done.
 | --- | --- |
 | [Setup and troubleshooting](docs/setup.md) | Full installation, virtual MIDI, bridge, client configuration, upgrades, and diagnostics |
 | [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
+| [Sound Selection](docs/sound-selection.md) | Producer direction, coherent palettes, exact preset verification, drum maps, local history, and Production Run references |
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |

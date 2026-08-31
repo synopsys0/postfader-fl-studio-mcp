@@ -4,7 +4,7 @@
   "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 99-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "long_description": "A local 111-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -230,6 +230,22 @@
       "description": "Read FL's authoritative preset count for one loaded plug-in."
     },
     {
+      "name": "plugins_list_presets",
+      "description": "Read one deterministic preset page without changing the plug-in."
+    },
+    {
+      "name": "plugins_get_current_preset",
+      "description": "Read FL's current preset name and an index only when it is unique."
+    },
+    {
+      "name": "plugins_inspect_pad_map",
+      "description": "Read generic pad, MIDI-note, color, empty, and mute observations."
+    },
+    {
+      "name": "fl_select_plugin_preset",
+      "description": "Navigate to an exact preset and require later-idle-tick identity readback."
+    },
+    {
       "name": "fl_list_channels",
       "description": "List globally addressed channels, mix state, routing, and generator identity."
     },
@@ -374,6 +390,38 @@
       "description": "Run the end-to-end read-only finish assessment and stop at user export."
     },
     {
+      "name": "sound_selection_inventory",
+      "description": "Read a compact loaded sound pool; Atlas-only products remain recommendations."
+    },
+    {
+      "name": "sound_selection_plan",
+      "description": "Choose deterministic loaded-target assignments without changing FL or history."
+    },
+    {
+      "name": "sound_selection_get",
+      "description": "Look up one process-local palette without treating expiry as a server error."
+    },
+    {
+      "name": "sound_selection_create_variation",
+      "description": "Return a section delta instead of replacing the existing palette."
+    },
+    {
+      "name": "sound_selection_apply",
+      "description": "Apply exact presets in deterministic order and stop on unknown or unverified outcomes."
+    },
+    {
+      "name": "sound_selection_record_feedback",
+      "description": "Update bounded local ranking feedback; silence is never inferred."
+    },
+    {
+      "name": "sound_selection_history_status",
+      "description": "Report the local history path, health, schema, and bounded record counts."
+    },
+    {
+      "name": "sound_selection_history_reset",
+      "description": "Explicitly remove bounded local selection history; project state is unchanged."
+    },
+    {
       "name": "postfader_validate_run",
       "description": "Validate a bounded Production Run and current capabilities without changing FL."
     },
@@ -419,7 +467,7 @@
     },
     {
       "name": "compose_drums",
-      "description": "Generate GM-mapped kick/snare/hat patterns without changing FL."
+      "description": "Generate mapped kick/snare/hat patterns without changing FL."
     },
     {
       "name": "midi_export_type1",

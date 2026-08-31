@@ -168,6 +168,30 @@ from .production_runs import (
     ProductionRunValidation,
     validate_production_run,
 )
+from .sound_selection.executor import (
+    SoundFeedbackResult,
+    SoundPaletteLookup,
+    SoundSelectionApplyResult,
+)
+from .sound_selection.history import SoundHistoryResetResult, SoundHistoryStatus
+from .sound_selection.mcp import (
+    sound_selection_apply as apply_sound_selection,
+    sound_selection_create_variation as create_sound_selection_variation,
+    sound_selection_get as get_sound_selection,
+    sound_selection_history_reset as reset_sound_selection_history,
+    sound_selection_history_status as get_sound_selection_history_status,
+    sound_selection_inventory as get_sound_selection_inventory,
+    sound_selection_plan as plan_sound_selection,
+    sound_selection_record_feedback as record_sound_selection_feedback,
+)
+from .sound_selection.models import (
+    DrumPadMap,
+    SoundFeedbackRequest,
+    SoundInventory,
+    SoundPalettePlan,
+    SoundPaletteVariationPlan,
+    SoundSelectionRequest,
+)
 from .track_b_contracts import (
     ChannelList,
     EmptyPatternSearch,
@@ -200,6 +224,10 @@ from .track_b_contracts import (
     PluginTarget,
     PatternList,
     PluginPresetCount,
+    PluginPresetPage,
+    PluginCurrentPreset,
+    PluginPadMap,
+    ExpectedPluginPresetState,
     PlaylistTrackList,
     ProjectHistoryObservation,
     StepCellUpdate,
@@ -230,6 +258,7 @@ from .track_b_contracts import (
     VerifiedTargetedPluginDisplayWrite,
     VerifiedTargetedPluginOptionWrite,
     VerifiedTargetedPluginParameterWrite,
+    VerifiedPluginPresetSelection,
     VerifiedTempoWrite,
     VerifiedTimeSignatureNumeratorWrite,
 )
@@ -265,9 +294,26 @@ SessionFingerprintArg = Annotated[
     ),
 ]
 
+# Sound Palette application is a workflow mutation whose service contract
+# always requires a live session token. Keep the generic bridge-write alias
+# optional for the lower-level setters that preserve their legacy call shape,
+# but make this high-level public mutation fail at MCP argument validation
+# rather than reaching the service with ``None``.
+RequiredSoundSelectionSessionFingerprintArg = Annotated[
+    str,
+    Field(
+        pattern=r"^[0-9a-f]{32}$",
+        description=(
+            "Required bridge-lifetime fingerprint from a recent live read. The "
+            "palette application refuses if FL reloaded the bridge before mutation. "
+            "This is a concurrency guard, not authentication or project identity."
+        ),
+    ),
+]
+
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 99 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 111 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -316,6 +362,30 @@ Composition tools generate deterministic chords, melody, bass, and drums.
 midi_export_type1 writes a local MIDI file, reopens it, and verifies its event
 content. Tempo/key estimation and monophonic transcription read caller-selected
 audio files and do not mutate FL.
+
+Sound Selection is task-scoped and needs no persistent mode. When the user
+delegates instrument, preset, drum-kit, or palette decisions, translate their
+direction, preferences, exclusions, locked roles, continuity, and novelty
+policy into a SoundSelectionRequest. Use sound_selection_plan for read-only
+ideas and sound_selection_apply only after a clear request authorizes project
+changes and includes the current 32-character lowercase session_fingerprint
+from a recent live read.
+That fingerprint is required by the apply tool's public schema. User direction
+is the strongest input; balanced planning preserves
+core sounds within a song and uses bounded local recency only to distinguish
+similarly suitable choices. Plan and apply a palette before complete-song
+Production Runs write notes, then reference its generator roles and drum map.
+Use sound_selection_create_variation for later sections rather than replacing
+anchors without a request. Do not ask for confirmation between role changes in
+one authorized run. Atlas-only products are recommendations, never executable
+assignments, and no preset choice is claimed as heard audio.
+
+plugins_list_presets and plugins_get_current_preset expose bounded exact
+identity; fl_select_plugin_preset navigates only within a bounded search and
+requires later-idle-tick readback. Duplicate names require an index. Use
+plugins_inspect_pad_map before non-General-MIDI drum writing. Loop Starter is
+an explicit, separate loop-based source and its reroll remains dispatch-only;
+never substitute it for an instrument-based request.
 
 Piano Roll mutations use FL's separate .pyscript runtime. First prepare the
 bridge, manually run Postfader Apply once, and confirm that step. Automatic
@@ -2242,6 +2312,117 @@ async def fl_get_plugin_preset_count(
 
 
 @mcp.tool(
+    name="plugins_list_presets",
+    annotations=READ_ONLY.model_copy(update={"title": "List plug-in presets"}),
+)
+async def plugins_list_presets(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+    start: Annotated[int, Field(ge=0, description="First preset index to inspect.")] = 0,
+    limit: Annotated[
+        int,
+        Field(ge=1, le=256, description="Bounded number of preset names in this page."),
+    ] = 64,
+    include_current: Annotated[
+        bool,
+        Field(description="Also report FL's current preset identity."),
+    ] = True,
+    include_empty_names: Annotated[
+        bool,
+        Field(description="Retain blank preset-name rows in the returned page."),
+    ] = False,
+) -> PluginPresetPage:
+    """Read one deterministic preset page without changing the plug-in."""
+    return await _performance_read(
+        "list_plugin_presets",
+        target=target,
+        start=start,
+        limit=limit,
+        include_current=include_current,
+        include_empty_names=include_empty_names,
+    )
+
+
+@mcp.tool(
+    name="plugins_get_current_preset",
+    annotations=READ_ONLY.model_copy(update={"title": "Read current plug-in preset"}),
+)
+async def plugins_get_current_preset(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+) -> PluginCurrentPreset:
+    """Read FL's current preset name and an index only when it is unique."""
+    return await _performance_read("get_plugin_current_preset", target=target)
+
+
+@mcp.tool(
+    name="plugins_inspect_pad_map",
+    annotations=READ_ONLY.model_copy(update={"title": "Inspect a plug-in pad map"}),
+)
+async def plugins_inspect_pad_map(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+) -> PluginPadMap:
+    """Read generic pad, MIDI-note, color, empty, and mute observations."""
+    return await _performance_read("inspect_plugin_pad_map", target=target)
+
+
+@mcp.tool(
+    name="fl_select_plugin_preset",
+    annotations=MUTATING.model_copy(update={"title": "Select an exact plug-in preset"}),
+)
+async def fl_select_plugin_preset(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+    preset_name: Annotated[
+        str | None,
+        Field(default=None, min_length=1, max_length=256, description="Exact reported preset name."),
+    ] = None,
+    preset_index: Annotated[
+        int | None,
+        Field(default=None, ge=0, le=999_999, description="Exact reported preset index."),
+    ] = None,
+    expected_current: Annotated[
+        ExpectedPluginPresetState | None,
+        Field(default=None, description="Optional stale-read guard for the current preset."),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    target_fingerprint: Annotated[
+        str | None,
+        Field(default=None, pattern=r"^[0-9a-f]{64}$", description="Observed target-identity guard."),
+    ] = None,
+    max_navigation_steps: Annotated[
+        int,
+        Field(default=64, ge=0, le=256, description="Bound on next/previous navigation."),
+    ] = 64,
+    settle_tick_limit: Annotated[
+        int,
+        Field(default=1, ge=1, le=8, description="Later idle ticks allowed for plug-in settling."),
+    ] = 1,
+) -> VerifiedPluginPresetSelection:
+    """Navigate to an exact preset and require later-idle-tick identity readback."""
+    return await _performance_write(
+        "select_plugin_preset",
+        target=target,
+        preset_name=preset_name,
+        preset_index=preset_index,
+        expected_current=expected_current,
+        session_fingerprint=session_fingerprint,
+        target_fingerprint=target_fingerprint,
+        max_navigation_steps=max_navigation_steps,
+        settle_tick_limit=settle_tick_limit,
+    )
+
+
+@mcp.tool(
     name="fl_list_channels",
     annotations=READ_ONLY.model_copy(update={"title": "List Channel Rack channels"}),
 )
@@ -3040,6 +3221,202 @@ async def mix_finish_assessment(
 
 
 # ---------------------------------------------------------------------------
+# Sound Selection: live inventory, deterministic palettes, and local history
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="sound_selection_inventory",
+    annotations=READ_ONLY.model_copy(update={"title": "Inventory available sounds"}),
+)
+async def sound_selection_inventory(
+    request: Annotated[
+        SoundSelectionRequest | None,
+        Field(default=None, description="Optional structured direction used to include the relevant target pool."),
+    ] = None,
+    only_used: Annotated[
+        bool,
+        Field(description="Limit mixer observations to used tracks; generators remain included."),
+    ] = False,
+    include_effects: Annotated[
+        bool | None,
+        Field(default=None, description="Include loaded effects; defaults from the request."),
+    ] = None,
+    preset_start: Annotated[int, Field(ge=0, description="First preset index per target.")] = 0,
+    preset_limit: Annotated[
+        int,
+        Field(ge=1, le=256, description="Maximum preset names per loaded target."),
+    ] = 64,
+    include_current: Annotated[bool, Field(description="Read current preset identities.")] = True,
+    include_empty_names: Annotated[bool, Field(description="Retain blank preset names.")] = False,
+    include_pad_maps: Annotated[bool, Field(description="Inspect generic generator pad maps.")] = True,
+    include_atlas: Annotated[bool, Field(description="Enrich loaded observations with local Plugin Atlas metadata.")] = True,
+) -> SoundInventory:
+    """Read a compact loaded sound pool; Atlas-only products remain recommendations."""
+    return await _mix(
+        get_sound_selection_inventory,
+        request,
+        only_used=only_used,
+        include_effects=include_effects,
+        preset_start=preset_start,
+        preset_limit=preset_limit,
+        include_current=include_current,
+        include_empty_names=include_empty_names,
+        include_pad_maps=include_pad_maps,
+        include_atlas=include_atlas,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_plan",
+    annotations=READ_ONLY.model_copy(update={"title": "Plan a coherent sound palette"}),
+)
+async def sound_selection_plan(
+    request: Annotated[
+        SoundSelectionRequest,
+        Field(description="Task-scoped roles, direction, preferences, exclusions, continuity, and history policy."),
+    ],
+) -> SoundPalettePlan:
+    """Choose deterministic loaded-target assignments without changing FL or history."""
+    return await _mix(plan_sound_selection, request)
+
+
+@mcp.tool(
+    name="sound_selection_get",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get a Sound Palette"}),
+)
+async def sound_selection_get(
+    palette_id: Annotated[
+        str,
+        Field(min_length=1, max_length=128, description="Process-local palette identifier."),
+    ],
+) -> SoundPaletteLookup:
+    """Look up one process-local palette without treating expiry as a server error."""
+    return await _mix(get_sound_selection, palette_id)
+
+
+@mcp.tool(
+    name="sound_selection_create_variation",
+    annotations=READ_ONLY.model_copy(update={"title": "Plan a Sound Palette variation"}),
+)
+async def sound_selection_create_variation(
+    palette_id: Annotated[str, Field(min_length=1, max_length=128)],
+    request: Annotated[
+        SoundSelectionRequest,
+        Field(description="Section-specific direction; anchors remain preserved by default."),
+    ],
+    section: Annotated[
+        str | None,
+        Field(default=None, min_length=1, max_length=128, description="Section receiving the delta."),
+    ] = None,
+    replace_roles: Annotated[
+        tuple[str, ...],
+        Field(default=(), max_length=128, description="Roles explicitly allowed to replace."),
+    ] = (),
+) -> SoundPaletteVariationPlan:
+    """Return a section delta instead of replacing the existing palette."""
+    return await _mix(
+        create_sound_selection_variation,
+        palette_id,
+        request,
+        section,
+        replace_roles,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_apply",
+    annotations=MUTATING.model_copy(update={"title": "Apply a Sound Palette"}),
+)
+async def sound_selection_apply(
+    palette: Annotated[
+        SoundPalettePlan | SoundPaletteVariationPlan | str,
+        Field(
+            description=(
+                "A validated palette plan, section variation, or its "
+                "process-local palette ID."
+            )
+        ),
+    ],
+    session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
+    authorized_to_modify: Annotated[
+        bool,
+        Field(description="True only when the current user explicitly authorized these project changes."),
+    ],
+    role_ids: Annotated[
+        tuple[str, ...],
+        Field(default=(), max_length=128, description="Optional bounded subset of palette roles."),
+    ] = (),
+    max_navigation_steps: Annotated[int, Field(default=64, ge=0, le=256)] = 64,
+    settle_tick_limit: Annotated[int, Field(default=1, ge=1, le=8)] = 1,
+    persist_history: Annotated[
+        bool | None,
+        Field(default=None, description="Override this palette's task-scoped history policy."),
+    ] = None,
+) -> SoundSelectionApplyResult:
+    """Apply exact presets in deterministic order and stop on unknown or unverified outcomes."""
+    return await _mix(
+        apply_sound_selection,
+        palette,
+        session_fingerprint,
+        authorized_to_modify,
+        role_ids=role_ids,
+        max_navigation_steps=max_navigation_steps,
+        settle_tick_limit=settle_tick_limit,
+        persist_history=persist_history,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_record_feedback",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Record explicit Sound Selection feedback",
+            "open_world_hint": False,
+        }
+    ),
+)
+async def sound_selection_record_feedback(
+    request: Annotated[
+        SoundFeedbackRequest,
+        Field(description="Explicit accepted, rejected, or neutral palette feedback."),
+    ],
+) -> SoundFeedbackResult:
+    """Update bounded local ranking feedback; silence is never inferred."""
+    return await _mix(record_sound_selection_feedback, request)
+
+
+@mcp.tool(
+    name="sound_selection_history_status",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Inspect Sound Selection history"}),
+)
+async def sound_selection_history_status() -> SoundHistoryStatus:
+    """Report the local history path, health, schema, and bounded record counts."""
+    return await _mix(get_sound_selection_history_status)
+
+
+@mcp.tool(
+    name="sound_selection_history_reset",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Reset Sound Selection history",
+            "destructive_hint": True,
+            "idempotent_hint": True,
+            "open_world_hint": False,
+        }
+    ),
+)
+async def sound_selection_history_reset(
+    confirm: Annotated[
+        bool,
+        Field(description="Must be true after the user explicitly requested local history deletion."),
+    ],
+) -> SoundHistoryResetResult:
+    """Explicitly remove bounded local selection history; project state is unchanged."""
+    return await _mix(reset_sound_selection_history, confirm)
+
+
+# ---------------------------------------------------------------------------
 # Task-scoped Production Runs
 # ---------------------------------------------------------------------------
 
@@ -3333,8 +3710,12 @@ async def compose_drums(
     seed: Annotated[int, Field(description="Deterministic variation seed.")] = 0,
     swing: Annotated[float, Field(ge=0.0, le=0.49, description="Delay offbeat eighths in beats.")] = 0.0,
     tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+    drum_map: Annotated[
+        DrumPadMap | None,
+        Field(default=None, description="Selected semantic drum map; omit for explicit General MIDI fallback."),
+    ] = None,
 ) -> NoteSequence:
-    """Generate GM-mapped kick/snare/hat patterns without changing FL."""
+    """Generate mapped kick/snare/hat patterns without changing FL."""
     return await _mix(
         generate_drums,
         style=style,
@@ -3343,6 +3724,7 @@ async def compose_drums(
         seed=seed,
         swing=swing,
         tempo_bpm=tempo_bpm,
+        drum_map=drum_map,
     )
 
 

@@ -114,6 +114,9 @@ same version; start FL Studio and reload `Universal Bridge`; only then
 reconnect the MCP client. Mixed versions fail closed. Command protocol 2
 describes the bridge command API, while MIDI wire protocol 2 separately
 describes the bounded SysEx framing and must match before the first request.
+Sound Selection is additive to the existing setup: there is no extra mode or
+plug-in installation step. Load the generator/effect pool you want available
+in FL Studio before asking the connected AI to plan a palette.
 
 ## 3. Configure FL Studio and the virtual endpoint
 
@@ -313,6 +316,14 @@ No project value is changed or saved by the mode transition, and FL Studio
 does not restart. Ask the client to disable write mode when finished. A normal
 new FL process starts read-only, and a bridge reload also resets to the process
 startup default.
+
+For Sound Selection, begin with `sound_selection_inventory` or a read-only
+Production Run plan. Exact preset choices are available only for targets loaded
+in the current project; Atlas knowledge may recommend an unloaded product but
+cannot load it. Review the palette and its verification receipts before saving
+the project manually in FL Studio. Sound Selection keeps its optional bounded
+local usage history under the FL Studio user-data directory; it does not store
+prompts, audio, project files, or client transcripts.
 
 The Windows launcher remains useful for finding FL Studio and starting it
 normally:

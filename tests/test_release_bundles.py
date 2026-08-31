@@ -150,6 +150,17 @@ class ReleaseBundleTests(unittest.TestCase):
                 f"{root}/fl_studio_mcp/plugin_atlas_data/manifests/atlas.json",
                 names,
             )
+            self.assertIn(f"{root}/fl_studio_mcp/sound_selection/__init__.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/sound_selection/models.py", names)
+            self.assertIn(f"{root}/docs/sound-selection.md", names)
+            self.assertIn(
+                f"{root}/fl_studio_mcp/sound_selection/data/descriptors-v1.json",
+                names,
+            )
+            self.assertIn(
+                f"{root}/scripts/live_sound_selection_acceptance.py",
+                names,
+            )
             self.assertIn("starts read-only", guide)
             self.assertIn("postfader-doctor", guide)
             self.assertIn("postfader", guide)

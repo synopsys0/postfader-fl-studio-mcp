@@ -39,7 +39,9 @@ from .performance import (
     TrackBMutationGateway,
     TrackBReadGateway,
 )
+from .sound_selection.models import DrumPadMap
 from .track_b_contracts import (
+    SHA256_PATTERN,
     VerifiedPatternIdentityWrite,
     VerifiedPatternLengthWrite,
     VerifiedPatternSelectionWrite,
@@ -589,11 +591,56 @@ def compose_drums(
     seed: int = 0,
     swing: float = 0.0,
     tempo_bpm: float = 120.0,
+    drum_map: DrumPadMap | None = None,
 ) -> NoteSequence:
     if not 1 <= bars <= 64 or not 1 <= beats_per_bar <= 16:
         raise ValueError("bars and beats_per_bar must be within 1..64 and 1..16")
     if not 0.0 <= swing <= 0.49:
         raise ValueError("swing must be within 0..0.49 beats")
+
+    def normalise_role(role: str) -> str:
+        return "_".join(role.strip().casefold().replace("-", "_").split())
+
+    # General MIDI remains an explicit, backwards-compatible fallback for
+    # callers that do not have a loaded instrument map. Once a map is supplied,
+    # however, every role used by this style must be mapped: falling back to a
+    # GM pitch would make a successful-looking sequence address the wrong pad.
+    required_roles = ["kick", "snare", "closed_hat"]
+    if style == "house":
+        required_roles.append("open_hat")
+    if drum_map is not None:
+        if not isinstance(drum_map, DrumPadMap):
+            raise TypeError("drum_map must be a DrumPadMap or None")
+        mappings = {
+            normalise_role(mapping.role): mapping
+            for mapping in drum_map.mappings
+        }
+        declared_missing = {
+            normalise_role(role) for role in drum_map.missing_roles
+        }
+        missing_roles = tuple(
+            role
+            for role in required_roles
+            if normalise_role(role) in declared_missing
+            or normalise_role(role) not in mappings
+        )
+        if missing_roles:
+            raise ValueError(
+                "supplied drum_map is missing required semantic role(s): "
+                + ", ".join(missing_roles)
+            )
+        role_pitches = {
+            role: mappings[normalise_role(role)].midi_note
+            for role in required_roles
+        }
+    else:
+        role_pitches = {
+            "kick": 36,
+            "snare": 38 if style != "trap" else 39,
+            "closed_hat": 42,
+            "open_hat": 46,
+        }
+
     rng = random.Random(seed)
     notes: list[CreativeNote] = []
 
@@ -614,41 +661,58 @@ def compose_drums(
         base = bar * beats_per_bar
         if style in {"house", "pop"}:
             for beat in range(beats_per_bar):
-                hit(36, base + beat, 0.92 + rng.uniform(-0.04, 0.04))
+                hit(role_pitches["kick"], base + beat, 0.92 + rng.uniform(-0.04, 0.04))
             for beat in (1, 3):
                 if beat < beats_per_bar:
-                    hit(38, base + beat, 0.84 + rng.uniform(-0.04, 0.04))
+                    hit(role_pitches["snare"], base + beat, 0.84 + rng.uniform(-0.04, 0.04))
             for step in range(beats_per_bar * 2):
-                hit(42, base + step * 0.5, 0.58 + (0.10 if step % 2 else 0.0))
+                hit(
+                    role_pitches["closed_hat"],
+                    base + step * 0.5,
+                    0.58 + (0.10 if step % 2 else 0.0),
+                )
             if style == "house":
                 for beat in range(beats_per_bar):
-                    hit(46, base + beat + 0.5, 0.62)
+                    hit(role_pitches["open_hat"], base + beat + 0.5, 0.62)
         elif style in {"hiphop", "trap"}:
             for beat in (0.0, 2.5 if style == "hiphop" else 2.75):
                 if beat < beats_per_bar:
-                    hit(36, base + beat, 0.94)
+                    hit(role_pitches["kick"], base + beat, 0.94)
             for beat in (1.0, 3.0):
                 if beat < beats_per_bar:
-                    hit(38 if style == "hiphop" else 39, base + beat, 0.86)
+                    hit(role_pitches["snare"], base + beat, 0.86)
             division = 0.5 if style == "hiphop" else 0.25
             for step in range(int(beats_per_bar / division)):
                 if style == "trap" and rng.random() < 0.12:
                     continue
-                hit(42, base + step * division, 0.48 + rng.uniform(-0.06, 0.12), 0.08)
+                hit(
+                    role_pitches["closed_hat"],
+                    base + step * division,
+                    0.48 + rng.uniform(-0.06, 0.12),
+                    0.08,
+                )
             if style == "trap" and rng.random() < 0.65:
                 for offset in (3.5, 3.75, 3.875):
                     if offset < beats_per_bar:
-                        hit(42, base + offset, 0.56, 0.05)
+                        hit(role_pitches["closed_hat"], base + offset, 0.56, 0.05)
         else:  # dnb
             for beat in (0.0, 2.75):
                 if beat < beats_per_bar:
-                    hit(36, base + beat, 0.96)
+                    hit(role_pitches["kick"], base + beat, 0.96)
             for beat in (1.0, 3.0):
                 if beat < beats_per_bar:
-                    hit(38, base + beat, 0.90)
+                    hit(role_pitches["snare"], base + beat, 0.90)
             for step in range(beats_per_bar * 4):
                 if rng.random() > 0.12:
-                    hit(42, base + step * 0.25, 0.45 + rng.uniform(-0.08, 0.12), 0.07)
+                    hit(
+                        role_pitches["closed_hat"],
+                        base + step * 0.25,
+                        0.45 + rng.uniform(-0.08, 0.12),
+                        0.07,
+                    )
+    warnings = () if drum_map is not None else (
+        "Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed.",
+    )
     return make_sequence(
         name=f"{style} drums",
         generator="drums",
@@ -656,9 +720,7 @@ def compose_drums(
         tempo_bpm=tempo_bpm,
         numerator=beats_per_bar,
         seed=seed,
-        warnings=[
-            "Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed."
-        ],
+        warnings=warnings,
     )
 
 
@@ -978,6 +1040,7 @@ class PianoRollBridgeStatus(CreativeModel):
 class PianoRollTargetReceipt(CreativeModel):
     command: Literal["creative.prepare_piano_roll"]
     channel_index: int = Field(ge=0)
+    target_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
     pattern_number: int = Field(ge=1, le=999)
     before_channel_indices: list[int]
     after_channel_indices: list[int]
@@ -1360,27 +1423,55 @@ class _PianoRollRegistry:
 PIANO_ROLL = _PianoRollRegistry()
 
 
+def _target_fingerprint_precondition(value: str | None) -> str | None:
+    """Validate an optional target identity guard before any bridge call."""
+
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(
+            "target_fingerprint must be exactly 64 lowercase hexadecimal characters"
+        )
+    return value
+
+
 def _target_piano_roll(
     channel_index: int,
     pattern_number: int,
     *,
     session_fingerprint: str | None = None,
+    target_fingerprint: str | None = None,
 ) -> PianoRollTargetReceipt:
     if type(channel_index) is not int or channel_index < 0:
         raise ValueError("channel_index must be a non-negative global index")
     if type(pattern_number) is not int or not 1 <= pattern_number <= 999:
         raise ValueError("pattern_number must be within 1..999")
+    expected_target = _target_fingerprint_precondition(target_fingerprint)
     client, _ping, session = _writable_preflight(
         session_fingerprint=session_fingerprint
     )
-    raw = client.call(
-        "creative.prepare_piano_roll",
-        channel=channel_index,
-        pattern=pattern_number,
-        index_scope="global",
-        session_fingerprint=session,
-    )
-    return PianoRollTargetReceipt.model_validate(raw)
+    arguments: dict[str, Any] = {
+        "channel": channel_index,
+        "pattern": pattern_number,
+        "index_scope": "global",
+        "session_fingerprint": session,
+    }
+    if expected_target is not None:
+        arguments["target_fingerprint"] = expected_target
+    raw = client.call("creative.prepare_piano_roll", **arguments)
+    receipt = PianoRollTargetReceipt.model_validate(raw)
+    if (
+        expected_target is not None
+        and receipt.target_fingerprint != expected_target
+    ):
+        raise ValueError(
+            "Piano Roll target fingerprint proof did not match the requested target"
+        )
+    return receipt
 
 
 def _trigger_piano_roll_shortcut() -> HotkeyDispatch:
@@ -1506,11 +1597,13 @@ def write_piano_roll_notes(
     mode: Literal["append", "replace"] = "append",
     auto_trigger: bool = True,
     session_fingerprint: str | None = None,
+    target_fingerprint: str | None = None,
 ) -> PianoRollDispatch:
     if not 1 <= len(notes) <= MAX_PIANO_ROLL_NOTES:
         raise ValueError(f"notes must contain 1..{MAX_PIANO_ROLL_NOTES} entries")
     if mode not in {"append", "replace"}:
         raise ValueError("mode must be append or replace")
+    expected_target = _target_fingerprint_precondition(target_fingerprint)
     request_id = os.urandom(16).hex()
     digest = note_digest(notes)
     script = _notes_script(notes, mode, request_id)
@@ -1525,13 +1618,28 @@ def write_piano_roll_notes(
             # this request's fixed script is being written or dispatched.
             PIANO_ROLL.require_armed()
             if session_fingerprint is None:
-                target = _target_piano_roll(channel_index, pattern_number)
+                if expected_target is None:
+                    target = _target_piano_roll(channel_index, pattern_number)
+                else:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        target_fingerprint=expected_target,
+                    )
             else:
-                target = _target_piano_roll(
-                    channel_index,
-                    pattern_number,
-                    session_fingerprint=session_fingerprint,
-                )
+                if expected_target is None:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                    )
+                else:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                        target_fingerprint=expected_target,
+                    )
         elif session_fingerprint is not None:
             # Manual preparation still writes the integration script. When a
             # caller supplies a session guard, prove it before that file write
