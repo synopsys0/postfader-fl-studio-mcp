@@ -47,11 +47,11 @@ test = [
     "tomli>=2; python_version < '3.11'",
 ]
 dev = [
-    "coverage>=7.6,<8",
-    "fl-studio-api-stubs>=37,<38",
-    "pyright>=1.1.390,<2",
+    "coverage>=7.15.4,<8",
+    "fl-studio-api-stubs>=37.0.1,<38",
+    "pyright>=1.1.411,<2",
     "tomli>=2; python_version < '3.11'",
-    "ruff>=0.9,<1",
+    "ruff>=0.16.5,<1",
 ]
 
 [project.urls]
@@ -63,7 +63,7 @@ Documentation = "https://github.com/synopsys0/postfader-fl-studio-mcp#readme"
 [build-system]
 # 77 is the first release to understand PEP 639 `license`/`license-files`.
 # Building with anything older silently drops the license metadata.
-requires = ["setuptools>=77"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
