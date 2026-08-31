@@ -24,6 +24,21 @@ version. A channel fingerprint is therefore a same-session stale-target guard,
 not an identity that can be carried across projects or bridge reloads, and
 exact plug-in version remains unknown.
 
+## Atlas knowledge is separate from compatibility evidence
+
+The [Plugin Atlas](plugin-atlas.md) is a static, offline catalog of product
+purpose and related documentation. Its current Image-Line pricing snapshot
+contains 119 rows, plus separately scoped auxiliary, manual/index, and legacy
+records; selected third-party entries are not a completeness claim. Atlas does
+not prove that a product is installed, owned, or loaded, and it is not a
+runtime allowlist.
+
+The validated [plug-in matrix](plugin-matrix.md) records bounded observations
+from actual loaded instances. Its detected, read-profiled, and write-validated
+rows are compatibility/write evidence, not product knowledge and not a gate on
+generic discovery. Neither surface can insert, remove, or reorder a plug-in;
+neither can save or render a project or read FL Studio's live audio output.
+
 ## How support works for what can be reached
 
 Generic plug-in discovery is identity-independent: there is no allowlist that a

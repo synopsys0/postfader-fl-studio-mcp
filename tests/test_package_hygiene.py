@@ -343,6 +343,7 @@ with mock.patch.object(
                 "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
                 "postfader-doctor": "fl_studio_mcp.diagnostics:main",
                 "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+                "postfader-plugin-atlas": "fl_studio_mcp.plugin_atlas.cli:main",
                 "postfader-setup": "fl_studio_mcp.setup_wizard:main",
             },
         )
@@ -359,6 +360,21 @@ with mock.patch.object(
             "fl_studio_mcp._bridge",
             declared["tool"]["setuptools"]["packages"],
         )
+        self.assertIn(
+            "fl_studio_mcp.plugin_atlas",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.plugin_atlas_data",
+            declared["tool"]["setuptools"]["packages"],
+        )
+
+        atlas_data = files("fl_studio_mcp.plugin_atlas_data")
+        source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+        for path in source_data.rglob("*.json"):
+            relative = path.relative_to(source_data)
+            with self.subTest(atlas_data=relative.as_posix()):
+                self.assertTrue(atlas_data.joinpath(*relative.parts).is_file())
 
     def test_runtime_modules_do_not_import_the_fl_controller_body(self) -> None:
         # `_bridge` has no __init__.py, but its directory may still be found as
@@ -371,7 +387,10 @@ with mock.patch.object(
         self.assertTrue(controller.is_file())
         self.assertFalse((controller.parent / "__init__.py").exists())
 
-        for module in package.glob("*.py"):
+        modules = list(package.glob("*.py"))
+        modules.extend((package / "plugin_atlas").rglob("*.py"))
+        modules.extend((package / "plugin_atlas_data").rglob("*.py"))
+        for module in modules:
             tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
             imports = []
             for node in ast.walk(tree):
@@ -414,9 +433,18 @@ with mock.patch.object(
         )
         self.assertEqual(
             metadata["tool"]["setuptools"]["packages"],
-            ["fl_studio_mcp", "fl_studio_mcp._bridge"],
+            [
+                "fl_studio_mcp",
+                "fl_studio_mcp._bridge",
+                "fl_studio_mcp.plugin_atlas",
+                "fl_studio_mcp.plugin_atlas_data",
+            ],
         )
-        self.assertNotIn("package-data", metadata["tool"]["setuptools"])
+        self.assertFalse(metadata["tool"]["setuptools"]["include-package-data"])
+        self.assertEqual(
+            metadata["tool"]["setuptools"]["package-data"],
+            {"fl_studio_mcp.plugin_atlas_data": ["*.json", "**/*.json"]},
+        )
 
     def test_offline_prototype_is_not_in_the_public_package(self) -> None:
         package = ROOT / "fl_studio_mcp"
@@ -523,6 +551,19 @@ with mock.patch.object(
         }
         self.assertEqual(verifier.V013_REQUIRED_RUNTIME_MODULES, expected)
         self.assertLessEqual(expected, verifier.RUNTIME_MODULES)
+
+    def test_distribution_verifier_pins_plugin_atlas_modules_and_data(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.ATLAS_RUNTIME_MODULES)
+        self.assertTrue(verifier.ATLAS_DATA_FILES)
+        self.assertLessEqual(verifier.ATLAS_RUNTIME_MODULES, verifier.RUNTIME_MODULES)
+        self.assertTrue(
+            all(
+                path.startswith("fl_studio_mcp/plugin_atlas_data/")
+                and path.endswith(".json")
+                for path in verifier.ATLAS_DATA_FILES
+            )
+        )
 
 
 if __name__ == "__main__":

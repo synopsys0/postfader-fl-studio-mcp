@@ -4,7 +4,7 @@
   "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 95-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "long_description": "A local 99-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -84,6 +84,22 @@
     {
       "name": "plugins_scan_parameters",
       "description": "De-pad a whole plug-in in one call; prefer this over paging a VST."
+    },
+    {
+      "name": "plugins_atlas_search",
+      "description": "Search bundled static plug-in knowledge without contacting FL Studio."
+    },
+    {
+      "name": "plugins_atlas_get_product",
+      "description": "Read one static Atlas product and its related descriptive records."
+    },
+    {
+      "name": "plugins_atlas_recommend",
+      "description": "Rank static plug-in choices or stock alternatives without changing FL."
+    },
+    {
+      "name": "plugins_atlas_inspect_loaded",
+      "description": "Match the target-aware live Track B inventory to static Atlas knowledge."
     },
     {
       "name": "copilot_capture_readonly_inspection",

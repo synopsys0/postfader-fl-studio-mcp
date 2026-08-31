@@ -55,6 +55,8 @@ SAFE_TESTS = (
     "tests/test_resource_bounds.py",
     "tests/test_plugin_profile.py",
     "tests/test_plugin_report.py",
+    "tests/test_plugin_atlas.py",
+    "tests/test_plugin_atlas_mcp.py",
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",

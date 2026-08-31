@@ -6,6 +6,17 @@ plug-in. An unlisted mixer effect remains eligible for the same runtime
 discovery as a listed one. **Unvalidated means only that nobody has contributed
 a publishable result yet; it does not mean unsupported.**
 
+The [Plugin Atlas](plugin-atlas.md) is a separate static knowledge layer. It
+describes product purpose, techniques, limitations, and official source links;
+it cannot prove ownership, installation, or that a product is loaded. Atlas
+records do not create a runtime allowlist, and matrix rows do not turn Atlas
+knowledge into a compatibility guarantee. The matrix's read and write labels
+refer only to the bounded loaded-instance observations described below.
+
+Both surfaces remain within the FL Studio API boundary: PostFader cannot use
+them to insert, remove, or reorder plug-ins, save or render a project, or read
+FL Studio's live audio output.
+
 ## Read the three axes separately
 
 | Axis | Values | Meaning |

@@ -480,6 +480,22 @@ def read_acceptance_arguments(
             "max_indices": 8192,
             "max_results": 2048,
         },
+        "plugins_atlas_search": {
+            "request": {"query": "compressor", "limit": 16}
+        },
+        "plugins_atlas_get_product": {
+            "request": {"product_id": "image-line.fruity-compressor"}
+        },
+        "plugins_atlas_recommend": {
+            "request": {
+                "query": "control vocal dynamics",
+                "prefer_stock": True,
+                "limit": 16,
+            }
+        },
+        "plugins_atlas_inspect_loaded": {
+            "request": {"only_used": False, "match_limit": 16}
+        },
         "copilot_capture_readonly_inspection": {
             "only_used": False,
             "parameter_limit": 64,

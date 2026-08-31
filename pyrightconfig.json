@@ -6,6 +6,8 @@
     "fl_studio_mcp/contracts.py",
     "fl_studio_mcp/evidence.py",
     "fl_studio_mcp/workflows.py",
+    "fl_studio_mcp/plugin_atlas",
+    "fl_studio_mcp/plugin_atlas_mcp.py",
     "scripts/build_release_bundles.py"
   ],
   "exclude": [

@@ -1,6 +1,6 @@
 # Tool-surface evaluation
 
-PostFader v0.20 exposes 90 MCP tools and 8 live resources. This document is a
+PostFader v0.20 exposes 99 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,
 profile rollout, telemetry, or a silent change to the default surface.
@@ -13,14 +13,13 @@ count from a model transcript alone.
 
 ## Current surface to evaluate
 
-The current contract groups the 90 tools as follows:
+The current contract groups the 99 tools as follows:
 
 | Surface | Count | What it represents | Typical evidence source |
 | --- | ---: | --- | --- |
-| Read-only tools | 36 | Project, transport, mixer, plug-in, Channel Rack, pattern, Playlist, history, audio, and non-mutating workflow observations | SDK listing, fake FL, or live read acceptance |
-| Directly guarded FL setters | 39 | Narrow mixer, plug-in, transport, Channel Rack, pattern, Playlist, sequencer, and history mutations | Contract tests, fake FL, then disposable live write acceptance |
-| Specialized mutating workflows | 8 | Bounded batches, note audition, Piano Roll writes/transforms, arrangement preparation/markers, and automation dispatch paths | Workflow tests plus explicit live evidence where the backend exposes it |
-| Non-destructive workflow/dispatch tools | 6 | Analysis, plans, profile/intent resolution, and other preparation or dispatch surfaces that do not themselves apply a project mutation | Deterministic workflow tests and response evidence |
+| Read-only tools | 42 | Project, transport, mixer, plug-in, Plugin Atlas, Channel Rack, pattern, Playlist, history, audio, and non-mutating workflow observations | SDK listing, fake FL, or live read acceptance |
+| Directly guarded FL setters and bounded mutating workflows | 49 | Narrow mixer, plug-in, transport, Channel Rack, pattern, Playlist, sequencer, history, batch, Production Run, Piano Roll, arrangement, automation, and local MIDI mutations | Contract tests, fake FL, then disposable live write acceptance |
+| Non-destructive workflow/dispatch tools | 7 | Note audition, peak watches, plans, and other process-local preparation or dispatch surfaces that do not themselves apply a project mutation | Deterministic workflow tests and response evidence |
 | Session-mode control | 1 | `fl_set_write_mode`, the session-only capability transition | Read-only startup and post-transition handshake tests |
 
 The category labels are evaluation aids, not a second API taxonomy. Some tools
@@ -177,7 +176,7 @@ does not support resources, or failed to start the server. Attach the output of
 an explicit tool-listing check only after removing paths, environment values,
 and private metadata.
 
-The expected server values are 90 tools and 8 resources for v0.20. A client
+The expected server values are 99 tools and 8 resources for v0.20. A client
 showing fewer is not evidence that the repository should silently change its
 default surface. Escalate client limits or MCP SDK compatibility separately.
 
@@ -312,13 +311,13 @@ reports across more than one MCP client/model, a measurable discovery or
 selection problem, a reviewed mapping that does not duplicate or contradict
 tool contracts, and hermetic tests for each profile's exact list and safety
 annotations. Do not add telemetry to gather that evidence. Until those inputs
-exist, keep the v0.20 default at 90 tools and 8 resources and improve guidance,
+exist, keep the v0.20 default at 99 tools and 8 resources and improve guidance,
 schemas, or client-specific documentation instead.
 
 ## What this guide does not claim
 
 - It does not claim that every model will choose the ideal tool.
-- It does not claim that a client exposing all 90 tools can fit them into every
+- It does not claim that a client exposing all 99 tools can fit them into every
   model context window.
 - It does not claim that tool selection proves a live FL Studio mutation,
   audible quality, undo point, rollback, or project save.

@@ -1,11 +1,11 @@
 # Tool and command reference
 
-PostFader exposes 95 MCP tools and 8 MCP resources. The MCP layer is the supported
+PostFader exposes 99 MCP tools and 8 MCP resources. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. The surface contains 38 read-only tools, 39 directly
+and non-finite numbers. The surface contains 42 read-only tools, 39 directly
 guarded FL setters, 10 specialized mutating workflows, 7 non-destructive
 workflow/dispatch tools, and one session-mode control. `fl_set_write_mode` is a
 destructive capability change but an idempotent, session-only absolute state.
@@ -23,6 +23,10 @@ destructive capability change but an idempotent, session-only absolute state.
 | `plugins_scan_loaded_plugins` | Inventory effects loaded on observed mixer tracks; optionally include Channel Rack generators with explicit target kinds. |
 | `plugins_inspect_parameter_map` | Read a bounded page of one mixer effect or Channel Rack generator's exposed parameters. |
 | `plugins_scan_parameters` | Walk a bounded parameter range for either plug-in target and return named or display-bearing controls without VST padding. |
+| `plugins_atlas_search` | Search the bundled, offline product catalogue by text and bounded static filters. |
+| `plugins_atlas_get_product` | Read one bundled product by exact ID with related vendor, adapter, evidence, and stock-alternative records. |
+| `plugins_atlas_recommend` | Rank bundled products or explicit stock alternatives from bounded production criteria. |
+| `plugins_atlas_inspect_loaded` | Match the current target-aware loaded-plug-in inventory to Atlas records without asserting ownership or control proof. |
 | `copilot_capture_readonly_inspection` | Capture project, mixer, and bounded plug-in previews under one observation ID. |
 | `fl_list_channels` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
 | `fl_get_step_sequence` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |

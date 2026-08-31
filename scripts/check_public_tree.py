@@ -71,6 +71,7 @@ PUBLIC_DOCUMENT_PATHS = {
     "docs/future-security-hardening-options.md",
     "docs/maintainability-plan.md",
     "docs/plugin-matrix.md",
+    "docs/plugin-atlas.md",
     "docs/plugin-support.md",
     "docs/production-runs.md",
     "docs/releases/v0.20.0.md",

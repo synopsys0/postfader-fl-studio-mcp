@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current public surface contains 95 tools and 8 resources.
+controller script. The current public surface contains 99 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -16,6 +16,7 @@ fl_studio_mcp/mcp_server.py
         ├── workflows.py ──────────┤
         ├── production_runs.py ────┤
         ├── mixing.py ─────────────┤
+        ├── plugin_atlas_mcp.py ───┤
         ├── creative.py ───────────┤
         │                          │        │
         │                          │        │ local SysEx over a configured virtual MIDI endpoint
@@ -37,7 +38,7 @@ sent to a remote model provider.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 95 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 99 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
