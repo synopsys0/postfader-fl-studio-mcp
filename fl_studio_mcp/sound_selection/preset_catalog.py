@@ -296,3 +296,23 @@ __all__ = [
     "PresetRecord",
     "resolve_preset_name",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily expose discovery contracts without introducing an import cycle."""
+
+    if name in {
+        "PresetCandidateCoverage",
+        "PresetCandidateDiscovery",
+        "PresetCandidateDiscoveryPolicy",
+        "PresetCandidatePage",
+        "PresetCandidateSet",
+        "PresetDiscoveryService",
+        "discover_candidates",
+        "discover_preset_candidate_set",
+        "discover_preset_candidates",
+    }:
+        from . import preset_discovery
+
+        return getattr(preset_discovery, name)
+    raise AttributeError(name)

@@ -19,7 +19,7 @@ inside the FL Studio project already open.
 PostFader connects Claude, Codex, Cursor, and other local MCP clients to the
 project open in FL Studio. Inspect mixer routing and loaded plug-ins, diagnose
 exported mixes, choose coherent sound palettes, control the session, generate
-MIDI parts, and prepare patterns and arrangement markers through 111 tools and
+MIDI parts, and prepare patterns and arrangement markers through 114 tools and
 8 live resources. Guided packages support Windows and macOS. PostFader starts
 read-only and never saves automatically.
 
@@ -44,7 +44,15 @@ can choose a coherent role-based palette from loaded generators, verify exact
 preset navigation, preserve anchors across sections, and map reported drum
 pads.
 
-The v0.20 surface contains 111 tools and 8 live resources. Guided Windows and
+For a delegated creation request, the connected AI can run one bounded,
+phase-based Production Run: read a multi-dimensional readiness scorecard,
+choose sounds from the loaded pool, adapt composition to sound metadata,
+write a modest pattern, and optionally apply restrained semantic processing
+to loaded, adapter-backed effects. Technical execution, arrangement delivery,
+processing state, manual handoff, and audible quality are reported separately;
+the connector does not claim to have heard the live project.
+
+The current development surface contains 114 tools and 8 live resources. Guided Windows and
 macOS packages, dedicated Codex packages, a Claude Desktop MCPB, and Python
 distributions cover different setup needs. PostFader starts read-only, requires
 session-only authorization for writes, never saves automatically, and reads
@@ -61,10 +69,13 @@ service, account, or telemetry.
   Master protection.
 - Supported direct setters use later-update readback; weaker evidence is
   labeled partial or unverified.
-- The current public surface has 111 tools and 8 live resources.
+- The current development surface has 114 tools and 8 live resources.
 - Sound Selection plans and applies exact loaded presets, coherent role-based
   palettes, section variations, and reported drum maps; it does not insert
   plug-ins or claim that a preset was heard.
+- Creation readiness, phase timing, sound-aware composition, and semantic
+  processing are available as bounded local workflows; missing capabilities
+  remain explicit and audible quality is not inferred from technical receipts.
 - Guided setup connects the local package, Universal Bridge, virtual MIDI
   selection, client configuration, and doctor checks; it does not install a
   virtual MIDI provider.
@@ -105,6 +116,8 @@ Do not add `remote MCP`, `hosted service`, `telemetry`, `rollback`, or
 | Setup guide | [docs/setup.md](setup.md) |
 | Tool contracts | [docs/tool-contracts.md](tool-contracts.md) |
 | Sound Selection | [docs/sound-selection.md](sound-selection.md) |
+| Creation Pipeline | [docs/creation-pipeline.md](creation-pipeline.md) |
+| Next-release notes | [docs/releases/dev-v10.md](releases/dev-v10.md) |
 | Security policy | [SECURITY.md](../SECURITY.md) |
 | Plug-in matrix | [docs/plugin-matrix.md](plugin-matrix.md) |
 | Issue tracker | [GitHub Issues](https://github.com/synopsys0/postfader-fl-studio-mcp/issues) |
@@ -113,6 +126,23 @@ Do not add `remote MCP`, `hosted service`, `telemetry`, `rollback`, or
 Use the repository's release page for checksums and platform assets. Do not
 invent a directory listing URL, an acceptance status, or an independent
 qualification result.
+
+## Creation release contents and verification
+
+The next-release source and platform bundles include the versioned
+`fl_studio_mcp/creation_pipeline/` contracts, the bundled
+`sound_selection/data/preset-metadata-v1.json` resource, the creation
+acceptance harness, and the public creation guides. The Claude Desktop MCPB
+contains runtime modules and package data but intentionally excludes maintainer
+scripts and tests; the standard/Codex ZIPs and source archive carry the
+maintainer docs and scripts.
+
+Before publishing, run the public-tree check, build the wheel/source archive,
+run the clean installed-package smoke test, verify the release bundles, and
+run the MCPB checker where that bundle is produced. These checks assert the
+creation modules, preset metadata, docs, and acceptance script are present;
+they do not qualify a live FL Studio run. Keep live projects, screenshots,
+logs, timing evidence, and acceptance output outside the public repository.
 
 ## Package-selection explanation
 

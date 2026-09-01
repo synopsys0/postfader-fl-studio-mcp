@@ -45,7 +45,7 @@ another local MCP client.
 
 **Secondary action:** Explore what PostFader can do
 
-**Proof strip:** 111 tools · 8 live resources · Windows and macOS · Open source ·
+**Proof strip:** 114 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.

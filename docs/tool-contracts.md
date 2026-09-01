@@ -1,6 +1,6 @@
 # Tool and command reference
 
-PostFader exposes 111 MCP tools and 8 MCP resources. The MCP layer is the supported
+PostFader exposes 114 MCP tools and 8 MCP resources on the current development branch. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
@@ -72,6 +72,29 @@ can still participate with lower semantic confidence.
 Loop Starter rerolling is available only for an explicit Loop Starter request;
 FL does not expose authoritative selected-loop identity, so that result is
 dispatch-only rather than a verified sound selection.
+
+## Creation readiness and semantic processing
+
+These focused tools support inspection and debugging. A normal end-to-end
+creation request should use one `postfader_execute_run`; it invokes the same
+readiness service internally and carries one context through the phases.
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `postfader_creation_readiness` | Zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope. Returns blockers together with a reusable bounded context snapshot. |
+| `processing_plan` | Read-only effect coverage and semantic plan from loaded, Atlas-matched, adapter-backed, runtime-observed controls. |
+| `processing_apply_plan` | One explicitly authorized processing run using existing verified setters and later-tick readback; missing/unresolved controls remain visible. |
+
+Creation plans can include `plan_sound_palette`,
+`apply_sound_palette`, `inspect_drum_map`, deterministic generators,
+`adapt_note_sequence`, Piano Roll writes, `plan_processing`, and
+`apply_processing_plan`. Sound-aware adaptation carries characteristic
+provenance/confidence and records register, envelope, articulation, density,
+and polyphony decisions. The run's `timing_report` is local diagnostic data,
+not telemetry. Its `creation_outcome` separates technical execution,
+arrangement delivery, processing, audible quality, and manual handoff;
+`audible_quality.status="not_evaluated"` is the default until user or bounce
+evidence exists.
 
 ## Live resources
 
@@ -411,6 +434,7 @@ mode.
 
 | Tool | Purpose |
 | --- | --- |
+| `postfader_creation_readiness` | Aggregate all detectable creation blockers and limitations without enabling writes or changing FL Studio. |
 | `postfader_validate_run` | Read-only structural and live-capability validation. Returns the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers without enabling writes. |
 | `postfader_execute_run` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
 | `postfader_get_run` | Read a process-local run state, generated outputs, receipts, blockers, and concise summary. |
@@ -422,6 +446,16 @@ generation; exact pattern preparation or selection; Piano Roll writes and
 supported transforms; section markers; supported automation values; and the
 existing closed verified batch. Note-sequence references may point only to an
 earlier compatible generator output. All plans and histories are bounded.
+
+Creation plans add typed sound-palette and processing references to that same
+union. A complete mutating run uses one readiness preflight, one task-scoped
+authorization, one in-memory write-mode enable, and one verified shutdown.
+The phases are `preflight`, `palette`, `composition`, `note_application`,
+`processing`, and `finalization`; omitted work is marked skipped. A dry
+composition result reports `not_requested` or `dry_by_design`, while missing
+effect coverage reports `dry_missing_effects` or a partial state. No result
+claims that a preset or mix was heard, and no run saves automatically. See
+[Production Runs](production-runs.md) and [Creation Pipeline](creation-pipeline.md).
 
 Runs disappear when the MCP process exits or when the bounded registry evicts
 them. A Production Run never renders, inserts plug-ins, creates Playlist clips,

@@ -1110,8 +1110,10 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "sound_selection_history_reset",
         }
         production_read_tools = {
+            "postfader_creation_readiness",
             "postfader_validate_run",
             "postfader_get_run",
+            "processing_plan",
         }
         write_tools = {
             "fl_apply_verified_batch",
@@ -1187,6 +1189,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         production_mutating_tools = {
             "postfader_execute_run",
             "postfader_continue_run",
+            "processing_apply_plan",
         }
         plan_apply_tools = {"mix_apply_plan"}
         creative_read_tools = {

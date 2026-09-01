@@ -15,13 +15,71 @@ import hashlib
 import json
 import secrets
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import ConfigDict, Field, StrictBool, model_validator
 
 from .contracts import SCHEMA_VERSION, ConnectionInfo, ContractModel, ProjectSummary
+from .creation_pipeline.composition_adaptation import (
+    CompositionAdaptationReport,
+    SoundAwareCompositionResult,
+    adapt_note_sequence,
+    derive_composition_profile,
+)
+from .creation_pipeline.context import (
+    CreationRunContextSnapshot,
+    PianoRollArmingReceipt,
+)
+from .creation_pipeline.live_readiness import (
+    MCP_PROCESS_IDENTITY,
+    CollectedCreationReadiness,
+    collect_creation_readiness,
+    refresh_creation_readiness_from_cache,
+)
+from .creation_pipeline.models import (
+    CreationReadinessReport,
+    PianoRollReadiness,
+    ReadinessDimension,
+    ReadinessEvidence,
+)
+from .creation_pipeline.models import (
+    ReadinessBlocker as CreationReadinessBlocker,
+)
+from .creation_pipeline.outcomes import (
+    ArrangementDeliveryOutcome,
+    AudibleQualityOutcome,
+    CreationOutcome,
+    ManualHandoffItem,
+    ManualHandoffOutcome,
+    ProcessingOutcome,
+    TechnicalExecutionOutcome,
+    build_creation_outcome,
+)
+from .creation_pipeline.phases import (
+    PHASE_ORDER,
+    CreationPhasePlan,
+    build_phase_plan,
+    classify_operation_phase,
+)
+from .creation_pipeline.processing import (
+    ProcessingPlan,
+    ProcessingPlanReceipt,
+    ProcessingRequest,
+    SemanticPluginAction,
+    plan_processing,
+)
+from .creation_pipeline.readiness import CreationReadinessService
+from .creation_pipeline.semantic_actions import (
+    apply_processing_plan,
+    apply_semantic_plugin_action,
+)
+from .creation_pipeline.sound_characteristics import (
+    SelectedSoundCharacteristics,
+    characteristics_from_palette_assignment,
+)
+from .creation_pipeline.timing import RunTimingCollector, RunTimingReport
 from .creative import (
     MAX_PIANO_ROLL_NOTES,
     PIANO_ROLL,
@@ -43,6 +101,7 @@ from .creative import (
     write_piano_roll_notes,
 )
 from .performance import TrackBController, TrackBInspector
+from .plugin_atlas import load_bundled_registry
 from .readonly_inspector import ReadOnlyInspector
 from .sound_selection.executor import (
     SoundSelectionApplyResult,
@@ -52,11 +111,13 @@ from .sound_selection.models import (
     MAX_ROLE_COUNT,
     DrumPadMap,
     SoundFeedbackRequest,
+    SoundInventory,
     SoundPaletteAssignment,
     SoundPalettePlan,
     SoundPaletteState,
     SoundPaletteVariationPlan,
     SoundSelectionRequest,
+    canonical_digest,
 )
 from .track_b_contracts import (
     SESSION_FINGERPRINT_PATTERN,
@@ -283,6 +344,7 @@ class OperationOutputReference(ProductionRunModel):
         "drum_map",
         "selected_preset",
         "section_variation",
+        "processing_plan",
     ] = "note_sequence"
     role_id: str | None = Field(
         default=None,
@@ -393,6 +455,55 @@ class GenerateDrumsOperation(ProductionOperationBase):
             and self.drum_map.output != "drum_map"
         ):
             raise ValueError("generate_drums requires a drum_map output reference")
+        return self
+
+
+class AdaptNoteSequenceOperation(ProductionOperationBase):
+    """Adapt an earlier tonal sequence to one selected sound and role."""
+
+    operation: Literal["adapt_note_sequence"] = "adapt_note_sequence"
+    sequence: OperationOutputReference
+    characteristics: SelectedSoundCharacteristics | None = None
+    palette_assignment: OperationOutputReference | None = None
+    role_kind: Literal[
+        "intro",
+        "chords",
+        "lead",
+        "primary_bass",
+        "sub_bass",
+        "texture",
+        "countermelody",
+        "generic",
+    ] = "generic"
+    connected_ai_register: tuple[int, int] | None = None
+    connected_ai_polyphony: int | None = Field(default=None, ge=1, le=32)
+
+    @model_validator(mode="after")
+    def validate_references(self) -> "AdaptNoteSequenceOperation":
+        if self.sequence.output != "note_sequence":
+            raise ValueError("adapt_note_sequence requires a note_sequence reference")
+        if self.characteristics is None and self.palette_assignment is None:
+            raise ValueError(
+                "adapt_note_sequence requires characteristics or a palette_assignment"
+            )
+        if self.palette_assignment is not None:
+            if self.palette_assignment.output != "palette_assignment":
+                raise ValueError(
+                    "adapt_note_sequence palette_assignment requires a palette_assignment output"
+                )
+            if (
+                self.characteristics is not None
+                and self.palette_assignment.role_id is not None
+                and self.palette_assignment.role_id.casefold()
+                != self.characteristics.role_id.casefold()
+            ):
+                raise ValueError(
+                    "sound characteristics must identify the referenced palette role"
+                )
+        if self.connected_ai_register is not None:
+            low, high = self.connected_ai_register
+            if not 0 <= low <= high <= 131:
+                raise ValueError("connected_ai_register must be within 0..131")
         return self
 
 
@@ -594,6 +705,40 @@ class RecordSoundFeedbackOperation(ProductionOperationBase):
     feedback: SoundFeedbackRequest
 
 
+class PlanProcessingOperation(ProductionOperationBase):
+    """Plan conservative processing from loaded effects and semantic evidence."""
+
+    operation: Literal["plan_processing"] = "plan_processing"
+    request: ProcessingRequest
+
+
+class ApplyProcessingPlanOperation(ProductionOperationBase):
+    """Apply one bounded semantic plan through existing verified setters."""
+
+    operation: Literal["apply_processing_plan"] = "apply_processing_plan"
+    plan: ProcessingPlan | OperationOutputReference
+
+    @model_validator(mode="after")
+    def validate_plan_reference(self) -> "ApplyProcessingPlanOperation":
+        if (
+            isinstance(self.plan, OperationOutputReference)
+            and self.plan.output != "processing_plan"
+        ):
+            raise ValueError(
+                "apply_processing_plan requires a processing_plan output reference"
+            )
+        return self
+
+
+class ApplySemanticPluginActionOperation(ProductionOperationBase):
+    """Apply one already-resolved semantic action through a verified setter."""
+
+    operation: Literal["apply_semantic_plugin_action"] = (
+        "apply_semantic_plugin_action"
+    )
+    action: SemanticPluginAction
+
+
 class UnavailableProductionOperation(ProductionOperationBase):
     """Closed capability probes that Production Runs must reject before mutation."""
 
@@ -610,6 +755,7 @@ ProductionOperation = Annotated[
     | GenerateMelodyOperation
     | GenerateBasslineOperation
     | GenerateDrumsOperation
+    | AdaptNoteSequenceOperation
     | PreparePatternOperation
     | SelectPatternOperation
     | WriteNoteSequenceOperation
@@ -624,6 +770,9 @@ ProductionOperation = Annotated[
     | InspectDrumMapOperation
     | SelectDrumKitOperation
     | RecordSoundFeedbackOperation
+    | PlanProcessingOperation
+    | ApplyProcessingPlanOperation
+    | ApplySemanticPluginActionOperation
     | UnavailableProductionOperation,
     Field(discriminator="operation"),
 ]
@@ -668,6 +817,7 @@ class SoundFeedbackReceipt(ProductionRunModel):
 
 ProductionResultPayload = (
     NoteSequence
+    | SoundAwareCompositionResult
     | PatternPreparation
     | VerifiedPatternSelectionWrite
     | PianoRollDispatch
@@ -683,6 +833,8 @@ ProductionResultPayload = (
     | VerifiedPluginPresetSelection
     | SelectedDrumKitReceipt
     | SoundFeedbackReceipt
+    | ProcessingPlan
+    | ProcessingPlanReceipt
 )
 
 
@@ -737,6 +889,8 @@ class ProductionGeneratedOutput(ProductionRunModel):
         "drum_map",
         "selected_preset",
         "section_variation",
+        "composition_adaptation",
+        "processing_plan",
     ] = "note_sequence"
     role_id: str | None = Field(default=None, min_length=1, max_length=64)
     value: (
@@ -748,6 +902,8 @@ class ProductionGeneratedOutput(ProductionRunModel):
         | DrumPadMap
         | VerifiedPluginPresetSelection
         | SoundPaletteVariationPlan
+        | CompositionAdaptationReport
+        | ProcessingPlan
     )
     target_fingerprint: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
@@ -763,6 +919,8 @@ class ProductionGeneratedOutput(ProductionRunModel):
             "drum_map": (DrumPadMap,),
             "selected_preset": (VerifiedPluginPresetSelection,),
             "section_variation": (SoundPaletteVariationPlan,),
+            "composition_adaptation": (CompositionAdaptationReport,),
+            "processing_plan": (ProcessingPlan,),
         }
         if not isinstance(self.value, expected[self.output]):
             raise ValueError(f"{self.output} output carries an incompatible value")
@@ -848,7 +1006,28 @@ class ProductionRunState(ProductionRunModel):
         default_factory=tuple, max_length=MAX_RUN_WARNINGS
     )
     final_summary: str | None = Field(default=None, max_length=2048)
+    readiness_report: CreationReadinessReport | None = None
+    run_context: CreationRunContextSnapshot | None = None
+    phase_plan: CreationPhasePlan | None = None
+    current_phase: Literal[
+        "preflight",
+        "palette",
+        "composition",
+        "note_application",
+        "processing",
+        "finalization",
+    ] | None = None
+    timing_report: RunTimingReport | None = None
+    creation_outcome: CreationOutcome | None = None
+    readiness_preflight_count: int = Field(default=0, ge=0, le=MAX_PRODUCTION_ITERATIONS)
     write_mode_enabled_once: bool = False
+    write_mode_active: bool = False
+    write_mode_transition_attempted: bool = False
+    write_mode_owned_by_run: bool = False
+    write_mode_preexisting: bool = False
+    write_mode_enable_count: int = Field(default=0, ge=0, le=MAX_PRODUCTION_ITERATIONS)
+    write_mode_disable_count: int = Field(default=0, ge=0, le=MAX_PRODUCTION_ITERATIONS)
+    write_mode_shutdown_verified: bool | None = None
     automatic_replay_attempted: Literal[False] = False
     rollback_attempted: Literal[False] = False
     project_saved: Literal[False] = False
@@ -885,6 +1064,14 @@ class ProductionRunResult(ProductionRunModel):
     warnings: tuple[str, ...] = Field(
         default_factory=tuple, max_length=MAX_RUN_WARNINGS
     )
+    write_mode_enable_count: int = Field(default=0, ge=0, le=MAX_PRODUCTION_ITERATIONS)
+    write_mode_disable_count: int = Field(default=0, ge=0, le=MAX_PRODUCTION_ITERATIONS)
+    write_mode_active: bool = False
+    write_mode_shutdown_verified: bool | None = None
+    readiness_report: CreationReadinessReport | None = None
+    phase_plan: CreationPhasePlan | None = None
+    timing_report: RunTimingReport | None = None
+    creation_outcome: CreationOutcome | None = None
     rollback_attempted: Literal[False] = False
     project_saved: Literal[False] = False
 
@@ -1138,10 +1325,12 @@ def _requires_project_write(operation: ProductionOperation) -> bool:
         operation,
         (
             *_GENERATOR_TYPES,
+            AdaptNoteSequenceOperation,
             PlanSoundPaletteOperation,
             CreateSoundPaletteVariationOperation,
             InspectDrumMapOperation,
             RecordSoundFeedbackOperation,
+            PlanProcessingOperation,
         ),
     )
 
@@ -1149,6 +1338,8 @@ def _requires_project_write(operation: ProductionOperation) -> bool:
 def _output_types(operation: ProductionOperation) -> tuple[str, ...]:
     if isinstance(operation, _GENERATOR_TYPES):
         return ("note_sequence",)
+    if isinstance(operation, AdaptNoteSequenceOperation):
+        return ("note_sequence", "composition_adaptation")
     if isinstance(operation, (PlanSoundPaletteOperation, ApplySoundPaletteOperation)):
         return ("sound_palette", "palette_assignment", "generator_target")
     if isinstance(operation, CreateSoundPaletteVariationOperation):
@@ -1160,6 +1351,15 @@ def _output_types(operation: ProductionOperation) -> tuple[str, ...]:
     if isinstance(operation, SelectDrumKitOperation):
         return ("selected_preset", "drum_map")
     if isinstance(operation, RecordSoundFeedbackOperation):
+        return ()
+    if isinstance(operation, PlanProcessingOperation):
+        return ("processing_plan",)
+    if isinstance(
+        operation,
+        (ApplyProcessingPlanOperation, ApplySemanticPluginActionOperation),
+    ):
+        # The verified receipt is retained in ProductionOperationReceipt; it
+        # is not advertised as a referenceable generated output.
         return ()
     if isinstance(operation, PreparePatternOperation):
         return ("pattern_preparation",)
@@ -1190,6 +1390,8 @@ def _operation_categories(
 ) -> tuple[ChangeCategory, ...]:
     if isinstance(operation, _GENERATOR_TYPES):
         return ("composition",)
+    if isinstance(operation, AdaptNoteSequenceOperation):
+        return ("composition",)
     if isinstance(
         operation,
         (
@@ -1203,6 +1405,13 @@ def _operation_categories(
         ),
     ):
         return ("sound_selection",)
+    if isinstance(operation, PlanProcessingOperation):
+        return ("plugin_parameters",)
+    if isinstance(
+        operation,
+        (ApplyProcessingPlanOperation, ApplySemanticPluginActionOperation),
+    ):
+        return ("plugin_parameters",)
     if isinstance(operation, (PreparePatternOperation, SelectPatternOperation)):
         return ("pattern_metadata",)
     if isinstance(operation, _PIANO_ROLL_TYPES):
@@ -1238,6 +1447,9 @@ def _required_capabilities(
         if isinstance(operation, _GENERATOR_TYPES):
             add("host_side_creative_generation")
             continue
+        if isinstance(operation, AdaptNoteSequenceOperation):
+            add("sound_aware_composition_adaptation")
+            continue
         if isinstance(
             operation,
             (PlanSoundPaletteOperation, CreateSoundPaletteVariationOperation),
@@ -1251,6 +1463,10 @@ def _required_capabilities(
             continue
         if isinstance(operation, RecordSoundFeedbackOperation):
             add("bounded_local_sound_history")
+            continue
+        if isinstance(operation, PlanProcessingOperation):
+            add("loaded_effect_inventory")
+            add("plugin_atlas_semantic_adapters")
             continue
         add("compatible_live_fl_bridge")
         add("runtime_write_mode_control")
@@ -1273,6 +1489,12 @@ def _required_capabilities(
             add("public_rec_event_automation")
         elif isinstance(operation, ApplyVerifiedBatchOperation):
             add("closed_verified_batch_writes")
+        elif isinstance(
+            operation,
+            (ApplyProcessingPlanOperation, ApplySemanticPluginActionOperation),
+        ):
+            add("semantic_plugin_controls")
+            add("verified_plugin_parameter_setters")
     return tuple(capabilities)
 
 
@@ -1376,6 +1598,15 @@ def _operation_targets(operation: ProductionOperation) -> list[ProductionTarget]
         for item in operation.operations:
             targets.extend(_batch_targets(item))
         return targets
+    if isinstance(operation, ApplyProcessingPlanOperation) and isinstance(
+        operation.plan, ProcessingPlan
+    ):
+        return [
+            _production_target_from_plugin(action.target)
+            for action in operation.plan.actions
+        ]
+    if isinstance(operation, ApplySemanticPluginActionOperation):
+        return [_production_target_from_plugin(operation.action.target)]
     return []
 
 
@@ -1434,11 +1665,25 @@ def _bounded_blockers(
 ) -> tuple[ProductionBlocker, ...]:
     """Bound diagnostic history while preserving proof that details were omitted."""
 
-    if len(blockers) <= limit:
-        return tuple(blockers)
-    omitted = len(blockers) - (limit - 1)
+    unique: list[ProductionBlocker] = []
+    seen: set[tuple[object, ...]] = set()
+    for blocker in blockers:
+        key = (
+            blocker.category,
+            blocker.code,
+            blocker.message,
+            blocker.operation_id,
+            blocker.evidence,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(blocker)
+    if len(unique) <= limit:
+        return tuple(unique)
+    omitted = len(unique) - (limit - 1)
     return (
-        *tuple(blockers[: limit - 1]),
+        *tuple(unique[: limit - 1]),
         _blocker(
             "malformed_plan",
             "additional_blockers_omitted",
@@ -1738,6 +1983,39 @@ def _structural_validation(
 
     for operation in operations:
         if not isinstance(operation, UnavailableProductionOperation):
+            if isinstance(operation, ApplyProcessingPlanOperation) and isinstance(
+                operation.plan, ProcessingPlan
+            ):
+                required_missing = tuple(
+                    item
+                    for item in operation.plan.missing_capabilities
+                    if item.required
+                )
+                if required_missing:
+                    blockers.append(
+                        _blocker(
+                            "unavailable_in_project",
+                            "required_processing_unavailable",
+                            required_missing[0].reason,
+                            operation_id=operation.operation_id,
+                            evidence=tuple(
+                                item.reason for item in required_missing[:16]
+                            ),
+                        )
+                    )
+            if isinstance(operation, ApplySemanticPluginActionOperation):
+                if (
+                    operation.action.resolution.status != "resolved"
+                    or operation.action.resolution.control is None
+                ):
+                    blockers.append(
+                        _blocker(
+                            "malformed_plan",
+                            "semantic_control_unresolved",
+                            "A semantic plug-in action must resolve its control before execution.",
+                            operation_id=operation.operation_id,
+                        )
+                    )
             continue
         blockers.append(
             _blocker(
@@ -2283,6 +2561,7 @@ def _live_validation(
                 PlanSoundPaletteOperation,
                 CreateSoundPaletteVariationOperation,
                 InspectDrumMapOperation,
+                PlanProcessingOperation,
             ),
         )
     ]
@@ -2488,6 +2767,517 @@ def validate_production_run(
     )
 
 
+def _readiness_production_blocker(
+    blocker: CreationReadinessBlocker,
+) -> ProductionBlocker:
+    category: BlockerCategory
+    if blocker.dimension in {"connection_bridge", "piano_roll"}:
+        category = "setup_or_session"
+    elif blocker.dimension == "scope_manual_work":
+        category = "scope"
+    else:
+        category = "unavailable_in_project"
+    return _blocker(
+        category,
+        blocker.code,
+        blocker.message,
+        evidence=tuple(item.detail for item in blocker.evidence[:16]),
+    )
+
+
+def _merge_structural_readiness_blockers(
+    report: CreationReadinessReport,
+    blockers: tuple[ProductionBlocker, ...] | list[ProductionBlocker],
+) -> CreationReadinessReport:
+    if not blockers:
+        return report
+    converted = tuple(
+        CreationReadinessBlocker(
+            code=blocker.code,
+            dimension="scope_manual_work",
+            message=blocker.message,
+            classification="blocking",
+            evidence=tuple(
+                ReadinessEvidence(source="production-run-validation", detail=item)
+                for item in blocker.evidence
+            )
+            or (
+                ReadinessEvidence(
+                    source="production-run-validation", detail=blocker.message
+                ),
+            ),
+        )
+        for blocker in blockers
+    )
+    by_key = {
+        (item.dimension, item.code, item.message): item for item in report.blockers
+    }
+    for item in converted:
+        by_key.setdefault((item.dimension, item.code, item.message), item)
+    dimensions: list[ReadinessDimension] = []
+    for dimension in report.dimensions:
+        if dimension.name != "scope_manual_work":
+            dimensions.append(dimension)
+            continue
+        codes = tuple(
+            dict.fromkeys(
+                (*dimension.blocker_codes, *(item.code for item in converted))
+            )
+        )
+        dimensions.append(
+            dimension.model_copy(
+                update={
+                    "state": "blocked",
+                    "summary": "The submitted run has structural, scope, or capability blockers.",
+                    "blocker_codes": codes,
+                }
+            )
+        )
+    return report.model_copy(
+        update={
+            "overall_state": "blocked",
+            "score": min(report.score, 85.0),
+            "dimensions": tuple(dimensions),
+            "blockers": tuple(by_key.values()),
+        }
+    )
+
+
+def _collect_run_readiness(
+    request: ProductionRunRequest,
+    plan: ProductionRunPlan,
+    *,
+    start_index: int = 0,
+    structural_blockers: tuple[ProductionBlocker, ...] = (),
+) -> tuple[CreationReadinessReport, CollectedCreationReadiness]:
+    operations = plan.operations[start_index:]
+    required_categories = tuple(
+        dict.fromkeys(
+            category
+            for operation in operations
+            if _is_mutating(operation)
+            for category in _operation_categories(operation)
+        )
+    )
+    collected = collect_creation_readiness(
+        operations=operations,
+        completion_target_text=request.completion_target,
+        allowed_mutation_categories=request.allowed_changes,
+        required_mutation_categories=required_categories,
+        preserved_targets=request.preserve.targets,
+        unavailable_operations=tuple(
+            operation.operation
+            for operation in operations
+            if isinstance(operation, UnavailableProductionOperation)
+        ),
+    )
+    report = CreationReadinessService().evaluate(collected.readiness_input)
+    report = _merge_structural_readiness_blockers(report, structural_blockers)
+    return report, collected
+
+
+def _refresh_cached_readiness_for_continuation(
+    collected: CollectedCreationReadiness,
+    operations: tuple[ProductionOperation, ...],
+    existing_report: CreationReadinessReport | None,
+    *,
+    request: ProductionRunRequest,
+    required_mutation_categories: tuple[ChangeCategory, ...] = (),
+    unavailable_operations: tuple[str, ...] = (),
+) -> tuple[CreationReadinessReport, CollectedCreationReadiness]:
+    """Refresh recoverable setup and re-evaluate the remaining request."""
+
+    cached = collected.readiness_input.piano_roll
+    piano_required = any(isinstance(operation, _PIANO_ROLL_TYPES) for operation in operations)
+    refreshed = collected
+    if piano_required and not cached.armed_this_process:
+        try:
+            status = PIANO_ROLL.status()
+        except Exception:
+            status = None
+        if status is not None and status.armed_this_session:
+            refreshed_piano = PianoRollReadiness(
+                required=True,
+                apply_script_present=status.script_exists,
+                armed_this_process=True,
+                authenticated_arming_receipt=True,
+                arming_receipt_id=status.last_request_id,
+                target_selection_supported=status.automatic_trigger_supported,
+                persistence_receipt_supported=status.automatic_trigger_supported,
+                manual_action=None,
+            )
+            arming = PianoRollArmingReceipt(
+                receipt_id="piano-"
+                + hashlib.sha256(
+                    f"{MCP_PROCESS_IDENTITY}:{status.last_request_id or 'armed'}".encode(
+                        "utf-8"
+                    )
+                ).hexdigest()[:24],
+                process_identity=MCP_PROCESS_IDENTITY,
+                authenticated=True,
+                script_present=status.script_exists,
+                captured_at=_now(),
+            )
+            context = refreshed.context_snapshot.model_copy(
+                update={"piano_roll_arming_receipt": arming}
+            )
+            readiness_input = refreshed.readiness_input.model_copy(
+                update={
+                    "piano_roll": refreshed_piano,
+                    "context_snapshot": context,
+                }
+            )
+            refreshed = replace(
+                refreshed,
+                readiness_input=readiness_input,
+                context_snapshot=context,
+                target_refresh_count=refreshed.target_refresh_count + 1,
+            )
+
+    # ``existing_report`` describes the prior request and is intentionally not
+    # reused.  Every request/remaining-plan dependent dimension is rebuilt
+    # from the cached live collection; no inventory rescan is performed.
+    del existing_report
+    return refresh_creation_readiness_from_cache(
+        refreshed,
+        operations=operations,
+        completion_target_text=request.completion_target,
+        allowed_mutation_categories=request.allowed_changes,
+        required_mutation_categories=required_mutation_categories,
+        preserved_targets=request.preserve.targets,
+        unavailable_operations=unavailable_operations,
+    )
+
+
+def _creation_plan_needs_readiness(
+    operations: tuple[ProductionOperation, ...],
+    *,
+    start_index: int = 0,
+) -> bool:
+    """Whether the remaining plan is a multi-stage live creation workflow."""
+
+    remaining = operations[start_index:]
+    # Processing planning is read-only, but it still needs the bounded loaded-
+    # effect snapshot.  Evaluate it before the write check so a standalone
+    # processing operation cannot silently plan against an empty plug-in pool.
+    # Sound-palette-only plans retain their existing process-local behavior.
+    if any(isinstance(operation, PlanProcessingOperation) for operation in remaining):
+        return True
+    if not any(_requires_project_write(operation) for operation in remaining):
+        return False
+    if any(
+        isinstance(
+            operation,
+            (PlanSoundPaletteOperation, CreateSoundPaletteVariationOperation),
+        )
+        for operation in remaining
+    ):
+        return True
+    has_composition = any(
+        isinstance(operation, (*_GENERATOR_TYPES, AdaptNoteSequenceOperation))
+        for operation in remaining
+    )
+    has_note_application = any(
+        isinstance(operation, _PIANO_ROLL_TYPES) for operation in remaining
+    )
+    return has_composition and has_note_application
+
+
+def _cached_live_validation(
+    request: ProductionRunRequest,
+    plan: ProductionRunPlan,
+    collected: CollectedCreationReadiness,
+    *,
+    start_index: int,
+) -> tuple[list[ProductionBlocker], list[str], str | None, str | None]:
+    """Validate operation-specific facts from the one readiness collection."""
+
+    operations = list(plan.operations[start_index:])
+    project_mutating = [
+        operation for operation in operations if _requires_project_write(operation)
+    ]
+    live_reading = [
+        operation
+        for operation in operations
+        if isinstance(
+            operation,
+            (
+                PlanSoundPaletteOperation,
+                CreateSoundPaletteVariationOperation,
+                InspectDrumMapOperation,
+                PlanProcessingOperation,
+            ),
+        )
+    ]
+    live_operations = [*project_mutating, *live_reading]
+    if not live_operations:
+        return [], [], None, None
+
+    blockers: list[ProductionBlocker] = []
+    connection = collected.connection
+    if connection is None:
+        connection = collected.readiness_input.connection.connection_info
+    if connection is None or not connection.connected or not connection.compatible:
+        return (
+            [
+                _blocker(
+                    "setup_or_session",
+                    "fl_connection_unavailable",
+                    "No compatible FL Studio bridge is connected.",
+                )
+            ],
+            [],
+            None,
+            None,
+        )
+    if project_mutating and not connection.bridge_provenance_verified:
+        blockers.append(
+            _blocker(
+                "setup_or_session",
+                "bridge_provenance_unverified",
+                "The running FL bridge does not match this PostFader package. Reinstall and reload the packaged bridge.",
+                evidence=(connection.bridge_provenance,),
+            )
+        )
+    if project_mutating and not connection.runtime_write_mode_control:
+        blockers.append(
+            _blocker(
+                "setup_or_session",
+                "write_mode_control_unavailable",
+                "The running FL bridge cannot enable writes for this run. Install and reload the current packaged bridge.",
+            )
+        )
+    session = connection.session_fingerprint
+    if session is None:
+        blockers.append(
+            _blocker(
+                "setup_or_session",
+                "session_fingerprint_unavailable",
+                "The running FL bridge did not provide a valid session fingerprint.",
+            )
+        )
+        return blockers, [], None, None
+    project = collected.project
+    if project is None:
+        blockers.append(
+            _blocker(
+                "setup_or_session",
+                "project_inspection_failed",
+                "The live project could not be inspected before execution.",
+            )
+        )
+        return blockers, [], session, None
+
+    patterns = collected.patterns
+    for operation in live_operations:
+        for target in _operation_targets(operation):
+            if target.index is None:
+                continue
+            if target.kind == "pattern":
+                unavailable = (
+                    patterns is not None
+                    and target.index > patterns.maximum_pattern_number
+                )
+                if patterns is None:
+                    continue
+            else:
+                count = {
+                    "mixer_track": project.mixer_track_count,
+                    "channel": project.channel_count,
+                    "playlist_track": project.playlist_track_count,
+                }[target.kind]
+                unavailable = count is None or target.index >= count + (
+                    1 if target.kind == "playlist_track" else 0
+                )
+            if unavailable:
+                blockers.append(
+                    _blocker(
+                        "unavailable_in_project",
+                        "target_index_unavailable",
+                        f"Operation {operation.operation_id!r} targets {target.kind} {target.index}, which is not available in the current project.",
+                        operation_id=operation.operation_id,
+                    )
+                )
+
+    facts = _LiveFacts(
+        connection=connection,
+        mixer_names=dict(collected.mixer_names),
+        channel_names=dict(collected.channel_names),
+        pattern_names=(
+            {}
+            if patterns is None
+            else {item.pattern_number: item.name for item in patterns.patterns}
+        ),
+        playlist_names=dict(collected.playlist_names),
+    )
+    resolved_scope: dict[TargetKind, set[int]] = {
+        "mixer_track": set(),
+        "channel": set(),
+        "pattern": set(),
+        "playlist_track": set(),
+    }
+    resolved_preserve: dict[TargetKind, set[int]] = {
+        "mixer_track": set(),
+        "channel": set(),
+        "pattern": set(),
+        "playlist_track": set(),
+    }
+    for collection, destination in (
+        (request.scope.targets, resolved_scope),
+        (request.preserve.targets, resolved_preserve),
+    ):
+        for rule in collection:
+            index, error = _resolve_named_target(rule, facts)
+            if error is not None:
+                blockers.append(error)
+            elif index is not None:
+                destination[rule.kind].add(index)
+    for operation in live_operations:
+        for target in _operation_targets(operation):
+            if (
+                request.scope.kind == "selected_targets"
+                and target.index not in resolved_scope[target.kind]
+            ):
+                blockers.append(
+                    _blocker(
+                        "scope",
+                        "target_outside_named_scope",
+                        f"Operation {operation.operation_id!r} targets {target.kind} {target.index}, outside the resolved selected targets.",
+                        operation_id=operation.operation_id,
+                    )
+                )
+            if (
+                target.index in resolved_preserve[target.kind]
+                and not _target_explicitly_allowed(operation, target)
+            ):
+                blockers.append(
+                    _blocker(
+                        "scope",
+                        "preserved_named_target",
+                        f"Operation {operation.operation_id!r} targets preserved {target.kind} {target.index}.",
+                        operation_id=operation.operation_id,
+                    )
+                )
+
+    inventory = collected.sound_inventory
+    loaded_parameter_counts = (
+        {}
+        if inventory is None
+        else {
+            (
+                item.target.kind,
+                getattr(item.target, "track_index", None),
+                getattr(item.target, "slot_index", None),
+                getattr(item.target, "channel_index", None),
+            ): item.reported_parameter_count
+            for item in inventory.loaded_targets
+        }
+    )
+    route_destinations = dict(collected.mixer_route_destinations)
+    for operation in live_operations:
+        if isinstance(operation, ApplyVerifiedBatchOperation):
+            for item in operation.operations:
+                if item.operation == "plugin_parameter":
+                    target = item.target
+                    key = (
+                        target.kind,
+                        getattr(target, "track_index", None),
+                        getattr(target, "slot_index", None),
+                        getattr(target, "channel_index", None),
+                    )
+                    count = loaded_parameter_counts.get(key)
+                    if key not in loaded_parameter_counts:
+                        blockers.append(
+                            _blocker(
+                                "unavailable_in_project",
+                                "plugin_target_unavailable",
+                                f"Batch {operation.operation_id!r} targets a plug-in that is not loaded in the current project.",
+                                operation_id=operation.operation_id,
+                            )
+                        )
+                    elif count is None or item.parameter_index >= count:
+                        blockers.append(
+                            _blocker(
+                                "unavailable_in_project",
+                                "plugin_parameter_unavailable",
+                                f"Batch {operation.operation_id!r} targets plug-in parameter {item.parameter_index}, outside the loaded plug-in's reported range.",
+                                operation_id=operation.operation_id,
+                            )
+                        )
+                elif item.operation == "mixer_send_level" and (
+                    item.destination_track_index
+                    not in route_destinations.get(item.track_index, ())
+                ):
+                    blockers.append(
+                        _blocker(
+                            "unavailable_in_project",
+                            "mixer_send_unavailable",
+                            f"Batch {operation.operation_id!r} cannot set this send level because the send does not currently exist.",
+                            operation_id=operation.operation_id,
+                        )
+                    )
+        if isinstance(operation, RecordAutomationValueOperation) and not (
+            project.transport.playing is True
+            and project.transport.recording is True
+        ):
+            blockers.append(
+                _blocker(
+                    "unavailable_in_project",
+                    "automation_capture_not_active",
+                    f"Operation {operation.operation_id!r} needs playback and recording to already be active.",
+                    operation_id=operation.operation_id,
+                )
+            )
+    project_digest = _project_state_digest(project) if project_mutating else None
+    return blockers, [], session, project_digest
+
+
+def creation_readiness(
+    request: ProductionRunRequest,
+    plan: ProductionRunPlan,
+) -> CreationReadinessReport:
+    """Run the same zero-mutation readiness scorecard used by execution."""
+
+    structural, _warnings = _structural_validation(request, plan)
+    report, collected = _collect_run_readiness(
+        request,
+        plan,
+        structural_blockers=tuple(structural),
+    )
+    live: list[ProductionBlocker] = []
+    if not structural:
+        live, _live_warnings, _session, _project = _cached_live_validation(
+            request,
+            plan,
+            collected,
+            start_index=0,
+        )
+    return _merge_structural_readiness_blockers(
+        report,
+        _bounded_blockers(live, limit=MAX_VALIDATION_BLOCKERS),
+    )
+
+
+def plan_live_processing(request: ProcessingRequest) -> ProcessingPlan:
+    """Inspect loaded effects once and return a read-only semantic plan."""
+
+    collected = collect_creation_readiness(
+        operations=(),
+        completion_target_text=request.completion_target,
+        allowed_mutation_categories=("plugin_parameters",),
+        required_mutation_categories=(),
+    )
+    session = collected.context_snapshot.session_fingerprint
+    prepared = request
+    if prepared.session_fingerprint is None and session is not None:
+        prepared = prepared.model_copy(update={"session_fingerprint": session})
+    return plan_processing(
+        prepared,
+        loaded_plugins=collected.loaded_processing_observations,
+        registry=load_bundled_registry(),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Existing-operation adapters and run execution
 # ---------------------------------------------------------------------------
@@ -2626,12 +3416,52 @@ def _resolve_channel_target(
     return target.channel_index, target_fingerprint
 
 
+def _normalise_drum_role(role: str) -> str:
+    return "_".join(role.strip().casefold().replace("-", "_").split())
+
+
 def _resolve_drum_map(
     value: DrumPadMap | OperationOutputReference | None,
     outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+    sound_inventory: SoundInventory | None = None,
+    *,
+    required_roles: tuple[str, ...] = (),
 ) -> DrumPadMap | None:
-    if value is None or isinstance(value, DrumPadMap):
+    if isinstance(value, DrumPadMap):
         return value
+    if value is None:
+        candidates = () if sound_inventory is None else tuple(
+            item.pad_map
+            for item in sound_inventory.loaded_generators
+            if item.pad_map is not None
+        )
+        unique: dict[str, DrumPadMap] = {}
+        for candidate in candidates:
+            assert candidate is not None
+            unique.setdefault(canonical_digest(candidate), candidate)
+        if len(unique) == 1:
+            candidate = next(iter(unique.values()))
+            mapped = {
+                _normalise_drum_role(mapping.role)
+                for mapping in candidate.mappings
+            }
+            declared_missing = {
+                _normalise_drum_role(role)
+                for role in candidate.missing_roles
+            }
+            required = {_normalise_drum_role(role) for role in required_roles}
+            if required & declared_missing or required - mapped:
+                # An implicitly discovered map is optional.  If it cannot
+                # cover this style, return None so compose_drums uses its
+                # disclosed General MIDI fallback.  Explicit maps still flow
+                # through unchanged and retain their strict validation.
+                return None
+            return candidate
+        if len(unique) > 1:
+            raise ValueError(
+                "multiple loaded drum generators expose pad maps; reference the selected drum_map output explicitly"
+            )
+        return None
     resolved = _resolve_output_reference(value, outputs)
     if not isinstance(resolved, DrumPadMap):
         raise ValueError("the referenced output is not a drum map")
@@ -2679,6 +3509,9 @@ def _generated_outputs_for(
 
     if isinstance(result, NoteSequence):
         add("note_sequence", result)
+    elif isinstance(result, SoundAwareCompositionResult):
+        add("note_sequence", result.sequence)
+        add("composition_adaptation", result.adaptation)
     elif isinstance(result, SoundSelectionApplyResult):
         add("sound_palette", result.state)
         verified_ids = {
@@ -2742,6 +3575,8 @@ def _generated_outputs_for(
         add("selected_preset", result.selection)
         if result.verified:
             add("drum_map", result.drum_map)
+    elif isinstance(result, ProcessingPlan):
+        add("processing_plan", result)
     return tuple(rows)
 
 
@@ -2779,6 +3614,18 @@ def _read_only_result_blocker(
                 operation_id=operation.operation_id,
                 evidence=tuple(missing),
             )
+    if isinstance(result, ProcessingPlan):
+        required = tuple(
+            item for item in result.missing_capabilities if item.required
+        )
+        if required:
+            return _blocker(
+                "unavailable_in_project",
+                "required_processing_unavailable",
+                required[0].reason,
+                operation_id=operation.operation_id,
+                evidence=tuple(item.reason for item in required[:16]),
+            )
     return None
 
 
@@ -2798,6 +3645,10 @@ def _operation_references(
         operation.drum_map, OperationOutputReference
     ):
         references.append(operation.drum_map)
+    if isinstance(operation, AdaptNoteSequenceOperation):
+        references.append(operation.sequence)
+        if operation.palette_assignment is not None:
+            references.append(operation.palette_assignment)
     if isinstance(operation, WriteNoteSequenceOperation):
         if isinstance(operation.sequence, OperationOutputReference):
             references.append(operation.sequence)
@@ -2820,7 +3671,70 @@ def _operation_references(
         ),
     ) and isinstance(operation.target, OperationOutputReference):
         references.append(operation.target)
+    if isinstance(operation, ApplyProcessingPlanOperation) and isinstance(
+        operation.plan, OperationOutputReference
+    ):
+        references.append(operation.plan)
     return tuple(references)
+
+
+def _semantic_session_matches(*, action: SemanticPluginAction) -> bool:
+    """Narrow session guard used immediately before one semantic write."""
+
+    connection = ReadOnlyInspector().connection_info()
+    return bool(
+        connection.connected
+        and connection.compatible
+        and connection.bridge_provenance_verified
+        and connection.verified_writes_enabled
+        and action.session_fingerprint is not None
+        and connection.session_fingerprint == action.session_fingerprint
+    )
+
+
+def _semantic_target_matches(*, action: SemanticPluginAction) -> bool:
+    """Refresh only the selected effect and compare its observation identity."""
+
+    control = action.resolution.control
+    if control is None or action.target_fingerprint is None:
+        return False
+    page = TrackBInspector().plugin_parameters(
+        target=action.target,
+        offset=control.parameter_index,
+        limit=1,
+        allow_master=action.allow_master,
+    )
+    return page.plugin.target_fingerprint == action.target_fingerprint
+
+
+def _apply_semantic_processing_plan(plan: ProcessingPlan) -> ProcessingPlanReceipt:
+    controller = TrackBController()
+    return apply_processing_plan(
+        plan,
+        setter_callbacks={
+            "display": controller.set_plugin_parameter_display,
+            "option": controller.set_plugin_parameter_option,
+            "normalized": controller.set_plugin_parameter,
+        },
+        session_checker=_semantic_session_matches,
+        target_checker=_semantic_target_matches,
+    )
+
+
+def _apply_one_semantic_action(
+    action: SemanticPluginAction,
+) -> ProcessingPlanReceipt:
+    controller = TrackBController()
+    return apply_semantic_plugin_action(
+        action,
+        setter_callbacks={
+            "display": controller.set_plugin_parameter_display,
+            "option": controller.set_plugin_parameter_option,
+            "normalized": controller.set_plugin_parameter,
+        },
+        session_checker=_semantic_session_matches,
+        target_checker=_semantic_target_matches,
+    )
 
 
 def _dispatch_operation(
@@ -2828,6 +3742,8 @@ def _dispatch_operation(
     *,
     session_fingerprint: str | None,
     outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+    sound_inventory: SoundInventory | None = None,
+    processing_observations: tuple[dict[str, Any], ...] = (),
 ) -> ProductionResultPayload:
     """Adapt one production operation to an existing PostFader implementation."""
 
@@ -2839,14 +3755,69 @@ def _dispatch_operation(
             seed=operation.seed,
             swing=operation.swing,
             tempo_bpm=operation.tempo_bpm,
-            drum_map=_resolve_drum_map(operation.drum_map, outputs),
+            drum_map=_resolve_drum_map(
+                operation.drum_map,
+                outputs,
+                sound_inventory,
+                required_roles=(
+                    "kick",
+                    "snare",
+                    "closed_hat",
+                    *(("open_hat",) if operation.style == "house" else ()),
+                ),
+            ),
         )
+    if isinstance(operation, AdaptNoteSequenceOperation):
+        source = _resolve_output_reference(operation.sequence, outputs)
+        if not isinstance(source, NoteSequence):
+            raise ValueError("the referenced output is not a note sequence")
+        characteristics = operation.characteristics
+        if operation.palette_assignment is not None:
+            assignment = _resolve_output_reference(
+                operation.palette_assignment, outputs
+            )
+            if not isinstance(assignment, SoundPaletteAssignment):
+                raise ValueError("the referenced output is not a palette assignment")
+            if characteristics is None:
+                characteristics = characteristics_from_palette_assignment(assignment)
+            if assignment.role_id.casefold() != characteristics.role_id.casefold():
+                raise ValueError(
+                    "the selected-sound characteristics do not match the palette role"
+                )
+            if (
+                characteristics.assignment_id is not None
+                and characteristics.assignment_id
+                != assignment.assignment_id
+            ):
+                raise ValueError(
+                    "the selected-sound characteristics identify another assignment"
+                )
+        if characteristics is None:
+            raise ValueError("selected-sound characteristics are unavailable")
+        profile = derive_composition_profile(
+            characteristics,
+            role_kind=operation.role_kind,
+            connected_ai_register=operation.connected_ai_register,
+            connected_ai_polyphony=operation.connected_ai_polyphony,
+        )
+        return adapt_note_sequence(source, profile)
     if isinstance(operation, _GENERATOR_TYPES):
         return _generate_sequence(operation)
     if isinstance(operation, PlanSoundPaletteOperation):
         from .sound_selection.executor import SOUND_SELECTION
 
-        return SOUND_SELECTION.plan(operation.request)
+        return SOUND_SELECTION.plan(operation.request, inventory=sound_inventory)
+    if isinstance(operation, PlanProcessingOperation):
+        request = operation.request
+        if request.session_fingerprint is None and session_fingerprint is not None:
+            request = request.model_copy(
+                update={"session_fingerprint": session_fingerprint}
+            )
+        return plan_processing(
+            request,
+            loaded_plugins=processing_observations,
+            registry=load_bundled_registry(),
+        )
     if isinstance(operation, CreateSoundPaletteVariationOperation):
         from .sound_selection.executor import SOUND_SELECTION
 
@@ -2857,11 +3828,16 @@ def _dispatch_operation(
             if not isinstance(source, (SoundPalettePlan, SoundPaletteState)):
                 raise ValueError("the referenced output is not a sound palette")
             palette_id = source.palette_id
+        variation_kwargs: dict[str, Any] = {
+            "section": operation.section,
+            "replace_roles": operation.replace_roles,
+        }
+        if sound_inventory is not None:
+            variation_kwargs["inventory"] = sound_inventory
         return SOUND_SELECTION.create_variation(
             palette_id,
             operation.request,
-            section=operation.section,
-            replace_roles=operation.replace_roles,
+            **variation_kwargs,
         )
     if isinstance(operation, InspectDrumMapOperation):
         target = _resolve_plugin_target(operation.target, outputs)
@@ -2912,16 +3888,71 @@ def _dispatch_operation(
                 raise ValueError(
                     "the referenced output is not a sound palette or section variation"
                 )
-        result = SOUND_SELECTION.apply(
-            palette,
-            session_fingerprint=session_fingerprint,
-            authorized_to_modify=True,
-            role_ids=operation.role_ids,
-            write_mode_already_enabled=True,
-        )
+        apply_kwargs: dict[str, Any] = {
+            "session_fingerprint": session_fingerprint,
+            "authorized_to_modify": True,
+            "role_ids": operation.role_ids,
+            "write_mode_already_enabled": True,
+        }
+        if sound_inventory is not None:
+            apply_kwargs["inventory"] = sound_inventory
+        result = SOUND_SELECTION.apply(palette, **apply_kwargs)
         if not isinstance(result, SoundSelectionApplyResult):
             raise ValueError("Sound Selection returned an invalid application result")
         return result
+    if isinstance(operation, ApplyProcessingPlanOperation):
+        if isinstance(operation.plan, ProcessingPlan):
+            processing_plan = operation.plan
+        else:
+            resolved_plan = _resolve_output_reference(operation.plan, outputs)
+            if not isinstance(resolved_plan, ProcessingPlan):
+                raise ValueError("the referenced output is not a processing plan")
+            processing_plan = resolved_plan
+        if (
+            processing_plan.session_fingerprint is not None
+            and processing_plan.session_fingerprint != session_fingerprint
+        ):
+            raise ValueError(
+                "the processing plan belongs to another FL Studio session"
+            )
+        if any(
+            action.session_fingerprint is not None
+            and action.session_fingerprint != session_fingerprint
+            for action in processing_plan.actions
+        ):
+            raise ValueError(
+                "a semantic processing action belongs to another FL Studio session"
+            )
+        processing_plan = processing_plan.model_copy(
+            update={
+                "session_fingerprint": session_fingerprint,
+                "actions": tuple(
+                    (
+                        action
+                        if action.session_fingerprint is not None
+                        else action.model_copy(
+                            update={"session_fingerprint": session_fingerprint}
+                        )
+                    )
+                    for action in processing_plan.actions
+                ),
+            }
+        )
+        return _apply_semantic_processing_plan(processing_plan)
+    if isinstance(operation, ApplySemanticPluginActionOperation):
+        action = operation.action
+        if (
+            action.session_fingerprint is not None
+            and action.session_fingerprint != session_fingerprint
+        ):
+            raise ValueError(
+                "the semantic processing action belongs to another FL Studio session"
+            )
+        if action.session_fingerprint is None:
+            action = action.model_copy(
+                update={"session_fingerprint": session_fingerprint}
+            )
+        return _apply_one_semantic_action(action)
     if isinstance(operation, SelectPluginPresetOperation):
         target, target_fingerprint = _resolve_operation_plugin_target(
             operation.target, operation.target_fingerprint, outputs
@@ -3262,6 +4293,39 @@ def _runtime_preflight_blocker(
                     operation_id=operation.operation_id,
                 )
             return _runtime_target_allowed(request, operation, target)
+        if isinstance(operation, ApplyProcessingPlanOperation):
+            if isinstance(operation.plan, ProcessingPlan):
+                semantic_plan = operation.plan
+            else:
+                resolved = _resolve_output_reference(operation.plan, outputs)
+                if not isinstance(resolved, ProcessingPlan):
+                    raise ValueError(
+                        "the referenced output is not a processing plan"
+                    )
+                semantic_plan = resolved
+            for action in semantic_plan.actions:
+                if action.target_fingerprint is None:
+                    return _blocker(
+                        "malformed_plan",
+                        "semantic_target_fingerprint_unavailable",
+                        f"Semantic action {action.action_id!r} lacks target-fingerprint proof.",
+                        operation_id=operation.operation_id,
+                    )
+                denied = _runtime_target_allowed(request, operation, action.target)
+                if denied is not None:
+                    return denied
+            return None
+        if isinstance(operation, ApplySemanticPluginActionOperation):
+            if operation.action.target_fingerprint is None:
+                return _blocker(
+                    "malformed_plan",
+                    "semantic_target_fingerprint_unavailable",
+                    f"Semantic action {operation.action.action_id!r} lacks target-fingerprint proof.",
+                    operation_id=operation.operation_id,
+                )
+            return _runtime_target_allowed(
+                request, operation, operation.action.target
+            )
     except Exception as exc:
         return _blocker(
             "malformed_plan",
@@ -3272,7 +4336,11 @@ def _runtime_preflight_blocker(
     return None
 
 
-def _capture_project_state(expected_session: str) -> tuple[str | None, str]:
+def _capture_project_state(
+    expected_session: str,
+    *,
+    require_write_mode: bool = True,
+) -> tuple[str | None, str]:
     try:
         project = ReadOnlyInspector().project_summary()
     except Exception as exc:
@@ -3289,7 +4357,7 @@ def _capture_project_state(expected_session: str) -> tuple[str | None, str]:
         return None, "The running FL bridge no longer matches this PostFader package."
     if connection.session_fingerprint != expected_session:
         return None, "FL Studio reloaded the bridge since this run was validated."
-    if not connection.verified_writes_enabled:
+    if require_write_mode and not connection.verified_writes_enabled:
         return None, "Write mode is no longer active for this Production Run."
     return _project_state_digest(project), ""
 
@@ -3298,6 +4366,25 @@ def _current_session_matches(
     expected: str,
     expected_project_state_digest: str | None = None,
 ) -> tuple[bool, str]:
+    if expected_project_state_digest is None:
+        try:
+            connection = ReadOnlyInspector().connection_info()
+        except Exception as exc:
+            return False, f"The live FL session could not be checked: {exc}"
+        if not connection.connected or not connection.compatible:
+            return (
+                False,
+                connection.error
+                or connection.compatibility_reason
+                or "No compatible FL Studio bridge is connected.",
+            )
+        if not connection.bridge_provenance_verified:
+            return False, "The running FL bridge no longer matches this package."
+        if connection.session_fingerprint != expected:
+            return False, "FL Studio reloaded the bridge during this run."
+        if not connection.verified_writes_enabled:
+            return False, "Write mode is no longer active for this Production Run."
+        return True, ""
     digest, reason = _capture_project_state(expected)
     if digest is None:
         return False, reason
@@ -3317,6 +4404,20 @@ def _classify_mutation_result(
 ) -> tuple[bool, bool, str]:
     """Return outcome-known, verified, and a concise failure explanation."""
 
+    if isinstance(result, ProcessingPlanReceipt):
+        if result.verified is True and result.completed:
+            return True, True, ""
+        if not result.outcome_known or result.verified is None:
+            return (
+                False,
+                False,
+                "Semantic processing stopped after an unknown write outcome; no action was replayed.",
+            )
+        return (
+            True,
+            False,
+            "Semantic processing stopped because a control, session, target, or readback was not verified.",
+        )
     if isinstance(result, VerifiedBatchResult):
         if result.verified:
             return True, True, ""
@@ -3415,6 +4516,13 @@ class _RunRecord:
     stop_requested: bool = False
     claimed: bool = False
     in_flight_operation_id: str | None = None
+    readiness: CollectedCreationReadiness | None = None
+    timing: RunTimingCollector = field(default_factory=RunTimingCollector)
+    active_phase: str | None = None
+    # The absolute mode command may reach FL before its transport reply fails.
+    # Keep this process-local uncertainty separate from the public active flag
+    # so termination still performs one same-session shutdown attempt.
+    write_mode_enable_pending: bool = False
 
 
 class ProductionRunRegistry:
@@ -3426,6 +4534,7 @@ class ProductionRunRegistry:
         self.max_runs = max_runs
         self._lock = threading.RLock()
         self._runs: dict[str, _RunRecord] = {}
+        self._write_mode_owner_run_id: str | None = None
 
     @staticmethod
     def _missing_message(run_id: str) -> str:
@@ -3521,6 +4630,480 @@ class ProductionRunRegistry:
             summary=summary,
             blockers=state.blockers,
             warnings=state.warnings,
+            write_mode_enable_count=state.write_mode_enable_count,
+            write_mode_disable_count=state.write_mode_disable_count,
+            write_mode_active=state.write_mode_active,
+            write_mode_shutdown_verified=state.write_mode_shutdown_verified,
+            readiness_report=state.readiness_report,
+            phase_plan=state.phase_plan,
+            timing_report=state.timing_report,
+            creation_outcome=state.creation_outcome,
+        )
+
+    def _update_phase(
+        self,
+        record: _RunRecord,
+        phase: str,
+        status: str,
+        *,
+        blocker_codes: tuple[str, ...] = (),
+    ) -> None:
+        plan = record.state.phase_plan
+        if plan is None:
+            return
+        rows = []
+        completed = frozenset(record.state.completed_operations)
+        for row in plan.phases:
+            if row.phase != phase:
+                rows.append(row)
+                continue
+            completed_ids = tuple(
+                operation_id
+                for operation_id in row.operation_ids
+                if operation_id in completed
+            )
+            rows.append(
+                row.model_copy(
+                    update={
+                        "status": status,
+                        "completed_operation_ids": completed_ids,
+                        "blocker_codes": blocker_codes,
+                    }
+                )
+            )
+        record.state = record.state.model_copy(
+            update={
+                "phase_plan": plan.model_copy(update={"phases": tuple(rows)}),
+                "current_phase": phase,
+                "updated_at": _now(),
+            }
+        )
+
+    def _phase_boundary_blocker(
+        self,
+        record: _RunRecord,
+        *,
+        phase: str,
+        start_index: int,
+    ) -> ProductionBlocker | None:
+        """Validate the cached phase inputs without repeating full readiness."""
+
+        context = record.state.run_context
+        if context is None:
+            return None
+        if (
+            context.mcp_process_identity is not None
+            and context.mcp_process_identity != MCP_PROCESS_IDENTITY
+        ):
+            return _blocker(
+                "setup_or_session",
+                "creation_process_context_lost",
+                "This creation run belongs to another MCP process. Start a new run so PostFader can inspect the current project once.",
+            )
+        session = record.state.session_fingerprint
+        if not context.matches_session(session):
+            return _blocker(
+                "setup_or_session",
+                "cached_session_mismatch",
+                "The cached creation context no longer matches this FL Studio session.",
+            )
+        if record.state.write_mode_active and session is not None:
+            matches, reason = _current_session_matches(session, None)
+            if not matches:
+                return _blocker(
+                    "setup_or_session",
+                    "phase_session_precondition_failed",
+                    reason,
+                )
+
+        phase_operations: list[ProductionOperation] = []
+        for operation in record.plan.operations[start_index:]:
+            if classify_operation_phase(operation.operation) != phase:
+                break
+            phase_operations.append(operation)
+        for operation in phase_operations:
+            for reference in _operation_references(operation):
+                producer_index = next(
+                    (
+                        index
+                        for index, producer in enumerate(record.plan.operations)
+                        if producer.operation_id == reference.operation_id
+                    ),
+                    None,
+                )
+                if (
+                    producer_index is not None
+                    and producer_index >= start_index
+                    and classify_operation_phase(
+                        record.plan.operations[producer_index].operation
+                    )
+                    == phase
+                ):
+                    # Same-phase outputs are checked immediately before their
+                    # consumer, after the earlier producer has run.
+                    continue
+                try:
+                    _resolve_output_reference(reference, record.outputs)
+                except Exception as exc:
+                    return _blocker(
+                        "malformed_plan",
+                        "phase_output_unavailable",
+                        f"Phase {phase!r} cannot start because an earlier typed output is unavailable: {exc}",
+                        operation_id=operation.operation_id,
+                    )
+
+        if phase == "note_application" and any(
+            isinstance(operation, _PIANO_ROLL_TYPES)
+            for operation in phase_operations
+        ):
+            arming = context.piano_roll_arming_receipt
+            if (
+                arming is None
+                or not arming.authenticated
+                or arming.process_identity != MCP_PROCESS_IDENTITY
+            ):
+                return _blocker(
+                    "setup_or_session",
+                    "piano_roll_context_unavailable",
+                    "Piano Roll writing needs one setup action: run Postfader Apply once in an FL Piano Roll, then continue this run.",
+                )
+        return None
+
+    def _begin_phase(self, record: _RunRecord, phase: str) -> None:
+        if record.active_phase == phase:
+            return
+        if record.active_phase is not None:
+            self._end_phase(record)
+        try:
+            record.timing.start_phase(phase)
+        except ValueError:
+            # A continuation can return to its blocked phase. Merge the new
+            # timing slice into that phase's immutable report row; completed
+            # operation receipts remain append-only.
+            record.timing.resume_phase(phase)
+        record.active_phase = phase
+        self._update_phase(record, phase, "running")
+
+    def _end_phase(
+        self,
+        record: _RunRecord,
+        *,
+        status: str = "completed",
+        blocker_codes: tuple[str, ...] = (),
+    ) -> None:
+        phase = record.active_phase
+        if phase is None:
+            return
+        record.timing.end_phase(phase)
+        record.active_phase = None
+        phase_plan = record.state.phase_plan
+        if status == "completed" and phase_plan is not None:
+            row = next(item for item in phase_plan.phases if item.phase == phase)
+            if not set(row.operation_ids).issubset(record.state.completed_operations):
+                status = "pending"
+        self._update_phase(
+            record,
+            phase,
+            status,
+            blocker_codes=blocker_codes,
+        )
+
+    def _build_creation_outcome(self, record: _RunRecord) -> CreationOutcome:
+        state = record.state
+        unknown = sum(not item.outcome_known for item in state.receipts)
+        verified = sum(item.verified for item in state.receipts)
+        technical_status: str
+        if state.status == "completed":
+            technical_status = (
+                "verified_with_limitations"
+                if state.warnings
+                or (
+                    state.readiness_report is not None
+                    and state.readiness_report.overall_state
+                    == "ready_with_limitations"
+                )
+                else "verified"
+            )
+        elif state.status in {"blocked", "failed", "stopped"}:
+            technical_status = state.status
+        else:
+            technical_status = "partial"
+        technical = TechnicalExecutionOutcome(
+            status=cast(Any, technical_status),
+            expected_operations=state.total_operations,
+            attempted_operations=len(state.receipts),
+            completed_operations=len(state.completed_operations),
+            verified_receipts=verified,
+            unknown_outcomes=unknown,
+            blockers=tuple(item.message for item in state.blockers[:64]),
+            limitations=(
+                ()
+                if state.readiness_report is None
+                else tuple(item.message for item in state.readiness_report.limitations)
+            ),
+        )
+        note_receipts = tuple(
+            receipt
+            for receipt in state.receipts
+            if receipt.operation == "write_note_sequence" and receipt.verified
+        )
+        pattern_receipts = tuple(
+            receipt
+            for receipt in state.receipts
+            if receipt.operation == "prepare_pattern" and receipt.verified
+        )
+        manual_text = (
+            ()
+            if state.readiness_report is None
+            else tuple(
+                item.instruction
+                for item in state.readiness_report.manual_actions
+                if not item.completed
+            )
+        )
+        if note_receipts and not manual_text:
+            manual_text = (
+                "Place the created pattern clips on their intended Playlist tracks; PostFader cannot create or move Playlist clips through FL's API.",
+            )
+        handoff_items = tuple(
+            ManualHandoffItem(
+                action_id=f"handoff-{index}",
+                dimension="arrangement",
+                instruction=text,
+            )
+            for index, text in enumerate(manual_text, start=1)
+        )
+        if note_receipts and manual_text:
+            arrangement_status = "patterns_created_not_placed"
+        elif note_receipts or pattern_receipts:
+            arrangement_status = "partial"
+        else:
+            arrangement_status = "not_delivered"
+        pattern_numbers = {
+            result.pattern_number
+            for receipt in (*note_receipts, *pattern_receipts)
+            if (result := receipt.result) is not None
+            and isinstance(result, PatternPreparation)
+        }
+        pattern_numbers.update(
+            result.target.pattern_number
+            for receipt in note_receipts
+            if isinstance((result := receipt.result), PianoRollDispatch)
+            and result.target is not None
+        )
+        arrangement = ArrangementDeliveryOutcome(
+            status=cast(Any, arrangement_status),
+            pattern_count=len(pattern_numbers),
+            manual_playlist_actions=handoff_items,
+        )
+        # Only the semantic processing operations own this outcome dimension.
+        # ``apply_verified_batch`` is a general-purpose write surface: mixer,
+        # tempo, routing, and even direct (non-semantic) plug-in parameter
+        # writes must not masquerade as semantic processing.
+        processing_operation_ids = {
+            operation.operation_id
+            for operation in record.plan.operations
+            if isinstance(
+                operation,
+                (
+                    PlanProcessingOperation,
+                    ApplyProcessingPlanOperation,
+                    ApplySemanticPluginActionOperation,
+                ),
+            )
+        }
+        processing_operation_names = {
+            "plan_processing",
+            "apply_processing_plan",
+            "apply_semantic_plugin_action",
+        }
+        processing_ops = tuple(
+            item
+            for item in state.receipts
+            if item.operation in processing_operation_names
+        )
+        semantic_receipts = tuple(
+            item.result
+            for item in processing_ops
+            if isinstance(item.result, ProcessingPlanReceipt)
+        )
+        # A processing request is explicit in the closed operation plan.  A
+        # free-text completion target is not enough to make unrelated batch
+        # writes look like processing that was requested or applied.
+        requested_processing = bool(processing_operation_ids)
+        inline_processing_plans = tuple(
+            operation.plan
+            for operation in record.plan.operations
+            if isinstance(operation, ApplyProcessingPlanOperation)
+            and isinstance(operation.plan, ProcessingPlan)
+        )
+        missing_effects = tuple(
+            dict.fromkeys(
+                (
+                    *(
+                        ()
+                        if not requested_processing or state.readiness_report is None
+                        else tuple(
+                            item.message
+                            for item in (
+                                *state.readiness_report.limitations,
+                                *state.readiness_report.blockers,
+                            )
+                            if item.dimension == "mixer_effects"
+                        )
+                    ),
+                    *(
+                        item.reason
+                        for plan in inline_processing_plans
+                        for item in plan.missing_capabilities
+                    ),
+                    *(
+                        item.reason
+                        for output in state.generated_outputs
+                        if output.output == "processing_plan"
+                        and isinstance(output.value, ProcessingPlan)
+                        for item in output.value.missing_capabilities
+                    ),
+                )
+            )
+        )
+        applied_actions = sum(item.attempted_count for item in semantic_receipts)
+        verified_actions = sum(
+            result.status == "verified"
+            for receipt in semantic_receipts
+            for result in receipt.results
+        )
+        unresolved_controls = tuple(
+            dict.fromkeys(
+                (
+                    *(
+                        f"{result.action_id}: {result.status}"
+                        for receipt in semantic_receipts
+                        for result in receipt.results
+                        if result.status != "verified"
+                    ),
+                    *(
+                        f"{receipt.operation_id}: unknown_outcome"
+                        for receipt in processing_ops
+                        if not receipt.outcome_known
+                    ),
+                )
+            )
+        )
+        processing_stopped = any(
+            not receipt.completed or receipt.verified is not True
+            for receipt in semantic_receipts
+        ) or any(
+            not receipt.outcome_known
+            or receipt.status == "unverified"
+            for receipt in processing_ops
+        )
+        if (
+            applied_actions
+            and verified_actions == applied_actions
+            and not missing_effects
+            and not processing_stopped
+        ):
+            processing_status = "restrained_first_pass"
+        elif processing_stopped or applied_actions:
+            processing_status = "partially_processed"
+        elif requested_processing and missing_effects:
+            processing_status = "dry_missing_effects"
+        elif requested_processing:
+            processing_status = "dry_by_design"
+        else:
+            processing_status = "not_requested"
+        processing = ProcessingOutcome(
+            status=cast(Any, processing_status),
+            applied_actions=applied_actions,
+            verified_actions=verified_actions,
+            missing_effects=missing_effects,
+            unresolved_controls=unresolved_controls,
+        )
+        handoff = ManualHandoffOutcome(
+            status="outstanding" if handoff_items else "none",
+            actions=handoff_items,
+        )
+        return build_creation_outcome(
+            run_id=state.run_id,
+            technical=technical,
+            arrangement=arrangement,
+            processing=processing,
+            audible_quality=AudibleQualityOutcome(status="not_evaluated"),
+            manual_handoff=handoff,
+            timing=state.timing_report,
+            readiness_state=(
+                None
+                if state.readiness_report is None
+                else state.readiness_report.overall_state
+            ),
+        )
+
+    def _finalize_run(self, record: _RunRecord) -> None:
+        if record.readiness is not None and record.state.session_fingerprint is not None:
+            digest, reason = _capture_project_state(
+                record.state.session_fingerprint,
+                require_write_mode=False,
+            )
+            if digest is not None:
+                record.state = record.state.model_copy(
+                    update={
+                        "project_state_digest": digest,
+                        "updated_at": _now(),
+                    }
+                )
+            elif record.state.status == "completed":
+                self._finish_blocked(
+                    record,
+                    _blocker(
+                        "setup_or_session",
+                        "final_project_checkpoint_failed",
+                        "The run finished its operations, but PostFader could not verify the final FL session checkpoint.",
+                        evidence=(reason or "project checkpoint unavailable",),
+                    ),
+                )
+        if record.active_phase is not None:
+            blocked = record.state.status in {"blocked", "failed", "stopped"}
+            self._end_phase(
+                record,
+                status="blocked" if blocked else "completed",
+                blocker_codes=(
+                    tuple(item.code for item in record.state.blockers[-16:])
+                    if blocked
+                    else ()
+                ),
+            )
+        self._begin_phase(record, "finalization")
+        self._end_phase(record, status="completed")
+        for phase in PHASE_ORDER:
+            plan = record.state.phase_plan
+            if plan is None:
+                break
+            row = next(item for item in plan.phases if item.phase == phase)
+            if row.status == "pending":
+                self._update_phase(record, phase, "skipped")
+        timing = record.timing.report()
+        warnings = _bounded_warnings(
+            [
+                *record.state.warnings,
+                *(item.message for item in timing.warnings),
+            ]
+        )
+        record.state = record.state.model_copy(
+            update={"timing_report": timing, "warnings": warnings}
+        )
+        outcome = self._build_creation_outcome(record)
+        prior_summary = record.state.final_summary
+        summary = outcome.concise_summary
+        if record.state.status != "completed" and prior_summary:
+            summary += " " + prior_summary
+        summary += " The project was not saved automatically."
+        record.state = record.state.model_copy(
+            update={
+                "creation_outcome": outcome,
+                "final_summary": summary,
+                "updated_at": _now(),
+            }
         )
 
     def execute(
@@ -3528,11 +5111,105 @@ class ProductionRunRegistry:
     ) -> ProductionRunResult:
         record = self._create_record(request, plan)
         try:
+            phase_rows = tuple(
+                (operation.operation_id, operation.operation)
+                for index, operation in enumerate(record.plan.operations)
+                if operation.operation_id
+                not in {
+                    earlier.operation_id
+                    for earlier in record.plan.operations[:index]
+                }
+            )
+            phase_plan = build_phase_plan(phase_rows)
+            with self._lock:
+                record.state = record.state.model_copy(
+                    update={"phase_plan": phase_plan, "current_phase": "preflight"}
+                )
+            self._begin_phase(record, "preflight")
+            needs_live_readiness = _creation_plan_needs_readiness(
+                record.plan.operations
+            )
             validation = validate_production_run(
-                record.state.request, record.plan, inspect_live=True
+                record.state.request,
+                record.plan,
+                inspect_live=not needs_live_readiness,
+            )
+            readiness_report: CreationReadinessReport | None = None
+            readiness_blockers: tuple[ProductionBlocker, ...] = ()
+            if needs_live_readiness and validation.valid:
+                try:
+                    readiness_report, collected = _collect_run_readiness(
+                        record.state.request,
+                        record.plan,
+                    )
+                except Exception as exc:
+                    readiness_blockers = (
+                        _blocker(
+                            "setup_or_session",
+                            "creation_readiness_failed",
+                            f"Creation readiness could not inspect the complete project setup: {exc}",
+                        ),
+                    )
+                else:
+                    record.readiness = collected
+                    record.timing.record_full_inventory_scan(
+                        collected.full_inventory_scan_count
+                    )
+                    record.timing.record_target_refresh(
+                        collected.target_refresh_count
+                    )
+                    record.timing.record_preset_enumeration(
+                        collected.preset_enumeration_count
+                    )
+                    cached_blockers, cached_warnings, session, project_digest = (
+                        _cached_live_validation(
+                            record.state.request,
+                            record.plan,
+                            collected,
+                            start_index=0,
+                        )
+                    )
+                    readiness_blockers = _bounded_blockers(
+                        [
+                            *(
+                                _readiness_production_blocker(item)
+                                for item in readiness_report.blockers
+                            ),
+                            *cached_blockers,
+                        ],
+                        limit=MAX_VALIDATION_BLOCKERS,
+                    )
+                    validation = validation.model_copy(
+                        update={
+                            "session_fingerprint": session,
+                            "project_state_digest": project_digest,
+                            "warnings": _bounded_warnings(
+                                [*validation.warnings, *cached_warnings]
+                            ),
+                        }
+                    )
+            all_blockers = _bounded_blockers(
+                [*validation.blockers, *readiness_blockers],
+                limit=MAX_VALIDATION_BLOCKERS,
+            )
+            if all_blockers and validation.valid:
+                validation = validation.model_copy(
+                    update={
+                        "valid": False,
+                        "executable": False,
+                        "blockers": all_blockers,
+                    }
+                )
+            elif all_blockers != validation.blockers:
+                validation = validation.model_copy(update={"blockers": all_blockers})
+            self._end_phase(
+                record,
+                status="blocked" if not validation.valid else "completed",
+                blocker_codes=tuple(item.code for item in all_blockers[:16]),
             )
             with self._lock:
                 if record.stop_requested or record.state.status == "stopped":
+                    self._finalize_run(record)
                     return self._result(record.state)
                 if not validation.valid:
                     now = _now()
@@ -3543,6 +5220,17 @@ class ProductionRunRegistry:
                             "finished_at": now,
                             "blockers": validation.blockers,
                             "warnings": validation.warnings,
+                            "session_fingerprint": validation.session_fingerprint,
+                            "project_state_digest": validation.project_state_digest,
+                            "readiness_report": readiness_report,
+                            "run_context": (
+                                None
+                                if record.readiness is None
+                                else record.readiness.context_snapshot
+                            ),
+                            "readiness_preflight_count": int(
+                                record.readiness is not None
+                            ),
                             "final_summary": (
                                 validation.blockers[0].message
                                 if validation.blockers
@@ -3551,7 +5239,8 @@ class ProductionRunRegistry:
                         }
                     )
                     record.state = state
-                    return self._result(state)
+                    self._finalize_run(record)
+                    return self._result(record.state)
                 state = record.state.model_copy(
                     update={
                         "status": "validated",
@@ -3559,10 +5248,36 @@ class ProductionRunRegistry:
                         "session_fingerprint": validation.session_fingerprint,
                         "project_state_digest": validation.project_state_digest,
                         "warnings": validation.warnings,
+                        "readiness_report": readiness_report,
+                        "run_context": (
+                            None
+                            if record.readiness is None
+                            else record.readiness.context_snapshot
+                        ),
+                        "readiness_preflight_count": int(
+                            record.readiness is not None
+                        ),
                     }
                 )
                 record.state = state
-            return self._execute_validated(record, start_index=0, validation=validation)
+            try:
+                self._execute_validated(
+                    record, start_index=0, validation=validation
+                )
+            except Exception as exc:
+                self._finish_blocked(
+                    record,
+                    _blocker(
+                        "unknown_outcome",
+                        "run_execution_failed",
+                        "The run stopped after an unexpected internal execution failure. No operation was replayed.",
+                        evidence=(f"{type(exc).__name__}: {exc}"[:512],),
+                    ),
+                )
+            finally:
+                self._shutdown_write_mode(record)
+            self._finalize_run(record)
+            return self._result(record.state)
         finally:
             self._release(record)
 
@@ -3579,9 +5294,6 @@ class ProductionRunRegistry:
         )
         if not mutation_pending:
             return None
-        with self._lock:
-            if record.stop_requested or record.state.status == "stopped":
-                return record.state
         session = validation.session_fingerprint
         if session is None:
             blocker = _blocker(
@@ -3590,7 +5302,20 @@ class ProductionRunRegistry:
                 "This run cannot start because FL did not provide a session fingerprint.",
             )
             return self._finish_blocked(record, blocker)
-        if record.state.write_mode_enabled_once:
+        with self._lock:
+            if record.stop_requested or record.state.status == "stopped":
+                return record.state
+            already_active = record.state.write_mode_active
+            if self._write_mode_owner_run_id not in {None, record.state.run_id}:
+                return self._finish_blocked(
+                    record,
+                    _blocker(
+                        "setup_or_session",
+                        "write_mode_owned_by_another_run",
+                        "Another Production Run currently owns the FL write boundary. Continue after that run finishes.",
+                    ),
+                )
+        if already_active:
             connection = ReadOnlyInspector().connection_info()
             if (
                 connection.connected
@@ -3603,9 +5328,30 @@ class ProductionRunRegistry:
             blocker = _blocker(
                 "setup_or_session",
                 "run_write_mode_no_longer_active",
-                "Write mode is no longer active for this run and will not be enabled a second time. Start a new authorized run for further project changes.",
+                "Write mode became inactive while this run was executing. The run stopped before another project change.",
             )
             return self._finish_blocked(record, blocker)
+        with self._lock:
+            if record.stop_requested or record.state.status == "stopped":
+                return record.state
+            if self._write_mode_owner_run_id not in {None, record.state.run_id}:
+                return self._finish_blocked(
+                    record,
+                    _blocker(
+                        "setup_or_session",
+                        "write_mode_owned_by_another_run",
+                        "Another Production Run currently owns the FL write boundary. Continue after that run finishes.",
+                    ),
+                )
+            self._write_mode_owner_run_id = record.state.run_id
+            record.write_mode_enable_pending = True
+            record.state = record.state.model_copy(
+                update={
+                    "write_mode_transition_attempted": True,
+                    "write_mode_owned_by_run": True,
+                    "updated_at": _now(),
+                }
+            )
         try:
             change = WriteModeManager().set_write_mode(
                 enabled=True,
@@ -3626,14 +5372,28 @@ class ProductionRunRegistry:
                 "FL Studio changed sessions while PostFader enabled writes for this run.",
             )
             return self._finish_blocked(record, blocker)
+        preexisting = bool(getattr(change, "before_enabled", False))
         with self._lock:
+            record.write_mode_enable_pending = False
+            if preexisting:
+                self._write_mode_owner_run_id = None
             state = record.state.model_copy(
                 update={
-                    "write_mode_enabled_once": True,
+                    "write_mode_enabled_once": not preexisting,
+                    "write_mode_active": True,
+                    "write_mode_owned_by_run": not preexisting,
+                    "write_mode_preexisting": preexisting,
+                    "write_mode_enable_count": (
+                        record.state.write_mode_enable_count
+                        + (0 if preexisting else 1)
+                    ),
+                    "write_mode_shutdown_verified": None,
                     "updated_at": _now(),
                 }
             )
             record.state = state
+            if record.active_phase is not None:
+                record.timing.record_write_mode_transition()
             if record.stop_requested or state.status == "stopped":
                 return state
         return None
@@ -3667,6 +5427,89 @@ class ProductionRunRegistry:
                         if stopped and record.state.final_summary
                         else blocker.message
                     ),
+                }
+            )
+            record.state = state
+            return state
+
+    def _shutdown_write_mode(self, record: _RunRecord) -> ProductionRunState:
+        """Disable the run-scoped write gate once execution terminates."""
+
+        with self._lock:
+            state = record.state
+            if not state.write_mode_active and not record.write_mode_enable_pending:
+                return state
+            if not state.write_mode_owned_by_run:
+                record.state = state.model_copy(
+                    update={
+                        "write_mode_active": False,
+                        "write_mode_shutdown_verified": True,
+                        "updated_at": _now(),
+                    }
+                )
+                return record.state
+            session = state.session_fingerprint
+        try:
+            change = WriteModeManager().set_write_mode(
+                enabled=False,
+                confirm_user_present=False,
+                session_fingerprint=session,
+            )
+            # Runtime returns the strict WriteModeChange contract.  A few
+            # compatibility test doubles predate requested_enabled; retain
+            # their narrow session proof while requiring the full contract's
+            # explicit disabled-state readback in production.
+            full_contract = hasattr(change, "requested_enabled")
+            if change.session_fingerprint != session or (
+                full_contract
+                and (
+                    change.requested_enabled is not False
+                    or change.after_enabled is not False
+                )
+            ):
+                raise RuntimeError(
+                    "the write-mode shutdown receipt did not confirm the same session in read-only mode"
+                )
+        except Exception as exc:
+            blocker = _blocker(
+                "setup_or_session",
+                "write_mode_shutdown_failed",
+                "The run stopped, but PostFader could not verify that write mode was disabled. Disable it before another task.",
+                evidence=(f"{type(exc).__name__}: {exc}"[:512],),
+            )
+            with self._lock:
+                current = record.state
+                update: dict[str, Any] = {
+                    "write_mode_shutdown_verified": False,
+                    "updated_at": _now(),
+                    "warnings": _bounded_warnings(
+                        [*current.warnings, blocker.message]
+                    ),
+                    "blockers": _bounded_blockers(
+                        [*current.blockers, blocker], limit=MAX_RUN_BLOCKERS
+                    ),
+                }
+                if current.status == "completed":
+                    update.update(
+                        status="blocked",
+                        finished_at=_now(),
+                        final_summary=blocker.message,
+                    )
+                state = current.model_copy(update=update)
+                record.state = state
+                return state
+        with self._lock:
+            current = record.state
+            if self._write_mode_owner_run_id == current.run_id:
+                self._write_mode_owner_run_id = None
+            record.write_mode_enable_pending = False
+            state = current.model_copy(
+                update={
+                    "write_mode_active": False,
+                    "write_mode_owned_by_run": False,
+                    "write_mode_disable_count": current.write_mode_disable_count + 1,
+                    "write_mode_shutdown_verified": True,
+                    "updated_at": _now(),
                 }
             )
             record.state = state
@@ -3751,6 +5594,27 @@ class ProductionRunRegistry:
         session = record.state.session_fingerprint
         for index in range(start_index, len(record.plan.operations)):
             operation = record.plan.operations[index]
+            phase = classify_operation_phase(operation.operation)
+            if record.active_phase != phase:
+                if record.active_phase is not None:
+                    self._end_phase(record)
+                boundary_blocker = self._phase_boundary_blocker(
+                    record,
+                    phase=phase,
+                    start_index=index,
+                )
+                if boundary_blocker is not None:
+                    self._update_phase(
+                        record,
+                        phase,
+                        "blocked",
+                        blocker_codes=(boundary_blocker.code,),
+                    )
+                    state = self._finish_blocked(record, boundary_blocker)
+                    return self._result(state)
+            self._begin_phase(record, phase)
+            if record.active_phase == phase:
+                record.timing.record_operation()
             with self._lock:
                 if record.stop_requested or record.state.status == "stopped":
                     return self._result(record.state)
@@ -3785,7 +5649,7 @@ class ProductionRunRegistry:
                 if runtime_blocker is not None:
                     state = self._finish_blocked(record, runtime_blocker)
                     return self._result(state)
-                if not record.state.write_mode_enabled_once:
+                if not record.state.write_mode_active:
                     mode_failure = self._enable_write_mode(
                         record,
                         validation=validation,
@@ -3806,7 +5670,11 @@ class ProductionRunRegistry:
                     return self._result(state)
                 matches, reason = _current_session_matches(
                     session,
-                    record.state.project_state_digest,
+                    (
+                        record.state.project_state_digest
+                        if record.readiness is None
+                        else None
+                    ),
                 )
                 if not matches:
                     state = self._finish_blocked(
@@ -3830,6 +5698,16 @@ class ProductionRunRegistry:
                         operation,
                         session_fingerprint=session,
                         outputs=record.outputs,
+                        sound_inventory=(
+                            None
+                            if record.readiness is None
+                            else record.readiness.sound_inventory
+                        ),
+                        processing_observations=(
+                            ()
+                            if record.readiness is None
+                            else record.readiness.loaded_processing_observations
+                        ),
                     )
                 finally:
                     with self._lock:
@@ -3844,6 +5722,13 @@ class ProductionRunRegistry:
                 )
 
             if not _is_mutating(operation):
+                if (
+                    isinstance(operation, PlanSoundPaletteOperation)
+                    and record.active_phase == phase
+                ):
+                    # The full loaded inventory came from preflight; planning
+                    # consumes that immutable snapshot without another scan.
+                    pass
                 generated = _generated_outputs_for(operation, result)
                 receipt = ProductionOperationReceipt(
                     operation_index=index,
@@ -3916,10 +5801,72 @@ class ProductionRunRegistry:
                     error=exc,
                     session_fingerprint=session,
                 )
+            if (
+                isinstance(operation, WriteNoteSequenceOperation)
+                and record.active_phase == phase
+            ):
+                record.timing.record_piano_roll_dispatch()
+            if isinstance(
+                operation,
+                (SelectPluginPresetOperation, SelectDrumKitOperation),
+            ) and record.active_phase == phase:
+                selection = (
+                    result.selection
+                    if isinstance(result, SelectedDrumKitReceipt)
+                    else result
+                )
+                steps = (
+                    selection.navigation_steps
+                    if isinstance(selection, VerifiedPluginPresetSelection)
+                    else 0
+                )
+                record.timing.record_preset_navigation(steps)
+            if (
+                isinstance(operation, ApplySoundPaletteOperation)
+                and isinstance(result, SoundSelectionApplyResult)
+                and record.active_phase == phase
+            ):
+                record.timing.record_preset_navigation(
+                    sum(item.navigation_steps for item in result.receipts)
+                )
+            if (
+                isinstance(
+                    operation,
+                    (
+                        ApplyProcessingPlanOperation,
+                        ApplySemanticPluginActionOperation,
+                    ),
+                )
+                and isinstance(result, ProcessingPlanReceipt)
+                and record.active_phase == phase
+            ):
+                record.timing.record_target_refresh(
+                    sum(
+                        item.status
+                        not in {
+                            "blocked",
+                            "unresolved_control",
+                            "stale_session",
+                        }
+                        for item in result.results
+                    )
+                )
             checkpoint_digest: str | None = None
             checkpoint_reason = ""
             if _requires_project_write(operation) and session is not None:
-                checkpoint_digest, checkpoint_reason = _capture_project_state(session)
+                if record.readiness is None:
+                    checkpoint_digest, checkpoint_reason = _capture_project_state(
+                        session
+                    )
+                else:
+                    matches, checkpoint_reason = _current_session_matches(
+                        session, None
+                    )
+                    if matches:
+                        # The cached creation path deliberately avoids a full
+                        # project summary after every mutation.  A single
+                        # read-only checkpoint is captured at finalization.
+                        checkpoint_digest = record.state.project_state_digest
             generated = _generated_outputs_for(operation, result) if verified else ()
             receipt = ProductionOperationReceipt(
                 operation_index=index,
@@ -4111,13 +6058,178 @@ class ProductionRunRegistry:
             record.claimed = True
 
         try:
+            cached_creation_path = record.readiness is not None or (
+                _creation_plan_needs_readiness(
+                    plan.operations,
+                    start_index=start_index,
+                )
+            )
             validation = validate_production_run(
                 request,
                 plan,
-                inspect_live=True,
+                inspect_live=not cached_creation_path,
                 start_index=start_index,
                 completed_operation_ids=completed_operation_ids,
             )
+            continued_readiness_report = record.state.readiness_report
+            if cached_creation_path and validation.valid:
+                current_digest: str | None = None
+                checkpoint_reason = ""
+                if prior_session is not None:
+                    current_digest, checkpoint_reason = _capture_project_state(
+                        prior_session,
+                        require_write_mode=False,
+                    )
+                    if current_digest is None:
+                        validation = validation.model_copy(
+                            update={
+                                "valid": False,
+                                "executable": False,
+                                "blockers": _bounded_blockers(
+                                    [
+                                        *validation.blockers,
+                                        _blocker(
+                                            "setup_or_session",
+                                            "continued_session_changed",
+                                            checkpoint_reason
+                                            or "This run no longer matches the current FL Studio session.",
+                                        ),
+                                    ],
+                                    limit=MAX_VALIDATION_BLOCKERS,
+                                ),
+                            }
+                        )
+                    elif (
+                        prior_project_digest is not None
+                        and current_digest != prior_project_digest
+                    ):
+                        validation = validation.model_copy(
+                            update={
+                                "valid": False,
+                                "executable": False,
+                                "blockers": _bounded_blockers(
+                                    [
+                                        *validation.blockers,
+                                        _blocker(
+                                            "setup_or_session",
+                                            "continued_project_state_changed",
+                                            "The open project changed after this run's last verified checkpoint. Inspect the new state and submit a revised run.",
+                                        ),
+                                    ],
+                                    limit=MAX_VALIDATION_BLOCKERS,
+                                ),
+                            }
+                        )
+                if validation.valid:
+                    if record.readiness is None:
+                        try:
+                            continued_readiness_report, collected = (
+                                _collect_run_readiness(
+                                    request,
+                                    plan,
+                                    start_index=start_index,
+                                )
+                            )
+                        except Exception as exc:
+                            validation = validation.model_copy(
+                                update={
+                                    "valid": False,
+                                    "executable": False,
+                                    "blockers": (
+                                        _blocker(
+                                            "setup_or_session",
+                                            "creation_readiness_failed",
+                                            f"Creation readiness could not inspect the remaining setup: {exc}",
+                                        ),
+                                    ),
+                                }
+                            )
+                        else:
+                            record.readiness = collected
+                            record.timing.record_full_inventory_scan(
+                                collected.full_inventory_scan_count
+                            )
+                            record.timing.record_target_refresh(
+                                collected.target_refresh_count
+                            )
+                            record.timing.record_preset_enumeration(
+                                collected.preset_enumeration_count
+                            )
+                    else:
+                        prior_target_refresh_count = record.readiness.target_refresh_count
+                        continued_readiness_report, refreshed = (
+                            _refresh_cached_readiness_for_continuation(
+                                record.readiness,
+                                plan.operations[start_index:],
+                                continued_readiness_report,
+                                request=request,
+                                required_mutation_categories=tuple(
+                                    dict.fromkeys(
+                                        category
+                                        for operation in plan.operations[start_index:]
+                                        if _is_mutating(operation)
+                                        for category in _operation_categories(operation)
+                                    )
+                                ),
+                                unavailable_operations=tuple(
+                                    operation.operation
+                                    for operation in plan.operations[start_index:]
+                                    if isinstance(
+                                        operation, UnavailableProductionOperation
+                                    )
+                                ),
+                            )
+                        )
+                        if (
+                            refreshed.target_refresh_count
+                            > prior_target_refresh_count
+                        ):
+                            record.timing.record_target_refresh(
+                                refreshed.target_refresh_count
+                                - prior_target_refresh_count
+                            )
+                        if refreshed is not record.readiness:
+                            record.readiness = refreshed
+                    if validation.valid and record.readiness is not None:
+                        if continued_readiness_report is None:
+                            continued_readiness_report = (
+                                CreationReadinessService().evaluate(
+                                    record.readiness.readiness_input
+                                )
+                            )
+                        cached_blockers, cached_warnings, cached_session, _ = (
+                            _cached_live_validation(
+                                request,
+                                plan,
+                                record.readiness,
+                                start_index=start_index,
+                            )
+                        )
+                        readiness_blockers = tuple(
+                            _readiness_production_blocker(item)
+                            for item in continued_readiness_report.blockers
+                        )
+                        combined = _bounded_blockers(
+                            [
+                                *validation.blockers,
+                                *readiness_blockers,
+                                *cached_blockers,
+                            ],
+                            limit=MAX_VALIDATION_BLOCKERS,
+                        )
+                        validation = validation.model_copy(
+                            update={
+                                "valid": not combined,
+                                "executable": not combined,
+                                "session_fingerprint": prior_session
+                                or cached_session,
+                                "project_state_digest": current_digest,
+                                "blockers": combined,
+                                "warnings": _bounded_warnings(
+                                    [*validation.warnings, *cached_warnings]
+                                ),
+                            }
+                        )
             if (
                 prior_session is not None
                 and validation.session_fingerprint is not None
@@ -4161,6 +6273,47 @@ class ProductionRunRegistry:
             with self._lock:
                 if record.stop_requested or record.state.status == "stopped":
                     return self._result(record.state)
+                refreshed_phase_plan = build_phase_plan(
+                    (operation.operation_id, operation.operation)
+                    for index, operation in enumerate(plan.operations)
+                    if operation.operation_id
+                    not in {
+                        earlier.operation_id for earlier in plan.operations[:index]
+                    }
+                )
+                completed_ids = frozenset(record.state.completed_operations)
+                refreshed_phase_plan = refreshed_phase_plan.model_copy(
+                    update={
+                        "phases": tuple(
+                            row.model_copy(
+                                update={
+                                    "status": (
+                                        "skipped"
+                                        if not row.operation_ids
+                                        and row.phase
+                                        not in {"preflight", "finalization"}
+                                        else "completed"
+                                        if row.phase == "preflight"
+                                        or (
+                                            row.operation_ids
+                                            and set(row.operation_ids).issubset(
+                                                completed_ids
+                                            )
+                                        )
+                                        else "pending"
+                                    ),
+                                    "completed_operation_ids": tuple(
+                                        item
+                                        for item in row.operation_ids
+                                        if item in completed_ids
+                                    ),
+                                    "blocker_codes": (),
+                                }
+                            )
+                            for row in refreshed_phase_plan.phases
+                        )
+                    }
+                )
                 next_state = record.state.model_copy(
                     update={
                         "request": request,
@@ -4187,17 +6340,55 @@ class ProductionRunRegistry:
                             and validation.project_state_digest is not None
                             else prior_project_digest
                         ),
+                        "phase_plan": refreshed_phase_plan,
+                        "current_phase": (
+                            "finalization"
+                            if start_index >= len(plan.operations)
+                            else classify_operation_phase(
+                                plan.operations[start_index].operation
+                            )
+                        ),
+                        "creation_outcome": None,
+                        "readiness_report": continued_readiness_report,
+                        "run_context": (
+                            record.state.run_context
+                            if record.readiness is None
+                            else record.readiness.context_snapshot
+                        ),
+                        "readiness_preflight_count": (
+                            record.state.readiness_preflight_count
+                            + int(
+                                record.state.run_context is None
+                                and record.readiness is not None
+                            )
+                        ),
                     }
                 )
                 record.plan = plan
                 record.state = next_state
             if not validation.valid:
-                return self._result(next_state)
-            return self._execute_validated(
-                record,
-                start_index=start_index,
-                validation=validation,
-            )
+                self._finalize_run(record)
+                return self._result(record.state)
+            try:
+                self._execute_validated(
+                    record,
+                    start_index=start_index,
+                    validation=validation,
+                )
+            except Exception as exc:
+                self._finish_blocked(
+                    record,
+                    _blocker(
+                        "unknown_outcome",
+                        "continued_run_execution_failed",
+                        "The continued run stopped after an unexpected internal failure. No operation was replayed.",
+                        evidence=(f"{type(exc).__name__}: {exc}"[:512],),
+                    ),
+                )
+            finally:
+                self._shutdown_write_mode(record)
+            self._finalize_run(record)
+            return self._result(record.state)
         finally:
             self._release(record)
 
@@ -4233,7 +6424,18 @@ class ProductionRunRegistry:
                 }
             )
             record.state = state
-        return self._result(state)
+            # An enable request is itself an in-flight write-boundary
+            # transition.  Let the execution thread observe the stop and run
+            # the ordered shutdown after that request returns; disabling here
+            # could otherwise race ahead of the pending enable reply.
+            can_finalize = (
+                record.in_flight_operation_id is None
+                and not record.write_mode_enable_pending
+            )
+        if can_finalize:
+            self._shutdown_write_mode(record)
+            self._finalize_run(record)
+        return self._result(record.state)
 
 
 PRODUCTION_RUNS = ProductionRunRegistry()

@@ -72,6 +72,7 @@ include-package-data = false
 packages = [
     "fl_studio_mcp",
     "fl_studio_mcp._bridge",
+    "fl_studio_mcp.creation_pipeline",
     "fl_studio_mcp.plugin_atlas",
     "fl_studio_mcp.plugin_atlas_data",
     "fl_studio_mcp.sound_selection",

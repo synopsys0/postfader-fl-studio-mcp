@@ -42,6 +42,41 @@ request to change the open project supplies task-scoped authorization when the
 submitted request sets `authorized_to_modify=true`; PostFader does not ask for
 the old write-mode transition before every operation.
 
+## Creation readiness and phases
+
+For a complete creation request, PostFader performs one read-only readiness
+preflight before the first mutation. The same service is available directly as
+`postfader_creation_readiness`, and the normal `postfader_execute_run` path
+uses it internally. It aggregates independently detectable blockers and
+non-blocking limitations across the connection/bridge, Piano Roll, loaded
+instrument pool, drum coverage, patterns and arrangement, mixer/effect
+coverage, and manual-scope dimensions. Readiness does not enable writes,
+change FL Studio, or claim that a sound was heard.
+
+The run caches a bounded context snapshot containing the session and relevant
+target fingerprints, project checkpoint, palette/preset/drum/effect digests,
+Piano Roll arming receipt, bridge revisions, and preflight timestamp. It is a
+same-process concurrency checkpoint, not a durable project identity. A ready
+or ready-with-limitations report proceeds automatically; only a blocking
+requirement stops the run, with setup actions returned together.
+
+The executor groups work into ordered phases and does not repeat a full
+project scan before each one:
+
+| Phase | Work and evidence |
+| --- | --- |
+| `preflight` | Readiness, scope, capability, session, and cached-context checks; no mutation. |
+| `palette` | Loaded-pool inventory, Sound Palette planning/application, preset readback, and drum-map inspection. |
+| `composition` | Deterministic harmony, lead, bass, sub, and drum generation plus sound-aware adaptation. |
+| `note_application` | Empty-pattern preparation and Piano Roll writes using typed palette targets. |
+| `processing` | Effect coverage, semantic processing planning, and restrained loaded-effect writes when requested. |
+| `finalization` | Receipt checks, timing/outcome construction, and one verified write-mode shutdown. |
+
+Phase-specific checks still refresh the narrow session or target needed for
+the next mutation. A blocked run retains completed receipts, generated
+outputs, anchors, phase state, timing, and blockers for a compatible
+continuation; completed receipts are never rewritten.
+
 ## MCP surface
 
 The normal high-level flow is:
@@ -125,6 +160,20 @@ content hash. A blocked run can be continued only after the connected AI
 submits a compatible continuation or replacement remainder and the session and
 project checks still pass.
 
+Creation runs additionally return `readiness_report`, `run_context`,
+`phase_plan`, `timing_report`, and `creation_outcome`. Timing is local and
+diagnostic only: phase durations, operation count, target refreshes, full
+inventory scans, preset navigation/enumeration, Piano Roll dispatches, manual
+waits, blocked time, and write-mode transitions are bounded in the receipt.
+Soft timing targets produce warnings rather than failures, and no timing data
+is uploaded.
+
+`creation_outcome` keeps technical execution, arrangement delivery, processing,
+audible quality, and manual handoff separate. In particular,
+`audible_quality.status` remains `not_evaluated` until the user confirms a
+draft or supplies an exported/recorded bounce for the audio tools. A dry or
+partially processed result is therefore not a claim about audible quality.
+
 ## Scope and capability checks
 
 Scope is enforced server-side. A run can constrain sections through concrete
@@ -154,6 +203,14 @@ and keeps completed receipts immutable. A failed or unverified preset selection
 stops dependent operations; the run never retries an ambiguous mutation or
 claims rollback. Continuations should reference the existing palette and use a
 variation request so anchors remain stable across sections.
+
+When processing is requested, the run evaluates effect coverage before writing
+parameters. A semantic action is eligible only when a loaded target, Atlas
+capability evidence, a compatible adapter, and runtime control evidence agree.
+The plan prefers displayed-value or exact-option setters and the executor uses
+the existing later-tick readback boundary. Missing effects or unresolved
+controls remain visible as `dry_missing_effects` or partial processing; an
+Atlas product by itself never creates a processing target.
 
 ## Process-local lifetime
 
@@ -199,6 +256,50 @@ point. A send level requires an existing route. Plug-in operations target
 already loaded, supported parameters; unprofiled controls remain unsafe to
 modify. Rendering, project saving, plug-in insertion, Playlist clip creation,
 and live-audio claims remain explicitly unsupported.
+
+## Maintainer live acceptance
+
+Use [the live creation acceptance harness](../scripts/live_creation_acceptance.py)
+with a blank disposable project, not a production song. Prepare the loaded
+generator pool, a drum generator with kick/snare/closed-hat mappings, an empty
+Pattern 1, and the armed Postfader Apply Piano Roll bridge first. The
+`composition` scenario leaves the effect chain empty and checks an honest dry
+processing status. The `production` scenario expects supported loaded stock
+effects with existing adapters and checks semantic planning, displayed-value
+application/readback, and restrained processing. Both scenarios use one
+task-scoped authorization, one run, and one consolidated receipt.
+
+Preview without MCP or FL contact:
+
+```bash
+python scripts/live_creation_acceptance.py --plan --scenario composition
+python scripts/live_creation_acceptance.py --plan --scenario production
+```
+
+For a live fixture, pass all three explicit confirmations and a new evidence
+path outside the repository:
+
+```bash
+python scripts/live_creation_acceptance.py \
+  --scenario composition \
+  --confirm-user-present \
+  --confirm-disposable-project \
+  --confirm-safe-to-edit \
+  --output /absolute/private/creation-composition.json
+```
+
+The harness records observed elapsed time and receipts but labels acceptance
+targets as `not_claimed`; it never treats a fast run, a technical receipt, or
+metadata as proof of musical or audible quality. Keep project files,
+screenshots, logs, and timing evidence outside the public checkout. See
+[Creation Pipeline](creation-pipeline.md) for the detailed contracts and
+[Setup](setup.md) for the armed-ready checklist.
+
+The acceptance targets are under five minutes from an armed-ready state for a
+modest 32-bar draft, under ten minutes when one documented manual setup action
+is needed, one task-scoped authorization, no surprise setup blockers that the
+preflight could have detected, and at most one manual Playlist handoff. These
+are targets for a recorded live run, not claims about this checkout.
 
 See [FL Studio constraints](fl-constraints.md), [Architecture](architecture.md),
 and [Tool contracts](tool-contracts.md) for the lower-level evidence and

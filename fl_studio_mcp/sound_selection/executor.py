@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -63,6 +63,7 @@ from .models import (
     SoundPalettePlan,
     SoundPaletteState,
     SoundPaletteVariationPlan,
+    SoundPresetDiscoveryCoverage,
     SoundSelectionModel,
     SoundSelectionRequest,
     SoundTargetInventory,
@@ -73,6 +74,10 @@ from .palette import (
     SoundPaletteStateRegistry,
     create_palette_variation,
     plan_palette,
+)
+from .preset_discovery import (
+    PresetCandidateDiscoveryPolicy,
+    discover_preset_candidates,
 )
 
 
@@ -248,6 +253,42 @@ def _target_kwargs(target: Any) -> dict[str, Any]:
     if getattr(target, "kind", None) == "mixer_effect":
         arguments["allow_master"] = bool(getattr(target, "allow_master", False))
     return arguments
+
+
+def _exact_preset_loader(inspector: Any, target: Any) -> Callable[..., Any] | None:
+    """Adapt an optional inspector exact-preset surface to discovery."""
+
+    method_names = (
+        "lookup_plugin_preset",
+        "find_plugin_preset",
+        "resolve_plugin_preset",
+        "get_plugin_preset",
+        "exact_plugin_preset",
+    )
+    method = next(
+        (
+            getattr(inspector, name, None)
+            for name in method_names
+            if callable(getattr(inspector, name, None))
+        ),
+        None,
+    )
+    if method is None:
+        return None
+
+    def lookup(name: str) -> Any:
+        target_kwargs = _target_kwargs(target)
+        for key in ("name", "preset_name", "query"):
+            try:
+                return method(**target_kwargs, **{key: name})
+            except TypeError:
+                continue
+        try:
+            return method(target, name)
+        except TypeError:
+            return None
+
+    return lookup
 
 
 def _target_key(target: Any) -> str:
@@ -600,12 +641,17 @@ class SoundSelectionService:
         include_empty_names: bool = False,
         include_pad_maps: bool = True,
         include_atlas: bool = True,
+        discover_presets: bool = False,
+        discovery_policy: PresetCandidateDiscoveryPolicy | Mapping[str, Any] | None = None,
     ) -> SoundInventory:
         """Read one compact loaded-target inventory.
 
         The target scan is intentionally performed exactly once and is passed
         into Atlas matching.  Preset/current/pad reads are all bounded per
-        target and are never replaced by a static Atlas claim.
+        target and are never replaced by a static Atlas claim.  Callers can
+        opt into bounded multi-page discovery; normal plan calls do so, while
+        a direct inventory read retains the historical one-page behavior unless
+        discover_presets=True is supplied.
         """
 
         if type(only_used) is not bool:
@@ -616,6 +662,8 @@ class SoundSelectionService:
             raise ValueError("include_current and include_empty_names must be booleans")
         if type(include_pad_maps) is not bool or type(include_atlas) is not bool:
             raise ValueError("include_pad_maps and include_atlas must be booleans")
+        if type(discover_presets) is not bool:
+            raise ValueError("discover_presets must be true or false")
         if (
             type(preset_start) is not int
             or isinstance(preset_start, bool)
@@ -653,8 +701,38 @@ class SoundSelectionService:
                 warnings.append(f"Atlas matching was unavailable for this inventory: {exc}")
 
         target_rows: list[SoundTargetInventory] = []
+        target_coverages: list[SoundPresetDiscoveryCoverage] = []
         observed_sessions: list[str] = []
         matched_products: set[str] = set()
+        project_key = None if request_model is None else request_model.project_key
+        palette_state = self.palette_registry.current(project_key=project_key)
+        requested_preset_names: tuple[str, ...] = ()
+        excluded_preset_names: tuple[str, ...] = ()
+        if request_model is not None:
+            requested_preset_names = tuple(
+                dict.fromkeys(
+                    (
+                        *request_model.preset_preferences,
+                        *(
+                            preset
+                            for role in request_model.roles
+                            for preset in role.preferred_presets
+                        ),
+                    )
+                )
+            )
+            excluded_preset_names = tuple(
+                dict.fromkeys(
+                    (
+                        *request_model.preset_exclusions,
+                        *(
+                            preset
+                            for role in request_model.roles
+                            for preset in role.excluded_presets
+                        ),
+                    )
+                )
+            )
         for summary in tuple(loaded.plugins):
             target = summary.target
             key = _target_key(target)
@@ -738,6 +816,78 @@ class SoundSelectionService:
             preset_readback = status == "stable"
             preset_identity_stable = status == "stable"
             preset_navigation = isinstance(preset_count, int) and preset_count > 0
+            preset_coverage: SoundPresetDiscoveryCoverage | None = None
+            if discover_presets:
+                page_loader: Callable[..., Any] | None = None
+                if callable(getattr(self.inspector, "list_plugin_presets", None)):
+                    initial_start = _field(page, "start", preset_start)
+                    initial_limit = _field(page, "limit", preset_limit)
+
+                    def load_page(
+                        *,
+                        start: int,
+                        limit: int,
+                        _initial_page: Any = page,
+                        _initial_start: int = initial_start,
+                        _initial_limit: int = initial_limit,
+                        _target: Any = target,
+                    ) -> Any:
+                        if (
+                            _initial_page is not None
+                            and start == _initial_start
+                            and limit == _initial_limit
+                        ):
+                            return _initial_page
+                        return _as_page(
+                            self.inspector.list_plugin_presets(
+                                **_target_kwargs(_target),
+                                start=start,
+                                limit=limit,
+                                include_current=include_current,
+                                include_empty_names=include_empty_names,
+                            )
+                        )
+
+                    page_loader = load_page
+                exact_lookup = _exact_preset_loader(self.inspector, target)
+                try:
+                    discovered = discover_preset_candidates(
+                        catalog=page,
+                        policy=discovery_policy,
+                        page_loader=page_loader,
+                        exact_lookup=exact_lookup,
+                        requested_presets=requested_preset_names,
+                        preferred_presets=requested_preset_names,
+                        excluded_presets=excluded_preset_names,
+                        anchors=(
+                            ()
+                            if palette_state is None
+                            else palette_state.assignments
+                        ),
+                        history=self.history,
+                        current_preset=current_name if include_current else None,
+                        current_preset_index=current_index if include_current else None,
+                        reported_preset_count=preset_count,
+                        seed=0 if request_model is None else request_model.seed,
+                    )
+                    preset_coverage = SoundPresetDiscoveryCoverage.model_validate(
+                        discovered.coverage.model_dump(mode="json", exclude_none=False)
+                    )
+                    target_coverages.append(preset_coverage)
+                    if discovered.presets:
+                        preset_names = tuple(
+                            item.name for item in discovered.presets if item.name
+                        )
+                        preset_indices = tuple(
+                            item.index for item in discovered.presets if item.name
+                        )
+                    if preset_coverage.reported_preset_count is not None:
+                        preset_count = preset_coverage.reported_preset_count
+                    target_warnings.extend(preset_coverage.limitations)
+                except Exception as exc:
+                    target_warnings.append(
+                        f"bounded preset discovery unavailable: {exc}"
+                    )
             converted_pad_map = convert_plugin_pad_map(
                 pad_map,
                 target,
@@ -776,6 +926,7 @@ class SoundSelectionService:
                     product_origin=product_origin,
                     current_preset=current_name,
                     current_preset_index=current_index,
+                    reported_parameter_count=summary.reported_parameter_count,
                     preset_count=preset_count,
                     preset_names=preset_names,
                     preset_indices=preset_indices,
@@ -801,6 +952,7 @@ class SoundSelectionService:
                     preset_navigation_available=preset_navigation,
                     preset_readback_available=preset_readback,
                     preset_identity_stable=preset_identity_stable,
+                    preset_discovery_coverage=preset_coverage,
                     pad_map=converted_pad_map,
                     warnings=_dedupe(target_warnings, limit=MAX_TARGET_WARNINGS),
                 )
@@ -817,19 +969,17 @@ class SoundSelectionService:
             else:
                 warnings.append("live inventory did not expose a session fingerprint")
 
-        project_key = None if request_model is None else request_model.project_key
-        current_state = self.palette_registry.current(project_key=project_key)
         current_palette_id = (
             None
             if request_model is None
             else request_model.current_palette_id
-        ) or (None if current_state is None else current_state.palette_id)
+        ) or (None if palette_state is None else palette_state.palette_id)
         locked_roles: tuple[str, ...] = ()
-        if current_state is not None:
+        if palette_state is not None:
             locked_roles = tuple(
                 item.role_id
-                for item in current_state.assignments
-                if item.locked or item.assignment_id in current_state.locked_assignments
+                for item in palette_state.assignments
+                if item.locked or item.assignment_id in palette_state.locked_assignments
             )
         try:
             atlas_products = tuple(self.atlas_registry.products)
@@ -847,6 +997,7 @@ class SoundSelectionService:
             loaded_effects=tuple(row for row in target_rows if row.target.kind == "mixer_effect"),
             current_palette_id=current_palette_id,
             locked_roles=locked_roles,
+            preset_discovery_coverage=tuple(target_coverages),
             known_unloaded_products=unloaded,
             warnings=_dedupe(warnings, limit=MAX_SERVICE_WARNINGS),
         )
@@ -861,7 +1012,10 @@ class SoundSelectionService:
         """Build and register a deterministic, read-only palette plan."""
 
         request_model = request if isinstance(request, SoundSelectionRequest) else SoundSelectionRequest.model_validate(request)
-        observed = self.inventory(request_model) if inventory is None else (
+        observed = self.inventory(
+            request_model,
+            discover_presets=True,
+        ) if inventory is None else (
             inventory if isinstance(inventory, SoundInventory) else SoundInventory.model_validate(inventory)
         )
         prior = existing
@@ -917,7 +1071,10 @@ class SoundSelectionService:
 
         base = self.palette_registry.require(palette_id)
         request_model = request if isinstance(request, SoundSelectionRequest) else SoundSelectionRequest.model_validate(request)
-        observed = self.inventory(request_model) if inventory is None else (
+        observed = self.inventory(
+            request_model,
+            discover_presets=True,
+        ) if inventory is None else (
             inventory if isinstance(inventory, SoundInventory) else SoundInventory.model_validate(inventory)
         )
         variation = create_palette_variation(
@@ -1068,6 +1225,58 @@ class SoundSelectionService:
                 )
             elif assignment.target_fingerprint != live_fp:
                 result.blockers.append(f"role {assignment.role_id!r} target identity changed")
+        return result
+
+    def _cached_inventory_preflight(
+        self,
+        assignments: Sequence[SoundPaletteAssignment],
+        session_fingerprint: str,
+        inventory: SoundInventory,
+    ) -> _Preflight:
+        """Validate assignment identities against the run's one inventory scan.
+
+        Production Runs already perform a session check immediately before the
+        palette phase, and each preset setter performs its own narrow target
+        and readback checks.  Reusing this immutable inventory avoids a second
+        full loaded-plug-in scan without weakening those mutation boundaries.
+        """
+
+        result = _Preflight()
+        if inventory.session_fingerprint != session_fingerprint:
+            result.blockers.append(
+                "the cached inventory session does not match the requested session fingerprint"
+            )
+            return result
+        rows = {
+            _target_key(item.target): item
+            for item in inventory.loaded_targets
+        }
+        for assignment in sorted(
+            assignments,
+            key=lambda item: (item.role_id.casefold(), item.assignment_id),
+        ):
+            if assignment.target is None:
+                result.blockers.append(
+                    f"role {assignment.role_id!r} has no resolved live target"
+                )
+                continue
+            cached = rows.get(_target_key(assignment.target))
+            if cached is None:
+                result.blockers.append(
+                    f"role {assignment.role_id!r} target was not present in the readiness inventory"
+                )
+                continue
+            if (
+                assignment.target_fingerprint is None
+                or cached.target_fingerprint is None
+            ):
+                result.blockers.append(
+                    f"role {assignment.role_id!r} target identity proof is unavailable"
+                )
+            elif assignment.target_fingerprint != cached.target_fingerprint:
+                result.blockers.append(
+                    f"role {assignment.role_id!r} target identity changed before palette planning"
+                )
         return result
 
     def _read_current_for_target(
@@ -1303,6 +1512,7 @@ class SoundSelectionService:
         settle_tick_limit: int = 1,
         persist_history: bool | None = None,
         write_mode_already_enabled: bool | None = None,
+        inventory: SoundInventory | None = None,
     ) -> SoundSelectionApplyResult:
         """Apply one plan using verified, deterministic preset mutations."""
 
@@ -1403,7 +1613,11 @@ class SoundSelectionService:
                 history_written=0,
                 status="failed",
             )
-        preflight = self._scan_preflight(ordered, session)
+        preflight = (
+            self._scan_preflight(ordered, session)
+            if inventory is None
+            else self._cached_inventory_preflight(ordered, session, inventory)
+        )
         if preflight.blockers:
             failed = ordered[0].assignment_id if ordered else None
             return self._finish_apply(
@@ -1752,6 +1966,8 @@ class SoundSelectionService:
         state = self.palette_registry.get(feedback.palette_id)
         product_id = None
         preset_digest = None
+        resolved_role_id = feedback.role_id
+        resolved_assignment_id = feedback.assignment_id
         if state is not None and feedback.role_id is not None:
             assignment = next(
                 (item for item in state.assignments if item.role_id.casefold() == feedback.role_id.casefold()),
@@ -1760,6 +1976,16 @@ class SoundSelectionService:
             if assignment is not None:
                 product_id = assignment.product_id
                 preset_digest = assignment.preset_identity_digest
+                resolved_assignment_id = resolved_assignment_id or assignment.assignment_id
+        elif state is not None and feedback.assignment_id is not None:
+            assignment = next(
+                (item for item in state.assignments if item.assignment_id == feedback.assignment_id),
+                None,
+            )
+            if assignment is not None:
+                product_id = assignment.product_id
+                preset_digest = assignment.preset_identity_digest
+                resolved_role_id = resolved_role_id or assignment.role_id
         stamp = _stamp(self._now())
         warnings: list[str] = []
         try:
@@ -1767,13 +1993,19 @@ class SoundSelectionService:
                 self.history.record_feedback(
                     palette_id=feedback.palette_id,
                     verdict=feedback.verdict,
-                    role_id=feedback.role_id,
+                    role_id=resolved_role_id,
+                    assignment_id=resolved_assignment_id,
                     product_id=product_id,
                     preset_identity_digest=preset_digest,
                     descriptors=feedback.descriptors,
+                    desired_descriptors=feedback.desired_descriptors,
+                    undesired_descriptors=feedback.undesired_descriptors,
+                    hard_exclusion=feedback.hard_exclusion,
+                    hard_preference=feedback.hard_preference,
+                    persistence=feedback.persistence,
                     note=feedback.note,
                     now=stamp,
-                    persist=feedback.persist,
+                    persist=feedback.persist and feedback.persistence == "persist",
                 )
             )
         except Exception as exc:

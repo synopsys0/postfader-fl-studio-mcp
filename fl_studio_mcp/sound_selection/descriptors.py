@@ -34,6 +34,58 @@ MAX_DESCRIPTOR_RULES = 256
 MAX_DESCRIPTOR_FILE_BYTES = 2 * 1024 * 1024
 _TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 
+# This is deliberately a closed vocabulary.  It handles common wording
+# variants without fuzzy matching unrelated terms.  Values not in this map
+# are normalized for case/separator consistency but retain their meaning.
+DESCRIPTOR_SYNONYMS: dict[str, str] = {
+    "plucky": "plucked",
+    "pluck": "plucked",
+    "plucked": "plucked",
+    "punchy": "punchy",
+    "transient": "punchy",
+    "hard-attack": "punchy",
+    "hard attack": "punchy",
+    "smooth": "smooth",
+    "soft": "smooth",
+    "rounded": "smooth",
+    "wide": "wide",
+    "stereo": "wide",
+    "spacious": "wide",
+    "dark": "dark",
+    "warm": "warm",
+    "subdued": "dark",
+    "bright": "bright",
+    "airy": "airy",
+    "crisp": "bright",
+    "aggressive": "aggressive",
+    "distorted": "distorted",
+    "hard": "aggressive",
+    "moving": "evolving",
+    "evolving": "evolving",
+    "animated": "evolving",
+    "sub": "sub-heavy",
+    "sub-heavy": "sub-heavy",
+    "subheavy": "sub-heavy",
+    "lead": "lead",
+    "solo": "lead",
+    "melodic": "lead",
+    "pad": "pad",
+    "atmosphere": "pad",
+    "sustained": "pad",
+}
+
+
+class DescriptorNormalization(SoundSelectionModel):
+    """A controlled descriptor conversion retaining caller wording."""
+
+    original_term: str = Field(min_length=1, max_length=128)
+    normalized_descriptor: DescriptorIdentifier
+    matched_synonym: bool = False
+
+    @property
+    def normalized(self) -> str:
+        return self.normalized_descriptor
+
 
 class DescriptorRule(SoundSelectionModel):
     """One descriptor and its explicit name-token aliases."""
@@ -51,18 +103,44 @@ class DescriptorRule(SoundSelectionModel):
         return self
 
 
+class DescriptorSynonym(SoundSelectionModel):
+    """One explicit source term mapped to a controlled descriptor ID."""
+
+    original_term: str = Field(min_length=1, max_length=128)
+    normalized_descriptor: DescriptorIdentifier
+
+
 class DescriptorVocabulary(SoundSelectionModel):
     """Validated versioned descriptor vocabulary and name-token rules."""
 
     schema_version: Literal["1.0"] = DESCRIPTOR_SCHEMA_VERSION
     vocabulary_version: str = Field(min_length=1, max_length=32)
     descriptors: tuple[DescriptorRule, ...] = Field(default=(), max_length=MAX_DESCRIPTOR_RULES)
+    synonyms: tuple[DescriptorSynonym, ...] = Field(default=(), max_length=256)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_controlled_synonyms(cls, value: object) -> object:
+        if not isinstance(value, dict) or "synonyms" in value:
+            return value
+        data = dict(value)
+        data["synonyms"] = tuple(
+            {
+                "original_term": original,
+                "normalized_descriptor": normalized,
+            }
+            for original, normalized in DESCRIPTOR_SYNONYMS.items()
+        )
+        return data
 
     @model_validator(mode="after")
     def validate_descriptors(self) -> "DescriptorVocabulary":
         ids = [item.descriptor for item in self.descriptors]
         if len({item.casefold().replace("_", "-") for item in ids}) != len(ids):
             raise ValueError("descriptor identifiers must be unique")
+        terms = [item.original_term.casefold() for item in self.synonyms]
+        if len(set(terms)) != len(terms):
+            raise ValueError("descriptor synonym terms must be unique")
         return self
 
     @property
@@ -79,6 +157,13 @@ class DescriptorVocabulary(SoundSelectionModel):
             (item for item in self.descriptors if item.descriptor.casefold() == needle),
             None,
         )
+
+    @property
+    def synonym_map(self) -> dict[str, str]:
+        return {
+            item.original_term.casefold(): item.normalized_descriptor
+            for item in self.synonyms
+        }
 
 
 # ``DescriptorCatalog`` is the terminology used by some integrations; both
@@ -161,7 +246,42 @@ def _normalise_descriptor(value: str) -> str:
     # Descriptor data uses hyphenated IDs for compound concepts (for example
     # ``sub-heavy``); accepting spaces/underscores as equivalent keeps local
     # overlays from creating duplicate semantic descriptors.
-    return value.strip().casefold().replace("_", "-").replace(" ", "-")
+    normalized = value.strip().casefold().replace("_", "-")
+    normalized = re.sub(r"\s+", "-", normalized)
+    return DESCRIPTOR_SYNONYMS.get(normalized, normalized)
+
+
+def normalize_descriptor(value: str) -> DescriptorNormalization:
+    """Normalize one controlled descriptor while preserving its source term."""
+
+    if type(value) is not str or not value.strip():
+        raise ValueError("descriptor term must contain text")
+    original = value.strip()
+    normalized = _normalise_descriptor(original)
+    comparable = original.casefold().replace("_", "-")
+    comparable = re.sub(r"\s+", "-", comparable)
+    return DescriptorNormalization(
+        original_term=original,
+        normalized_descriptor=normalized,
+        matched_synonym=normalized != comparable,
+    )
+
+
+normalize_descriptor_term = normalize_descriptor
+
+
+def normalize_descriptors(values: Iterable[str]) -> tuple[DescriptorNormalization, ...]:
+    """Normalize bounded descriptor input in first-seen order, deduplicated."""
+
+    rows: list[DescriptorNormalization] = []
+    seen: set[str] = set()
+    for value in values:
+        row = normalize_descriptor(value)
+        if row.normalized_descriptor in seen:
+            continue
+        seen.add(row.normalized_descriptor)
+        rows.append(row)
+    return tuple(rows[:MAX_DESCRIPTORS])
 
 
 def _evidence_rank(item: DescriptorEvidence) -> tuple[int, float, str, str]:
@@ -181,10 +301,19 @@ def merge_descriptor_evidence(
     selected: dict[str, DescriptorEvidence] = {}
     for group in groups:
         for evidence in group:
-            key = _normalise_descriptor(evidence.descriptor)
+            normalization = normalize_descriptor(
+                evidence.original_term or evidence.descriptor
+            )
+            key = normalization.normalized_descriptor
+            normalized_evidence = evidence.model_copy(
+                update={
+                    "descriptor": key,
+                    "original_term": evidence.original_term or normalization.original_term,
+                }
+            )
             current = selected.get(key)
-            if current is None or _evidence_rank(evidence) > _evidence_rank(current):
-                selected[key] = evidence
+            if current is None or _evidence_rank(normalized_evidence) > _evidence_rank(current):
+                selected[key] = normalized_evidence
     return tuple(selected[key] for key in sorted(selected))
 
 
@@ -204,36 +333,85 @@ def classify_preset_name(
     token_text = name.casefold()
     tokens = set(_TOKEN_RE.findall(token_text))
     token_evidence: list[DescriptorEvidence] = []
+    controlled_synonyms = {**DESCRIPTOR_SYNONYMS, **catalog.synonym_map}
     for rule in catalog.descriptors:
-        matched = next(
-            (
-                alias
-                for alias in (rule.descriptor, *rule.aliases)
-                if set(_TOKEN_RE.findall(alias.casefold())).issubset(tokens)
-            ),
-            None,
+        matching_aliases = [
+            alias
+            for alias in (rule.descriptor, *rule.aliases)
+            if set(_TOKEN_RE.findall(alias.casefold())).issubset(tokens)
+        ]
+        matched = max(
+            matching_aliases,
+            key=lambda alias: (len(_TOKEN_RE.findall(alias)), alias),
+            default=None,
         )
+        if matched is not None:
+            matched_tokens = set(_TOKEN_RE.findall(matched.casefold()))
+            if any(
+                matched_tokens < set(_TOKEN_RE.findall(term.casefold()))
+                and normalized != _normalise_descriptor(rule.descriptor)
+                and set(_TOKEN_RE.findall(term.casefold())).issubset(tokens)
+                for term, normalized in controlled_synonyms.items()
+            ):
+                matched = None
         if matched is None:
             continue
+        normalization = normalize_descriptor(matched)
         token_evidence.append(
             DescriptorEvidence(
-                descriptor=rule.descriptor,
+                descriptor=normalization.normalized_descriptor,
                 provenance="preset_name_token",
                 # A name token is useful direction, never high-confidence
                 # acoustic evidence.
                 confidence=0.35,
                 source_id="descriptor-vocabulary-" + catalog.vocabulary_version,
                 detail=f"matched preset-name token {matched!r}",
+                original_term=matched,
+            )
+        )
+
+    # Include controlled aliases whose canonical concept is not yet in the
+    # reviewed vocabulary (for example ``punchy``/``smooth``).  Prefer the
+    # longest matching phrase so ``hard attack`` does not also become the
+    # unrelated single-token ``hard`` descriptor.
+    synonym_matches = [
+        (term, normalized)
+        for term, normalized in controlled_synonyms.items()
+        if set(_TOKEN_RE.findall(term.casefold())).issubset(tokens)
+    ]
+    seen_synonym_descriptors: set[str] = set()
+    for term, normalized in sorted(
+        set(synonym_matches), key=lambda item: (-len(_TOKEN_RE.findall(item[0])), item[0], item[1])
+    ):
+        term_tokens = set(_TOKEN_RE.findall(term.casefold()))
+        if any(
+            term_tokens < other_tokens
+            for other_term, _ in synonym_matches
+            if (other_tokens := set(_TOKEN_RE.findall(other_term.casefold())))
+        ):
+            continue
+        if normalized in seen_synonym_descriptors:
+            continue
+        seen_synonym_descriptors.add(normalized)
+        token_evidence.append(
+            DescriptorEvidence(
+                descriptor=normalized,
+                provenance="preset_name_token",
+                confidence=0.35,
+                source_id="descriptor-vocabulary-" + catalog.vocabulary_version,
+                detail=f"matched controlled descriptor synonym {term!r}",
+                original_term=term,
             )
         )
 
     def explicit(values: Iterable[str], provenance: PresetDescriptorProvenance) -> tuple[DescriptorEvidence, ...]:
         return tuple(
             DescriptorEvidence(
-                descriptor=_normalise_descriptor(value),
+                descriptor=normalize_descriptor(value).normalized_descriptor,
                 provenance=provenance,
                 confidence=1.0 if provenance == "user_explicit" else 0.80,
                 source_id="local-annotation",
+                original_term=value.strip(),
             )
             for value in values
             if type(value) is str and value.strip()
@@ -250,7 +428,14 @@ def classify_preset_name(
 def descriptor_names(evidence: Iterable[DescriptorEvidence]) -> tuple[str, ...]:
     """Return sorted descriptor IDs from evidence records."""
 
-    return tuple(sorted({item.descriptor for item in evidence}))
+    return tuple(
+        sorted(
+            {
+                normalize_descriptor(item.original_term or item.descriptor).normalized_descriptor
+                for item in evidence
+            }
+        )
+    )
 
 
 def descriptors_for_product(product: ProductKnowledge) -> tuple[DescriptorEvidence, ...]:
@@ -293,9 +478,12 @@ def descriptors_for_product(product: ProductKnowledge) -> tuple[DescriptorEviden
 __all__ = [
     "DESCRIPTOR_DATA_FILE",
     "DESCRIPTOR_SCHEMA_VERSION",
+    "DESCRIPTOR_SYNONYMS",
     "DescriptorCatalog",
     "DescriptorLoadError",
+    "DescriptorNormalization",
     "DescriptorRule",
+    "DescriptorSynonym",
     "DescriptorVocabulary",
     "classify_preset_name",
     "descriptor_names",
@@ -304,4 +492,7 @@ __all__ = [
     "load_descriptor_catalog",
     "load_descriptor_vocabulary",
     "merge_descriptor_evidence",
+    "normalize_descriptor",
+    "normalize_descriptor_term",
+    "normalize_descriptors",
 ]

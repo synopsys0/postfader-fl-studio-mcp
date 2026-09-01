@@ -32,6 +32,25 @@ name, target kind, preset identity, and user direction, with lower semantic
 confidence. Atlas adapter metadata does not replace live target validation or
 exact preset readback.
 
+## Atlas capability and semantic processing
+
+Atlas product knowledge and control-adapter knowledge can contribute to
+effect-coverage planning, but neither one creates a live effect target. A
+processing candidate must be a currently loaded mixer effect with a matching
+Atlas capability, compatible adapter, and runtime control evidence. The
+read-only `processing_plan` tool reports candidates, requested technique
+categories, resolved display/option controls, missing capabilities, and
+warnings. `processing_apply_plan` applies one authorized plan through the
+existing verified setters and later-idle-tick readback; it does not bypass
+Master protection or claim that the result was heard.
+
+When a complete creation request includes processing, Production Runs keep
+effect coverage in the readiness report and return `restrained_first_pass`,
+`partially_processed`, `dry_missing_effects`, or another honest processing
+status separately from technical execution and audible quality. Missing or
+unresolved controls remain visible. See [Creation Pipeline](creation-pipeline.md)
+for the phase, timing, and outcome contracts.
+
 ## Bundled snapshot
 
 The checked-in snapshot is dated 2026-08-30 and describes FL Studio 26.1.5.
@@ -119,6 +138,14 @@ observation can support a runtime match; it cannot establish licensing or
 installation. A product-name match is reported as `name_only` and is never
 control proof or permission to write a parameter. A validated control proves
 only that control and that observation.
+
+Preset and family metadata is a separate versioned resource at
+`fl_studio_mcp/sound_selection/data/preset-metadata-v1.json`. It is reviewed
+evidence for ranking and sound-aware composition, not part of Atlas's claim
+that a product is loaded. Exact-preset, family, name-inferred, and unknown
+coverage are reported separately; name inference cannot be promoted to high
+confidence. Optional user-local annotations remain isolated from the bundled
+catalog.
 
 ## CLI
 

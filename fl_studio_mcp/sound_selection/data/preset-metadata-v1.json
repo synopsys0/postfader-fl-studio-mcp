@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "metadata_version": "1.0",
+  "records": [],
+  "families": [
+    {
+      "family_id": "image-line.3x-osc:subtractive",
+      "product_id": "image-line.3x-osc",
+      "family_name": "3x OSC subtractive synthesizer",
+      "descriptors": ["synthetic"],
+      "common_roles": ["bass", "lead", "keys"],
+      "known_limitations": [
+        "Family evidence describes the compact subtractive instrument, not any particular preset sound."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-08-30",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.3x-osc"
+    },
+    {
+      "family_id": "image-line.flex:preset-instrument",
+      "product_id": "image-line.flex",
+      "family_name": "FLEX preset instrument",
+      "descriptors": ["synthetic"],
+      "common_roles": ["bass", "lead", "pad", "keys"],
+      "known_limitations": [
+        "FLEX is described as a preset-centered instrument; this family row does not classify an individual installed library or preset."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-08-30",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.flex"
+    },
+    {
+      "family_id": "image-line.sytrus:fm-hybrid",
+      "product_id": "image-line.sytrus",
+      "family_name": "Sytrus FM/RM hybrid synthesizer",
+      "descriptors": ["synthetic", "digital", "evolving"],
+      "common_roles": ["bass", "lead", "pad", "keys"],
+      "known_limitations": [
+        "Family evidence describes Sytrus capabilities and common roles, not the timbre of a selected preset."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-08-30",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.sytrus"
+    },
+    {
+      "family_id": "image-line.harmor:additive-resynthesis",
+      "product_id": "image-line.harmor",
+      "family_name": "Harmor additive/resynthesis instrument",
+      "descriptors": ["synthetic", "evolving"],
+      "common_roles": ["bass", "lead", "pad", "texture"],
+      "known_limitations": [
+        "Family evidence describes additive and resynthesis capabilities, not an auditioned preset result."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-08-30",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.harmor"
+    }
+  ],
+  "warnings": [
+    "Exact preset records are intentionally absent; family rows are conservative Plugin Atlas/manual-derived capability evidence and are not preset-audition claims."
+  ]
+}

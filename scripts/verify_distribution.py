@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath
 try:
     import tomllib
 except ImportError:  # pragma: no cover
-    import tomli as tomllib
+    import tomli as tomllib  # pyright: ignore[reportMissingImports]
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,11 +45,16 @@ SOUND_SELECTION_DATA_FILES = {
     path.relative_to(ROOT).as_posix()
     for path in SOUND_SELECTION_DATA_ROOT.rglob("*.json")
 }
+CREATION_PIPELINE_ROOT = ROOT / "fl_studio_mcp" / "creation_pipeline"
+CREATION_PIPELINE_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_PIPELINE_ROOT.rglob("*.py")
+}
 RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
-} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES
-EXPECTED_TOOL_COUNT = 111
+} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES
+EXPECTED_TOOL_COUNT = 114
 EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
@@ -75,12 +80,24 @@ SDIST_REQUIRED_SUFFIXES = (
     "/SECURITY.md",
     "/CONTRIBUTING.md",
     "/docs/plugin-matrix.md",
+    "/docs/architecture.md",
+    "/docs/creation-pipeline.md",
+    "/docs/distribution.md",
+    "/docs/fl-constraints.md",
+    "/docs/plugin-atlas.md",
+    "/docs/plugin-support.md",
+    "/docs/production-runs.md",
+    "/docs/releases/dev-v10.md",
+    "/docs/setup.md",
+    "/docs/sound-selection.md",
+    "/docs/tool-contracts.md",
     "/tests/fixtures/write-scenario-v1.json",
     "/scripts/install.ps1",
     "/scripts/launch_fl_studio.ps1",
     "/scripts/generate_mcp_config.py",
     "/scripts/live_read_acceptance.py",
     "/scripts/live_sound_selection_acceptance.py",
+    "/scripts/live_creation_acceptance.py",
     "/scripts/live_write_acceptance.py",
     "/scripts/live_note_acceptance.py",
     "/scripts/verify_distribution.py",
@@ -186,6 +203,7 @@ def inspect_sdist(sdist: Path) -> list[str]:
                 | ATLAS_DATA_FILES
                 | SOUND_SELECTION_RUNTIME_MODULES
                 | SOUND_SELECTION_DATA_FILES
+                | CREATION_PIPELINE_RUNTIME_MODULES
             ):
                 suffix = "/" + required
                 if not any(name.endswith(suffix) for name in names):

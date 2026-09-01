@@ -16,10 +16,12 @@ from importlib.resources import files
 from pathlib import Path
 from unittest import mock
 
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT))
 
-import fl_studio_mcp
+import fl_studio_mcp  # noqa: E402
+
 
 try:
     import tomllib
@@ -452,6 +454,7 @@ with mock.patch.object(
             [
                 "fl_studio_mcp",
                 "fl_studio_mcp._bridge",
+                "fl_studio_mcp.creation_pipeline",
                 "fl_studio_mcp.plugin_atlas",
                 "fl_studio_mcp.plugin_atlas_data",
                 "fl_studio_mcp.sound_selection",
@@ -608,7 +611,7 @@ with mock.patch.object(
 
     def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
         verifier = load_distribution_verifier()
-        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 111)
+        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 114)
         self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
 
 

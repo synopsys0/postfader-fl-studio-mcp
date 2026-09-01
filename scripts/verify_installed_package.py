@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_TOOL_COUNT = 111
+EXPECTED_TOOL_COUNT = 114
 EXPECTED_RESOURCE_COUNT = 8
 
 
@@ -31,9 +31,14 @@ def main(argv=None) -> int:
         bridge_source_path,
         expected_bridge_deployment,
     )
+    from fl_studio_mcp.creation_pipeline import models as creation_pipeline_models
+    from fl_studio_mcp.creation_pipeline import timing as creation_pipeline_timing
     from fl_studio_mcp.mcp_server import mcp
     from fl_studio_mcp.plugin_atlas import load_bundled_registry
-    from fl_studio_mcp.sound_selection import load_bundled_descriptors
+    from fl_studio_mcp.sound_selection import (
+        load_bundled_descriptors,
+        load_bundled_preset_metadata,
+    )
 
     failures: list[str] = []
     distribution = importlib.metadata.distribution("postfader-fl-studio-mcp")
@@ -74,6 +79,27 @@ def main(argv=None) -> int:
     except Exception as error:  # pragma: no cover - exercised in clean installs
         failures.append(
             "installed Sound Selection descriptors could not be loaded: %s" % error
+        )
+
+    try:
+        metadata = load_bundled_preset_metadata()
+        if metadata.metadata_version != "1.0":
+            failures.append(
+                "installed preset metadata version is not 1.0: %s"
+                % metadata.metadata_version
+            )
+        if not metadata.families and not metadata.records:
+            failures.append("installed preset metadata catalog is empty")
+        # Import representative strict contracts so a wheel that carries only
+        # the package directory marker cannot pass the installed smoke check.
+        if not creation_pipeline_models.CREATION_PIPELINE_SCHEMA_VERSION:
+            failures.append("installed creation-pipeline model module is empty")
+        if creation_pipeline_timing.RunTimingReport.__name__ != "RunTimingReport":
+            failures.append("installed creation-pipeline timing module is unavailable")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append(
+            "installed creation-pipeline or preset metadata resources could not be loaded: %s"
+            % error
         )
 
     bridge = bridge_source_path().read_bytes()

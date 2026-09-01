@@ -614,6 +614,30 @@ def read_acceptance_arguments(
             }
         },
         "sound_selection_history_status": {},
+        "postfader_creation_readiness": {
+            "request": {
+                "brief": "Generate a bounded read-only melody proposal.",
+                "scope": {
+                    "kind": "whole_project",
+                    "description": "Proposal only; do not change the project.",
+                },
+                "allowed_changes": ["composition"],
+                "completion_target": "One structured melody option.",
+                "interaction_policy": "plan_only",
+                "authorized_to_modify": False,
+            },
+            "plan": {
+                "plan_id": "acceptance-readiness-plan",
+                "operations": [
+                    {
+                        "operation_id": "acceptance-melody",
+                        "operation": "generate_melody",
+                        "bars": 1,
+                        "seed": 20,
+                    }
+                ],
+            },
+        },
         "postfader_validate_run": {
             "request": {
                 "brief": "Generate a bounded read-only melody proposal.",
@@ -639,6 +663,22 @@ def read_acceptance_arguments(
             },
         },
         "postfader_get_run": {"run_id": "0" * 32},
+        "processing_plan": {
+            "request": {
+                "request_id": "acceptance-processing-plan",
+                "completion_target": "restrained_first_pass",
+                "role": "lead",
+                "target": {
+                    "kind": "mixer_effect",
+                    "track_index": plugin_track_index,
+                    "slot_index": plugin_slot_index,
+                    "allow_master": plugin_track_index == 0,
+                },
+                "goal": "add_depth",
+                "processing_required": False,
+                "allow_master": plugin_track_index == 0,
+            }
+        },
         "compose_chord_progression": {
             "progression": ["I", "vi", "IV", "V7"],
         },
