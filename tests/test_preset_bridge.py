@@ -194,6 +194,51 @@ class PresetBridgeTests(unittest.TestCase):
         self.assertEqual(result["requested_preset_name"], "D")
         self.assertIsNotNone(selected)
 
+    def test_preset_owned_user_label_does_not_change_target_identity(self) -> None:
+        selected = self.install_effect(["A", "B", "C"])
+        original_get_plugin_name = bridge.plugins.getPluginName
+
+        def preset_owned_user_name(
+            index: int,
+            slot_index: int = -1,
+            user_name: bool = False,
+            use_global_index: bool = False,
+        ) -> str:
+            if user_name:
+                return selected.presets[selected.current_preset]
+            return original_get_plugin_name(
+                index, slot_index, user_name, use_global_index
+            )
+
+        with mock.patch.object(
+            bridge.plugins, "getPluginName", side_effect=preset_owned_user_name
+        ):
+            before, _ = exhaust(bridge.cmd_plugin_current_preset(dict(EFFECT)))
+            result, ticks = exhaust(
+                bridge.cmd_plugin_select_preset(
+                    {
+                        **EFFECT,
+                        "preset_name": "C",
+                        "target_fingerprint": before["target_fingerprint"],
+                        "max_navigation_steps": 3,
+                    }
+                )
+            )
+            after, _ = exhaust(bridge.cmd_plugin_current_preset(dict(EFFECT)))
+
+        self.assertEqual(before["plugin_user_name"], "A")
+        self.assertEqual(after["plugin_user_name"], "C")
+        self.assertEqual(after["target_fingerprint"], before["target_fingerprint"])
+        self.assertEqual(result["outcome"], "verified")
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["after"], {
+            "name": "C",
+            "index": 2,
+            "identity_status": "stable",
+        })
+        self.assertEqual(result["navigation_steps"], 1)
+        self.assertEqual(ticks, 1)
+
     def test_indexed_selection_proves_duplicate_occurrence_from_navigation_path(self) -> None:
         self.install_effect(["A", "Duplicate", "Duplicate"])
         result, ticks = exhaust(

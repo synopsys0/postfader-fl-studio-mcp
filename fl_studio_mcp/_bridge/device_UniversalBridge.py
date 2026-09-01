@@ -1194,12 +1194,11 @@ def _current_preset_state(index, slot, use_global_index):
     return {"name": name, "index": None, "identity_status": "stable"}
 
 
-def _plugin_target_fingerprint(target, name, user_name, param_count):
-    """Hash address plus live product identity, never the mutable preset."""
+def _plugin_target_fingerprint(target, name, _user_name, param_count):
+    """Hash the address and stable product identity, never mutable labels."""
     return _sha256_json({
         "target": _plugin_target_report(target),
         "plugin": name,
-        "plugin_user_name": user_name,
         "param_count": param_count,
     })
 
@@ -2883,7 +2882,11 @@ def cmd_mixer_set_volume(a):
     _expect_number(a, before, "mixer volume")
     undone = _save_undo("Universal Bridge: volume track %d" % i)
     after, verified = yield from _write_and_read_back(
-        lambda: mixer.setTrackVolume(i, value),
+        # Pass pickup mode explicitly.  Some FL builds do not apply the
+        # documented default consistently when the optional argument is
+        # omitted, which can leave a fader waiting for pickup while the
+        # setter still returns successfully.
+        lambda: mixer.setTrackVolume(i, value, PICKUP_NONE),
         lambda: _safe(lambda: mixer.getTrackVolume(i), None),
         lambda got: _near(got, value, MIXER_READBACK_TOLERANCE),
     )
@@ -2947,7 +2950,9 @@ def cmd_mixer_set_volume_db(a):
         high = 1.0
         for _step in range(16):
             candidate = (low + high) / 2.0
-            mixer.setTrackVolume(i, candidate)
+            # See cmd_mixer_set_volume: an explicit no-pickup mode is required
+            # for reliable scripted fader writes on all supported FL builds.
+            mixer.setTrackVolume(i, candidate, PICKUP_NONE)
             iterations += 1
             yield
             observed_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
@@ -5398,13 +5403,48 @@ def cmd_creative_prepare_piano_roll(a):
     before_channels = _selected_channels()
     before_pattern = _strict_integer(patterns.patternNumber(), "current pattern")
     window_id = getattr(midi, "widPianoRoll", None)
-    if window_id is None or not hasattr(ui, "showWindow"):
+    can_open_event_editor = (
+        hasattr(ui, "openEventEditor")
+        and hasattr(channels, "getRecEventId")
+        and hasattr(midi, "REC_Chan_PianoRoll")
+        and hasattr(midi, "EE_PR")
+    )
+    if not can_open_event_editor and (
+        window_id is None or not hasattr(ui, "showWindow")
+    ):
         raise ValueError("FL does not expose ui.showWindow(midi.widPianoRoll)")
     before_visible = _safe(lambda: bool(ui.getVisible(window_id)), None)
+    already_visible_target = (
+        before_visible is True
+        and before_channels == [channel]
+        and before_pattern == pattern
+    )
     patterns.jumpToPattern(pattern)
     channels.selectOneChannel(channel, True)
-    ui.showWindow(window_id)
+    # openEventEditor is a toggle in some FL builds.  Calling it again for an
+    # already-visible target therefore closes the Piano Roll, which is
+    # especially harmful between a note apply and its read-only persistence
+    # check.  Selection above is idempotent; leave the visible matching editor
+    # alone and only open it when the target or visibility actually differs.
+    if can_open_event_editor and not already_visible_target:
+        ui.openEventEditor(
+            channels.getRecEventId(channel) + midi.REC_Chan_PianoRoll,
+            midi.EE_PR,
+        )
+    elif not can_open_event_editor and not already_visible_target:
+        ui.showWindow(window_id)
     yield
+    # A build may report the event editor as closed after openEventEditor even
+    # though the target selection succeeded.  Recover the transient UI state
+    # with the non-toggle showWindow call before reporting the receipt.
+    after_visible = _safe(lambda: bool(ui.getVisible(window_id)), None)
+    if (
+        after_visible is False
+        and window_id is not None
+        and hasattr(ui, "showWindow")
+    ):
+        ui.showWindow(window_id)
+        yield
     if expected_target_fingerprint is not None:
         after_observation = _plugin_observation(target)
         if after_observation["target_fingerprint"] != expected_target_fingerprint:

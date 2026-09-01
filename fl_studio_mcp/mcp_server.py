@@ -388,11 +388,15 @@ an explicit, separate loop-based source and its reroll remains dispatch-only;
 never substitute it for an instrument-based request.
 
 Piano Roll mutations use FL's separate .pyscript runtime. First prepare the
-bridge, manually run Postfader Apply once, and confirm that step. Automatic
-calls verify the target channel and pattern, but hotkey dispatch is not note
-readback: application_verified remains false. Section-marker names are read
-back, but marker times are not. Automation helpers verify the controlled value
-while explicitly leaving automation-point existence unknown.
+bridge, manually run Postfader Apply once, and confirm that step; confirmation
+requires a request-scoped receipt from the script runtime. Automatic note calls
+verify the target, require an authenticated exact apply receipt, retarget the
+same Piano Roll, and run a second read-only persistence check. Only matching
+bounded receipts set application_verified=true. A shortcut without those
+receipts remains ambiguous and must not be retried. This is script-runtime
+readback, not controller-API note access. Section-marker names are read back,
+but marker times are not. Automation helpers verify the controlled value while
+explicitly leaving automation-point existence unknown.
 
 Plug-in insertion/removal/reordering, per-slot bypass/wet control, Playlist
 clip CRUD, live audio buffers, rendering, project save, playback speed, and a

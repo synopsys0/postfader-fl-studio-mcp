@@ -19,8 +19,11 @@ from fl_studio_mcp.contracts import ConnectionInfo, ProjectSummary, TransportSta
 from fl_studio_mcp.creative import (
     CreativeNote,
     NoteSequence,
+    PianoRollDispatch,
+    PianoRollScriptRuntimeEvidence,
     compose_melody,
     make_sequence,
+    note_digest,
 )
 from fl_studio_mcp.track_b_contracts import VerifiedPatternSelectionWrite
 
@@ -594,6 +597,47 @@ class ProductionRunTests(unittest.TestCase):
         self.assertEqual(result.blockers[-1].category, "unverified_mutation")
         self.assertEqual(result.attempted_count, 1)
         self.assertEqual(dispatch.call_count, 1)
+
+    def test_authenticated_piano_roll_runtime_receipt_can_continue_run(self) -> None:
+        notes = [CreativeNote(pitch=60, start_beats=0, duration_beats=1)]
+        digest = note_digest(notes)
+        evidence = PianoRollScriptRuntimeEvidence(
+            request_id="d" * 32,
+            operation="write_notes",
+            mode="replace",
+            requested_note_digest=digest,
+            expected_added_note_count=1,
+            ppq=96,
+            before_note_count=None,
+            score_note_count=1,
+            added_note_digest_sha256="e" * 64,
+            score_digest_sha256="f" * 64,
+            script_completed=True,
+            postcondition_verified=True,
+            receipt_path="/tmp/synthetic-piano-roll-receipt.json",
+            receipt_sha256="0" * 64,
+            persistence_check_completed=True,
+            persistence_check_verified=True,
+            verification_receipt_path=(
+                "/tmp/synthetic-piano-roll-persistence.json"
+            ),
+            verification_receipt_sha256="2" * 64,
+        )
+        receipt = PianoRollDispatch(
+            requested_at=datetime.now(timezone.utc),
+            request_id=evidence.request_id,
+            operation="write_notes",
+            mode="replace",
+            script_path="/tmp/Postfader_Apply.pyscript",
+            script_sha256="1" * 64,
+            requested_note_count=1,
+            requested_note_digest=digest,
+            status="script_runtime_verified",
+            application_verified=True,
+            script_runtime_evidence=evidence,
+        )
+
+        self.assertEqual(runs._classify_mutation_result(receipt), (True, True, ""))
 
     def test_unknown_mutation_outcome_stops_without_retrying_or_dispatching_later(
         self,

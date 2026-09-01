@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable, Sequence
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ..performance import TrackBController, TrackBInspector
 from ..plugin_atlas import AtlasRegistry, load_bundled_registry
@@ -119,6 +119,32 @@ class SoundSelectionApplyResult(SoundSelectionModel):
     history_written: int = Field(default=0, ge=0, le=128)
     warnings: tuple[str, ...] = Field(default=(), max_length=MAX_SERVICE_WARNINGS)
     blockers: tuple[str, ...] = Field(default=(), max_length=MAX_SERVICE_WARNINGS)
+
+    @field_validator("receipts", mode="before")
+    @classmethod
+    def _restore_track_b_warning_lists(cls, value: object) -> object:
+        """Keep serialized Track B receipts compatible with strict lists.
+
+        ``SoundSelectionModel`` freezes nested JSON arrays to tuples.  Track B
+        receipts intentionally retain their existing ``list[str]`` contract,
+        so restore only that boundary before Pydantic validates the nested
+        receipt.  This matters when a Production Run rehydrates a receipt
+        from ``model_dump(mode="python")``.
+        """
+
+        if not isinstance(value, (list, tuple)):
+            return value
+        normalized: list[object] = []
+        for item in value:
+            if isinstance(item, dict):
+                row = dict(item)
+                track_b_warnings = row.get("warnings")
+                if isinstance(track_b_warnings, tuple):
+                    row["warnings"] = list(track_b_warnings)
+                normalized.append(row)
+            else:
+                normalized.append(item)
+        return tuple(normalized)
 
     @property
     def selection_receipts(self) -> tuple[VerifiedPluginPresetSelection, ...]:

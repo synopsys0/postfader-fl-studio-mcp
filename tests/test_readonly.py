@@ -1795,6 +1795,24 @@ class VerifiedWriteTests(unittest.TestCase):
         # One undo point, and the project was never saved.
         self.assertEqual(len(_state.UNDO), 1)
 
+    def test_volume_writes_explicitly_disable_fader_pickup(self):
+        calls = []
+        real_set_volume = bridge.mixer.setTrackVolume
+
+        def record_set_volume(index, value, pickup_mode=-1):
+            calls.append(pickup_mode)
+            return real_set_volume(index, value, pickup_mode)
+
+        with mock.patch.object(bridge.mixer, "setTrackVolume", record_set_volume):
+            result = self.writer.set_mixer_volume_db(
+                track_index=3,
+                volume_db=-6.0,
+            )
+
+        self.assertIs(result.verified, True)
+        self.assertTrue(calls)
+        self.assertEqual(set(calls), {bridge.PICKUP_NONE})
+
     def test_volume_write_reports_an_ignored_write_instead_of_raising(self):
         with mock.patch.object(bridge.mixer, "setTrackVolume", lambda *a, **k: None):
             result = self.writer.set_mixer_volume(track_index=3, volume_normalized=0.65)

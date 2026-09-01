@@ -3383,10 +3383,12 @@ def _classify_mutation_result(
             return True, True, ""
         return True, False, "FL did not verify this mutation on readback."
     if isinstance(result, PianoRollDispatch):
+        if result.application_verified:
+            return True, True, ""
         return (
             False,
             False,
-            "FL Studio cannot provide authoritative Piano Roll note readback. Confirm the visible result before continuing this run.",
+            "FL did not return authenticated Piano Roll script-runtime evidence. Confirm the visible result before continuing this run.",
         )
     if isinstance(result, ArrangementMarkerReceipt):
         return (
