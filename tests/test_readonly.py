@@ -826,6 +826,25 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertEqual(detail.track.color_rgba, 0xFFFF8000)
         self.assertEqual(listing.tracks[1].color_rgba, 0xFFFF8000)
 
+    def test_nonfinite_silent_fader_db_is_unknown_in_inspect_and_list(self):
+        _state.TRACKS[3].volume = 0.0
+        real_get_volume = bridge.mixer.getTrackVolume
+
+        def silent_db(index, mode=0):
+            if index == 3 and mode == 1:
+                return float("-inf")
+            return real_get_volume(index, mode)
+
+        with mock.patch.object(bridge.mixer, "getTrackVolume", silent_db):
+            detail = self.inspector.inspect_mixer_track(3)
+            listing = self.inspector.list_mixer_tracks(only_used=False)
+
+        self.assertEqual(detail.track.volume_normalized, 0.0)
+        self.assertIsNone(detail.track.volume_db)
+        listed = next(track for track in listing.tracks if track.index == 3)
+        self.assertEqual(listed.volume_normalized, 0.0)
+        self.assertIsNone(listed.volume_db)
+
     def test_track_indices_are_validated_against_live_count(self):
         for index in (-1, len(_state.TRACKS), 999999):
             with self.subTest(index=index):
@@ -1843,6 +1862,27 @@ class VerifiedWriteTests(unittest.TestCase):
             self.writer.set_mixer_volume(track_index=-1, volume_normalized=0.5)
         self.assertEqual(self.dispatched(), [])
         self.assertEqual(_state.TRACKS[3].volume, 0.72)
+
+    def test_db_write_does_not_treat_nonfinite_silent_readback_as_a_guard_value(self):
+        _state.TRACKS[3].volume = 0.0
+        real_get_volume = bridge.mixer.getTrackVolume
+
+        def silent_db(index, mode=0):
+            if index == 3 and mode == 1:
+                return float("-inf")
+            return real_get_volume(index, mode)
+
+        undo_before = list(_state.UNDO)
+        with mock.patch.object(bridge.mixer, "getTrackVolume", silent_db):
+            with self.assertRaisesRegex(ValueError, r"found None"):
+                self.writer.set_mixer_volume_db(
+                    track_index=3,
+                    volume_db=-6.0,
+                    expected_before={"volume_db": -200.0},
+                )
+
+        self.assertEqual(_state.TRACKS[3].volume, 0.0)
+        self.assertEqual(_state.UNDO, undo_before)
 
     # -- mixer pan -------------------------------------------------------
 

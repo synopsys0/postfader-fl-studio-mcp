@@ -394,6 +394,23 @@ def _safe(fn, default=None):
         return default
 
 
+def _safe_db(fn):
+    """Read an FL dB getter, treating non-finite values as unknown.
+
+    FL reports a fader at normalized volume 0 as ``-inf`` dB.  That is a
+    truthful indication that no finite dB value exists, not a value that can
+    safely cross the JSON/typed-contract boundary.  Preserve the normalized
+    readback separately and publish this optional dB observation as ``None``.
+    """
+    value = _safe(fn, None)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return value if math.isfinite(float(value)) else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _fl_bool(value):
     """Normalize FL's integer boolean values at the wire boundary."""
     if value in (0, 1):
@@ -526,7 +543,7 @@ def _track_summary(i, with_slots=True, with_peaks=False):
         "index": i,
         "name": _safe(lambda: mixer.getTrackName(i), ""),
         "volume": _safe(lambda: mixer.getTrackVolume(i), None),
-        "volume_db": _safe(lambda: mixer.getTrackVolume(i, 1), None),
+        "volume_db": _safe_db(lambda: mixer.getTrackVolume(i, 1)),
         "pan": _safe(lambda: mixer.getTrackPan(i), None),
         "stereo_sep": _safe(lambda: mixer.getTrackStereoSep(i), None),
         "muted": _safe(lambda: mixer.isTrackMuted(i), None),
@@ -975,7 +992,7 @@ def cmd_mixer_peaks(a):
                 "track": i,
                 "name": name,
                 "volume": _safe(lambda: mixer.getTrackVolume(i), None),
-                "volume_db": _safe(lambda: mixer.getTrackVolume(i, 1), None),
+                "volume_db": _safe_db(lambda: mixer.getTrackVolume(i, 1)),
                 "muted": _safe(lambda: mixer.isTrackMuted(i), None),
                 "peak_l": left,
                 "peak_r": right,
@@ -2878,7 +2895,7 @@ def cmd_mixer_set_volume(a):
     value = _lean_value(a, "value", 0.0, 1.0)
     _check_session_precondition(a)
     before = _safe(lambda: mixer.getTrackVolume(i), None)
-    before_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+    before_db = _safe_db(lambda: mixer.getTrackVolume(i, 1))
     _expect_number(a, before, "mixer volume")
     undone = _save_undo("Universal Bridge: volume track %d" % i)
     after, verified = yield from _write_and_read_back(
@@ -2898,7 +2915,7 @@ def cmd_mixer_set_volume(a):
         "before": before,
         "after": after,
         "before_db": before_db,
-        "after_db": _safe(lambda: mixer.getTrackVolume(i, 1), None),
+        "after_db": _safe_db(lambda: mixer.getTrackVolume(i, 1)),
         "verified": verified,
         **_precondition_report(a),
     }
@@ -2911,7 +2928,7 @@ def cmd_mixer_set_volume_db(a):
     tolerance = _finite_number(a.get("tolerance_db", 0.1), "tolerance_db", 0.01, 1.0)
     _check_session_precondition(a)
     before = _safe(lambda: mixer.getTrackVolume(i), None)
-    before_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+    before_db = _safe_db(lambda: mixer.getTrackVolume(i, 1))
 
     present, expected = _expected_before(a)
     if present:
@@ -2955,7 +2972,7 @@ def cmd_mixer_set_volume_db(a):
             mixer.setTrackVolume(i, candidate, PICKUP_NONE)
             iterations += 1
             yield
-            observed_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+            observed_db = _safe_db(lambda: mixer.getTrackVolume(i, 1))
             observed = _safe(lambda: mixer.getTrackVolume(i), None)
             after = observed
             after_db = observed_db
@@ -2971,7 +2988,7 @@ def cmd_mixer_set_volume_db(a):
         # Preserve the later-idle-tick proof even for a no-op request.
         yield
         after = _safe(lambda: mixer.getTrackVolume(i), None)
-        after_db = _safe(lambda: mixer.getTrackVolume(i, 1), None)
+        after_db = _safe_db(lambda: mixer.getTrackVolume(i, 1))
 
     verified = after_db is not None and _near(float(after_db), wanted, tolerance)
     return {
