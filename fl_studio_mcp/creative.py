@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -53,6 +53,9 @@ from .verified_writer import (
     WRITES_DISABLED_HELP,
     VerifiedWritesUnavailable,
 )
+
+if TYPE_CHECKING:
+    from .creation_pipeline.sound_characteristics import SoundAwareCompositionProfile
 
 
 MAX_CREATIVE_NOTES = 4096
@@ -220,6 +223,19 @@ def make_sequence(
     )
 
 
+def _apply_sound_profile(
+    sequence: NoteSequence,
+    sound_profile: "SoundAwareCompositionProfile | None",
+) -> NoteSequence:
+    """Apply optional sound-aware rules without changing legacy callers."""
+
+    if sound_profile is None:
+        return sequence
+    from .creation_pipeline.composition_adaptation import adapt_note_sequence
+
+    return adapt_note_sequence(sequence, sound_profile).sequence
+
+
 # ---------------------------------------------------------------------------
 # Pitch collections and deterministic composition
 # ---------------------------------------------------------------------------
@@ -374,6 +390,7 @@ def compose_chord_progression(
     voicing: Literal["close", "open", "drop2"] = "close",
     velocity: float = 0.78,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= len(progression) <= 64:
         raise ValueError("progression must contain 1..64 chords")
@@ -420,12 +437,15 @@ def compose_chord_progression(
                     velocity=velocity,
                 )
             )
-    return make_sequence(
-        name="Chord progression " + "-".join(progression),
-        generator="chord_progression",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name="Chord progression " + "-".join(progression),
+            generator="chord_progression",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 
@@ -442,6 +462,7 @@ def compose_melody(
     contour: Literal["balanced", "rising", "falling", "arch", "wave"] = "balanced",
     seed: int = 0,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= bars <= 64 or not 1 <= beats_per_bar <= 16:
         raise ValueError("bars and beats_per_bar must be within 1..64 and 1..16")
@@ -503,14 +524,17 @@ def compose_melody(
             )
         )
         last_end = start + duration
-    return make_sequence(
-        name=f"{collection} melody",
-        generator="melody",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        numerator=beats_per_bar,
-        seed=seed,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name=f"{collection} melody",
+            generator="melody",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            numerator=beats_per_bar,
+            seed=seed,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 
@@ -525,6 +549,7 @@ def compose_bassline(
     style: Literal["roots", "eighths", "octaves", "walking"] = "roots",
     seed: int = 0,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= len(progression) <= 64:
         raise ValueError("progression must contain 1..64 chords")
@@ -586,13 +611,16 @@ def compose_bassline(
                         velocity=round(0.72 + rng.uniform(-0.06, 0.06), 4),
                     )
                 )
-    return make_sequence(
-        name=f"{style} bassline",
-        generator="bassline",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        seed=seed,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name=f"{style} bassline",
+            generator="bassline",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            seed=seed,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 

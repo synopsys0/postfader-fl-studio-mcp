@@ -18,13 +18,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Literal, Mapping
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import AliasChoices, Field, ValidationError, model_validator
 
 from ..host_config import fl_studio_user_data_dir
 from .models import (
     SOUND_SELECTION_SCHEMA_VERSION,
     DescriptorIdentifier,
     Digest,
+    FeedbackPersistence,
     HistoryVerdict,
     RoleIdentifier,
     SoundSelectionModel,
@@ -88,10 +89,20 @@ class SoundHistoryFeedback(SoundSelectionModel):
     feedback_id: str = Field(min_length=1, max_length=128)
     palette_id: str = Field(min_length=1, max_length=128)
     role_id: RoleIdentifier | None = None
+    assignment_id: str | None = Field(default=None, max_length=128)
     product_id: str | None = Field(default=None, max_length=128)
     preset_identity_digest: Digest | None = None
     verdict: HistoryVerdict
     descriptors: tuple[DescriptorIdentifier, ...] = Field(default=(), max_length=64)
+    desired_descriptors: tuple[DescriptorIdentifier, ...] = Field(default=(), max_length=64)
+    undesired_descriptors: tuple[DescriptorIdentifier, ...] = Field(default=(), max_length=64)
+    hard_exclusion: bool = False
+    hard_preference: bool = False
+    persistence: FeedbackPersistence = Field(
+        default="persist",
+        validation_alias=AliasChoices("persistence", "persistence_choice"),
+        serialization_alias="persistence",
+    )
     note: str | None = Field(default=None, max_length=MAX_HISTORY_NOTE)
     recorded_at: datetime
 
@@ -103,6 +114,15 @@ class SoundHistoryFeedback(SoundSelectionModel):
             )
         if self.note is not None and not self.note.strip():
             raise ValueError("feedback note must contain text when supplied")
+        if self.hard_exclusion and self.hard_preference:
+            raise ValueError("feedback cannot be both a hard exclusion and hard preference")
+        if self.hard_exclusion or self.hard_preference:
+            if self.verdict == "neutral":
+                raise ValueError("hard feedback requires an accepted or rejected verdict")
+        desired = {item.casefold() for item in self.desired_descriptors}
+        undesired = {item.casefold() for item in self.undesired_descriptors}
+        if desired.intersection(undesired):
+            raise ValueError("desired and undesired feedback descriptors cannot overlap")
         return self
 
 
@@ -576,16 +596,22 @@ class LocalSoundSelectionHistory:
         palette_id: str,
         verdict: HistoryVerdict,
         role_id: str | None = None,
+        assignment_id: str | None = None,
         product_id: str | None = None,
         preset_identity_digest: str | None = None,
         descriptors: Iterable[str] = (),
+        desired_descriptors: Iterable[str] = (),
+        undesired_descriptors: Iterable[str] = (),
+        hard_exclusion: bool = False,
+        hard_preference: bool = False,
+        persistence: FeedbackPersistence = "persist",
         note: str | None = None,
         now: datetime | None = None,
         persist: bool = True,
     ) -> bool:
         """Store explicit feedback and update matching aggregate counters."""
 
-        if not persist:
+        if not persist or persistence in {"none", "session"}:
             return False
         if not isinstance(palette_id, str) or not palette_id.strip():
             raise ValueError("palette_id must contain text")
@@ -594,6 +620,10 @@ class LocalSoundSelectionHistory:
             if not isinstance(role_id, str) or not role_id.strip():
                 raise ValueError("role_id must contain text when supplied")
             role_id = role_id.strip()
+        if assignment_id is not None:
+            if not isinstance(assignment_id, str) or not assignment_id.strip():
+                raise ValueError("assignment_id must contain text when supplied")
+            assignment_id = assignment_id.strip()
         if product_id is not None:
             if not isinstance(product_id, str) or not product_id.strip():
                 raise ValueError("product_id must contain text when supplied")
@@ -607,9 +637,27 @@ class LocalSoundSelectionHistory:
         if preset_identity_digest is not None:
             preset_identity_digest = preset_identity_digest.lower()
         stamp = _ensure_utc(now)
-        tags = tuple(sorted({item.strip() for item in descriptors if item.strip()}))
+        tags = tuple(
+            sorted({item.strip() for item in descriptors if isinstance(item, str) and item.strip()})
+        )
         if len(tags) > 64:
             raise ValueError("feedback descriptors exceed history bounds")
+        desired_tags = tuple(
+            sorted({item.strip() for item in desired_descriptors if isinstance(item, str) and item.strip()})
+        )
+        undesired_tags = tuple(
+            sorted({item.strip() for item in undesired_descriptors if isinstance(item, str) and item.strip()})
+        )
+        if len(desired_tags) > 64 or len(undesired_tags) > 64:
+            raise ValueError("feedback descriptor preferences exceed history bounds")
+        if set(item.casefold() for item in desired_tags).intersection(
+            item.casefold() for item in undesired_tags
+        ):
+            raise ValueError("desired and undesired feedback descriptors cannot overlap")
+        if hard_exclusion and hard_preference:
+            raise ValueError("feedback cannot be both a hard exclusion and hard preference")
+        if (hard_exclusion or hard_preference) and verdict == "neutral":
+            raise ValueError("hard feedback requires an accepted or rejected verdict")
         clean_note = None if note is None else note.strip()[:MAX_HISTORY_NOTE]
         with self._lock:
             document = self._require_writable_locked()
@@ -622,9 +670,12 @@ class LocalSoundSelectionHistory:
                 {
                     "palette_id": palette_id,
                     "role_id": role_id,
+                    "assignment_id": assignment_id,
                     "product_id": product_id,
                     "preset_identity_digest": preset_identity_digest,
                     "verdict": verdict,
+                    "hard_exclusion": hard_exclusion,
+                    "hard_preference": hard_preference,
                     "recorded_at": stamp.isoformat(),
                 }
             )[:24]
@@ -632,10 +683,16 @@ class LocalSoundSelectionHistory:
                 feedback_id=feedback_id,
                 palette_id=palette_id,
                 role_id=role_id,
+                assignment_id=assignment_id,
                 product_id=product_id,
                 preset_identity_digest=preset_identity_digest,
                 verdict=verdict,
                 descriptors=tags,
+                desired_descriptors=desired_tags,
+                undesired_descriptors=undesired_tags,
+                hard_exclusion=hard_exclusion,
+                hard_preference=hard_preference,
+                persistence=persistence,
                 note=clean_note or None,
                 recorded_at=stamp,
             )

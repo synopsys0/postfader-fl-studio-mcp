@@ -67,6 +67,12 @@ Core identity roles are anchors by default. Typical anchors are the main chords,
 main lead, primary bass, sub-bass, vocal chop, and primary drum kit. Locked
 roles and preserved existing assignments cannot be replaced accidentally.
 
+`lock_existing` protects an assignment that was already present before
+planning. `anchor_after_selection` stabilizes a newly selected assignment for
+later sections. They are intentionally different: a new palette can establish
+an anchor without claiming that the role was previously locked, and a locked
+existing role is not silently replaced by a variation.
+
 For a later section, Sound Selection normally develops the identity through an
 extra layer, changed register or voicing, complementary preset family,
 countermelody, articulation, percussion, texture, or section-specific
@@ -128,6 +134,30 @@ The public `sound_selection_apply` tool requires the current 32-character
 lowercase `session_fingerprint` from a recent live read; omission is rejected
 by MCP schema validation before the mutating service runs. Task-scoped
 Production Runs capture and forward that fingerprint automatically.
+
+## Candidate discovery and metadata confidence
+
+Palette planning uses bounded preset-candidate discovery across later pages of
+the reported catalog when the first page is not enough. It records pages
+visited, requested/observed coverage, truncation, duplicate identities, and
+any exact requested identity that could not be found. A larger catalog is not
+silently treated as complete, and a candidate's page coverage is evidence
+about discovery rather than evidence that the preset was heard.
+
+The bundled `preset-metadata-v1.json` resource contains conservative family
+annotations and may contain reviewed exact records. User-local reviewed
+metadata is a separate optional layer. Every descriptor, articulation,
+register, envelope, mono/poly, and role claim carries provenance and a
+confidence level. A normalized preset-name token can be useful for ranking,
+but it cannot carry high confidence; absence of metadata is reported as
+`metadata_insufficient` or `unknown`, not as a negative sound judgment.
+
+Preference provenance is kept distinct from metadata: an explicit user
+preference or explicit per-role feedback can be a hard constraint, while a
+model suggestion, history preference, or system default remains soft. Feedback
+updates only the addressed role/descriptor and never silently changes another
+assignment. See [Creation Pipeline](creation-pipeline.md) for the immutable
+characteristic and outcome contracts.
 
 ## Drum kits and pad maps
 
@@ -217,6 +247,14 @@ never changes FL or history. An authorized run enables the existing session
 write boundary once, applies in order, and keeps immutable receipts. Runs are
 bounded and non-atomic: earlier verified assignments remain recorded if a later
 selection is unverified, and there is no automatic retry or rollback.
+
+The same run can continue from selected sounds into sound-aware composition.
+`adapt_note_sequence` carries selected-sound characteristics and reports the
+register, articulation, envelope, density, and practical-polyphony decisions
+used for that role. Metadata confidence is preserved in the adaptation; weak
+or missing evidence produces a limitation, not an audible-quality claim. If
+the request also includes processing, effect coverage and semantic processing
+are reported separately from palette selection and arrangement delivery.
 
 ## What FL Studio cannot prove
 

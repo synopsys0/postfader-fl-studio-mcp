@@ -15,7 +15,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from ..plugin_atlas.models import ProductKnowledge
 from ..track_b_contracts import PluginTarget
@@ -70,6 +70,26 @@ PresetDescriptorProvenance = Literal[
     "unknown",
 ]
 HistoryVerdict = Literal["accepted", "rejected", "neutral"]
+ConfidenceLevel = Literal["high", "medium", "low", "metadata_insufficient", "unknown"]
+PreferenceOrigin = Literal[
+    "user_explicit",
+    "user_profile_explicit",
+    "explicit_feedback",
+    "model_inferred",
+    "model_suggested",
+    "history_preference",
+    "system_default",
+]
+PreferenceStrength = Literal["hard", "soft"]
+FeedbackPersistence = Literal["persist", "session", "none"]
+CandidateMetadataProvenance = Literal[
+    "bundled_reviewed",
+    "user_local_reviewed",
+    "name_inferred",
+    "atlas_product",
+    "unknown",
+]
+MonoPolyBehavior = Literal["mono", "poly", "both", "unknown"]
 
 # A drum role must be safe to plan even when the caller does not know which
 # pattern style will be rendered later.  These are the minimum roles used by
@@ -202,6 +222,158 @@ class SoundSelectionPolicy(SoundSelectionModel):
         return self.continuity_weight, self.novelty_weight
 
 
+class PreferenceDirective(SoundSelectionModel):
+    """One provenance-aware product, preset, or descriptor preference.
+
+    The older request fields (``product_preferences`` and
+    ``preset_preferences``) remain explicit user hard constraints.  New
+    callers can use this record when a preference came from a profile,
+    history, or a connected model.  Scoring is deliberately responsible for
+    enforcing the origin/strength policy; merely labelling a model suggestion
+    as ``hard`` never turns it into a user constraint.
+    """
+
+    value: str = Field(min_length=1, max_length=MAX_SOUND_TEXT)
+    dimension: Literal["product", "preset", "descriptor"] = Field(
+        default="preset",
+        validation_alias=AliasChoices("dimension", "kind", "type"),
+        serialization_alias="dimension",
+    )
+    origin: PreferenceOrigin = Field(
+        default="system_default",
+        validation_alias=AliasChoices("origin", "source", "provenance"),
+        serialization_alias="origin",
+    )
+    strength: PreferenceStrength = Field(
+        default="soft",
+        validation_alias=AliasChoices("strength", "preference_strength"),
+        serialization_alias="strength",
+    )
+    role_id: RoleIdentifier | None = None
+    rationale: str | None = Field(default=None, max_length=512)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_user_strength(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "origin" not in data:
+            for alias in ("source", "provenance"):
+                if alias in data:
+                    data["origin"] = data[alias]
+                    data.pop(alias, None)
+                    break
+        if "hard" in data:
+            hard = data.pop("hard")
+            if type(hard) is not bool:
+                raise ValueError("preference directive hard must be a boolean")
+            if "strength" not in data and "preference_strength" not in data:
+                data["strength"] = "hard" if hard else "soft"
+        if "strength" in data or "preference_strength" in data:
+            return data
+        origin = data.get("origin")
+        if origin in {"user_explicit", "user_profile_explicit", "explicit_feedback"}:
+            data["strength"] = "hard"
+            return data
+        return data
+
+    @model_validator(mode="after")
+    def validate_directive(self) -> "PreferenceDirective":
+        if not self.value.strip():
+            raise ValueError("preference directive value must contain text")
+        if self.rationale is not None and not self.rationale.strip():
+            raise ValueError("preference directive rationale must contain text")
+        return self
+
+    @property
+    def is_hard_constraint(self) -> bool:
+        """Whether this directive is eligible for hard enforcement.
+
+        Explicit user/profile direction and explicit feedback may be hard;
+        model and history suggestions are always soft, even if a caller
+        accidentally requests ``strength='hard'``.
+        """
+
+        return self.strength == "hard" and self.origin in {
+            "user_explicit",
+            "user_profile_explicit",
+            "explicit_feedback",
+        }
+
+    @property
+    def is_soft_preference(self) -> bool:
+        return not self.is_hard_constraint
+
+    @property
+    def hard(self) -> bool:
+        return self.is_hard_constraint
+
+
+class SoundShortlistItem(SoundSelectionModel):
+    """Bounded explainability row for one ranked candidate."""
+
+    candidate_id: SoundId | None = None
+    identity_digest: Digest
+    score: float
+    score_margin: float = Field(default=0.0, ge=0.0)
+    user_direction_score: float = Field(default=0.0)
+    role_fit_score: float = Field(default=0.0)
+    cohesion_score: float = Field(default=0.0)
+    continuity_score: float = Field(default=0.0)
+    recency_score: float = Field(default=0.0)
+    feedback_score: float = Field(default=0.0)
+    verification_confidence_score: float = Field(default=0.0)
+    metadata_confidence: ConfidenceLevel = "metadata_insufficient"
+    role_fit_confidence: ConfidenceLevel = "unknown"
+    preset_identity_confidence: ConfidenceLevel = "unknown"
+    total_confidence: ConfidenceLevel = "unknown"
+    eligible: bool = True
+    disqualification_reasons: tuple[str, ...] = Field(default=(), max_length=32)
+    rationale: str = Field(default="", max_length=1024)
+
+    @property
+    def confidence(self) -> ConfidenceLevel:
+        """Compatibility alias for consumers that use one confidence value."""
+
+        return self.total_confidence
+
+
+class SoundRankedShortlist(SoundSelectionModel):
+    """Winner plus a bounded set of alternatives for one requested role."""
+
+    role_id: RoleIdentifier
+    items: tuple[SoundShortlistItem, ...] = Field(default=(), max_length=4)
+    winner_candidate_id: SoundId | None = None
+    winner_score: float | None = None
+    score_margin: float | None = Field(default=None, ge=0.0)
+    narrow_margin: bool = False
+    metadata_weak: bool = False
+    rationale: str = Field(default="", max_length=1024)
+
+    @model_validator(mode="after")
+    def validate_shortlist(self) -> "SoundRankedShortlist":
+        ids = [item.candidate_id or item.identity_digest for item in self.items]
+        if len(set(ids)) != len(ids):
+            raise ValueError("shortlist candidate identities must be unique")
+        if self.items and self.winner_candidate_id is not None:
+            first = self.items[0]
+            if self.winner_candidate_id not in {
+                first.candidate_id,
+                first.identity_digest,
+            }:
+                raise ValueError("winner_candidate_id must identify the first shortlist item")
+        return self
+
+    @property
+    def winner(self) -> SoundShortlistItem | None:
+        return self.items[0] if self.items else None
+
+    @property
+    def alternatives(self) -> tuple[SoundShortlistItem, ...]:
+        return self.items[1:]
+
+
 RoleType = Annotated[str, Field(min_length=1, max_length=64)]
 Register = Literal["low", "low_mid", "mid", "mid_high", "high", "full", "unknown"]
 
@@ -219,6 +391,12 @@ class SoundRoleRequest(SoundSelectionModel):
     excluded_products: tuple[str, ...] = Field(default=(), max_length=32)
     preferred_presets: tuple[str, ...] = Field(default=(), max_length=32)
     excluded_presets: tuple[str, ...] = Field(default=(), max_length=32)
+    preference_directives: tuple[PreferenceDirective, ...] = Field(
+        default=(),
+        max_length=64,
+        validation_alias=AliasChoices("preference_directives", "preferences"),
+        serialization_alias="preference_directives",
+    )
     desired_descriptors: tuple[DescriptorIdentifier, ...] = Field(
         default=(), max_length=MAX_DESCRIPTORS
     )
@@ -242,6 +420,12 @@ class SoundRoleRequest(SoundSelectionModel):
     source_roles: tuple[RoleIdentifier, ...] = Field(default=(), max_length=16)
     technique_ids: tuple[str, ...] = Field(default=(), max_length=32)
     lock_existing: bool = False
+    # ``anchor_after_selection`` is intentionally distinct from
+    # ``lock_existing``.  The former stabilizes a newly selected identity for
+    # later sections; the latter protects a pre-run identity and is only a
+    # hard invariant when the caller explicitly asks for it.
+    anchor_after_selection: bool = False
+    preserve_across_sections: bool = True
     allow_layering: bool = False
     allow_section_variation: bool = True
     continuity_priority: float = Field(default=0.60, ge=0.0, le=1.0)
@@ -297,6 +481,17 @@ class SoundRoleRequest(SoundSelectionModel):
                 raise ValueError(f"{label} entries must contain non-empty text")
             if len(set(item.casefold() for item in values)) != len(values):
                 raise ValueError(f"{label} entries must not contain duplicates")
+        directive_keys = {
+            (
+                item.dimension,
+                item.value.casefold(),
+                item.origin,
+                item.strength,
+            )
+            for item in self.preference_directives
+        }
+        if len(directive_keys) != len(self.preference_directives):
+            raise ValueError("preference_directives must not contain duplicates")
         if set(item.casefold() for item in self.desired_descriptors).intersection(
             item.casefold() for item in self.undesired_descriptors
         ):
@@ -306,6 +501,10 @@ class SoundRoleRequest(SoundSelectionModel):
     @property
     def register(self) -> Register | None:
         return self.register_
+
+    @property
+    def preferences(self) -> tuple[PreferenceDirective, ...]:
+        return self.preference_directives
 
 
 class SoundSelectionRequest(SoundSelectionModel):
@@ -321,6 +520,12 @@ class SoundSelectionRequest(SoundSelectionModel):
     product_exclusions: tuple[str, ...] = Field(default=(), max_length=64)
     preset_preferences: tuple[str, ...] = Field(default=(), max_length=64)
     preset_exclusions: tuple[str, ...] = Field(default=(), max_length=64)
+    preference_directives: tuple[PreferenceDirective, ...] = Field(
+        default=(),
+        max_length=128,
+        validation_alias=AliasChoices("preference_directives", "preferences"),
+        serialization_alias="preference_directives",
+    )
     stock_only: bool = False
     third_party_allowed: bool = True
     preserve_existing_roles: bool = True
@@ -353,6 +558,12 @@ class SoundSelectionRequest(SoundSelectionModel):
             return self
         return self
 
+    @property
+    def preferences(self) -> tuple[PreferenceDirective, ...]:
+        """Compatibility accessor for the shorter ``preferences`` spelling."""
+
+        return self.preference_directives
+
 
 class DescriptorEvidence(SoundSelectionModel):
     """One descriptor with source and confidence, never an audio claim."""
@@ -362,6 +573,18 @@ class DescriptorEvidence(SoundSelectionModel):
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     source_id: str | None = Field(default=None, max_length=MAX_SOUND_ID)
     detail: str | None = Field(default=None, max_length=512)
+    # Keep the source wording for explainability while ``descriptor`` stays
+    # the controlled normalized identifier used by ranking.
+    original_term: str | None = Field(
+        default=None,
+        max_length=128,
+        validation_alias=AliasChoices("original_term", "original_descriptor", "source_term"),
+        serialization_alias="original_term",
+    )
+
+    @property
+    def normalized_descriptor(self) -> str:
+        return self.descriptor
 
 
 class SoundScoreBreakdown(SoundSelectionModel):
@@ -420,6 +643,10 @@ class SoundCandidate(SoundSelectionModel):
     role_ids: tuple[str, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     registers: tuple[Register, ...] = Field(default=(), max_length=8)
     articulations: tuple[str, ...] = Field(default=(), max_length=32)
+    envelope_behavior: tuple[str, ...] = Field(default=(), max_length=16)
+    mono_poly: MonoPolyBehavior = "unknown"
+    known_limitations: tuple[str, ...] = Field(default=(), max_length=32)
+    characteristic_provenance: CandidateMetadataProvenance = "unknown"
     atlas_product: ProductKnowledge | None = None
     atlas_product_id: str | None = Field(default=None, max_length=MAX_SOUND_ID)
     atlas_categories: tuple[str, ...] = Field(default=(), max_length=32)
@@ -451,7 +678,17 @@ class SoundCandidate(SoundSelectionModel):
     rejected_count: int = Field(default=0, ge=0)
     score: float = 0.0
     score_breakdown: SoundScoreBreakdown = Field(default_factory=SoundScoreBreakdown)
-    confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+    confidence: ConfidenceLevel = "unknown"
+    metadata_confidence: ConfidenceLevel = "metadata_insufficient"
+    role_fit_confidence: ConfidenceLevel = "unknown"
+    preset_identity_confidence: ConfidenceLevel = "unknown"
+    total_confidence: ConfidenceLevel = "unknown"
+    metadata_provenance: CandidateMetadataProvenance = "unknown"
+    metadata_source_id: str | None = Field(default=None, max_length=128)
+    metadata_family_id: str | None = Field(default=None, max_length=128)
+    score_margin: float | None = Field(default=None, ge=0.0)
+    shortlist: tuple[SoundShortlistItem, ...] = Field(default=(), max_length=4)
+    preference_provenance: tuple[PreferenceOrigin, ...] = Field(default=(), max_length=32)
     warnings: tuple[str, ...] = Field(default=(), max_length=32)
     disqualification_reasons: tuple[str, ...] = Field(default=(), max_length=32)
 
@@ -483,11 +720,25 @@ class SoundCandidate(SoundSelectionModel):
     def is_loop_starter(self) -> bool:
         return self.source_strategy == "loop_starter"
 
+    @property
+    def selection_confidence(self) -> ConfidenceLevel:
+        """Compatibility alias for the total confidence level."""
+
+        return self.total_confidence if self.total_confidence != "unknown" else self.confidence
+
     @model_validator(mode="after")
     def validate_candidate_lists(self) -> "SoundCandidate":
-        descriptor_keys = {
-            item.casefold().replace("_", "-") for item in self.descriptors
-        }
+        try:
+            from .descriptors import normalize_descriptor
+
+            descriptor_keys = {
+                normalize_descriptor(item).normalized_descriptor
+                for item in self.descriptors
+            }
+        except (ImportError, TypeError, ValueError):
+            descriptor_keys = {
+                item.casefold().replace("_", "-") for item in self.descriptors
+            }
         if len(descriptor_keys) != len(self.descriptors):
             raise ValueError("candidate descriptors must not contain duplicates")
         return self
@@ -575,6 +826,38 @@ class DrumKitCandidate(SoundSelectionModel):
     warnings: tuple[str, ...] = Field(default=(), max_length=32)
 
 
+class SoundPresetDiscoveryCoverage(SoundSelectionModel):
+    """Bounded, truthful coverage evidence attached to live inventories."""
+
+    reported_preset_count: int | None = Field(
+        default=None, ge=0, le=MAX_REPORTED_PRESET_COUNT
+    )
+    pages_examined: tuple[int, ...] = Field(default=(), max_length=32)
+    unique_presets_considered: int = Field(default=0, ge=0, le=MAX_CANDIDATES)
+    coverage_mode: Literal["complete", "stratified", "targeted", "minimal"] = "minimal"
+    exact_preference_matches: tuple[str, ...] = Field(default=(), max_length=64)
+    accepted_history_candidates: tuple[str, ...] = Field(
+        default=(), max_length=MAX_CANDIDATES
+    )
+    anchor_candidates: tuple[str, ...] = Field(default=(), max_length=MAX_CANDIDATES)
+    excluded_candidates: tuple[str, ...] = Field(default=(), max_length=MAX_CANDIDATES)
+    seed_derived_candidates: tuple[str, ...] = Field(
+        default=(), max_length=MAX_CANDIDATES
+    )
+    omitted_count: int = Field(default=0, ge=0, le=MAX_REPORTED_PRESET_COUNT)
+    limitations: tuple[str, ...] = Field(default=(), max_length=32)
+
+    @property
+    def pages(self) -> tuple[int, ...]:
+        """Compatibility spelling for callers that call page starts pages."""
+
+        return self.pages_examined
+
+    @property
+    def unique_count(self) -> int:
+        return self.unique_presets_considered
+
+
 class SoundTargetInventory(SoundSelectionModel):
     """A loaded generator/effect and bounded preset/pad observations."""
 
@@ -586,11 +869,22 @@ class SoundTargetInventory(SoundSelectionModel):
     product_origin: Literal["stock", "third_party", "unknown"] = "unknown"
     current_preset: str | None = Field(default=None, max_length=MAX_SOUND_NAME)
     current_preset_index: int | None = Field(default=None, ge=0, lt=MAX_REPORTED_PRESET_COUNT)
+    reported_parameter_count: int | None = Field(default=None, ge=0, le=1_000_000)
     # FL may report a very large catalog.  ``preset_names`` remains bounded to
     # one page; this field preserves the reported count without enumerating it.
     preset_count: int | None = Field(default=None, ge=0, le=MAX_REPORTED_PRESET_COUNT)
     preset_names: tuple[str, ...] = Field(default=(), max_length=MAX_PRESETS)
     preset_indices: tuple[int, ...] = Field(default=(), max_length=MAX_PRESETS)
+    # Optional quality-era discovery evidence.  Keeping this on the loaded
+    # target means a planner can explain whether the page was complete or a
+    # bounded sample without treating a page as the whole catalog.
+    preset_discovery_coverage: "SoundPresetDiscoveryCoverage | None" = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "preset_discovery_coverage", "preset_coverage", "discovery_coverage"
+        ),
+        serialization_alias="preset_discovery_coverage",
+    )
     descriptors: tuple[DescriptorIdentifier, ...] = Field(default=(), max_length=MAX_DESCRIPTORS)
     descriptor_provenance: tuple[DescriptorEvidence, ...] = Field(
         default=(), max_length=MAX_DESCRIPTORS * 2
@@ -599,6 +893,12 @@ class SoundTargetInventory(SoundSelectionModel):
     role_ids: tuple[str, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     registers: tuple[Register, ...] = Field(default=(), max_length=8)
     articulations: tuple[str, ...] = Field(default=(), max_length=32)
+    envelope_behavior: tuple[str, ...] = Field(default=(), max_length=16)
+    mono_poly: MonoPolyBehavior = "unknown"
+    known_limitations: tuple[str, ...] = Field(default=(), max_length=32)
+    # These are bounded observations, not audio-analysis claims.  Their
+    # provenance lets a downstream composition layer choose safe defaults.
+    characteristic_provenance: CandidateMetadataProvenance = "unknown"
     brightness: float | None = Field(default=None, ge=0.0, le=1.0)
     width: float | None = Field(default=None, ge=0.0, le=1.0)
     motion: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -638,7 +938,12 @@ class SoundTargetInventory(SoundSelectionModel):
             raise ValueError("preset_count cannot be below the bounded preset page length")
         return self
 
-    def candidates(self, *, max_presets: int = MAX_PRESETS) -> tuple[SoundCandidate, ...]:
+    def candidates(
+        self,
+        *,
+        max_presets: int = MAX_PRESETS,
+        metadata_catalog: Any = None,
+    ) -> tuple[SoundCandidate, ...]:
         """Expand this target into a bounded deterministic candidate page."""
 
         if type(max_presets) is not int or not (1 <= max_presets <= MAX_PRESETS):
@@ -716,6 +1021,10 @@ class SoundTargetInventory(SoundSelectionModel):
                     role_ids=self.role_ids,
                     registers=self.registers,
                     articulations=self.articulations,
+                    envelope_behavior=self.envelope_behavior,
+                    mono_poly=self.mono_poly,
+                    known_limitations=self.known_limitations,
+                    characteristic_provenance=self.characteristic_provenance,
                     atlas_product=self.atlas_product,
                     atlas_product_id=self.atlas_product_id,
                     atlas_categories=self.atlas_categories,
@@ -743,6 +1052,15 @@ class SoundTargetInventory(SoundSelectionModel):
                     warnings=self.warnings,
                 )
             )
+        if metadata_catalog is not None:
+            try:
+                from .metadata import enrich_candidate_metadata
+
+                rows = [enrich_candidate_metadata(item, metadata_catalog) for item in rows]
+            except (ImportError, TypeError, ValueError):
+                # Metadata is an optional ranking aid; a malformed optional
+                # layer must not make live inventory disappear.
+                pass
         return tuple(rows)
 
 
@@ -762,6 +1080,9 @@ class SoundInventory(SoundSelectionModel):
     loaded_effects: tuple[SoundTargetInventory, ...] = Field(default=(), max_length=MAX_CANDIDATES)
     current_palette_id: str | None = Field(default=None, max_length=MAX_SOUND_ID)
     locked_roles: tuple[str, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
+    preset_discovery_coverage: tuple["SoundPresetDiscoveryCoverage", ...] = Field(
+        default=(), max_length=MAX_CANDIDATES
+    )
     known_unloaded_products: tuple[str, ...] = Field(default=(), max_length=MAX_CANDIDATES)
     warnings: tuple[str, ...] = Field(default=(), max_length=64)
 
@@ -778,11 +1099,22 @@ class SoundInventory(SoundSelectionModel):
     def loaded_targets(self) -> tuple[SoundTargetInventory, ...]:
         return (*self.loaded_generators, *self.loaded_effects)
 
-    def candidates(self, *, include_effects: bool = False, max_presets: int = MAX_PRESETS) -> tuple[SoundCandidate, ...]:
+    def candidates(
+        self,
+        *,
+        include_effects: bool = False,
+        max_presets: int = MAX_PRESETS,
+        metadata_catalog: Any = None,
+    ) -> tuple[SoundCandidate, ...]:
         targets = self.loaded_targets if include_effects else self.loaded_generators
         rows: list[SoundCandidate] = []
         for target in targets:
-            rows.extend(target.candidates(max_presets=max_presets))
+            rows.extend(
+                target.candidates(
+                    max_presets=max_presets,
+                    metadata_catalog=metadata_catalog,
+                )
+            )
         return tuple(rows)
 
 
@@ -797,8 +1129,34 @@ class SoundPaletteAssignment(SoundSelectionModel):
     selected_preset: str | None = Field(default=None, max_length=MAX_SOUND_NAME)
     selected_preset_index: int | None = Field(default=None, ge=0, lt=MAX_REPORTED_PRESET_COUNT)
     preset_identity_digest: Digest | None = None
+    # Snapshot of the selected candidate's bounded, source-labelled sound
+    # evidence.  Keeping this on the assignment means downstream composition
+    # code never has to infer characteristics from a preset name or re-expand
+    # a potentially changed inventory.
+    descriptors: tuple[DescriptorIdentifier, ...] = Field(
+        default=(), max_length=MAX_DESCRIPTORS
+    )
+    descriptor_provenance: tuple[DescriptorEvidence, ...] = Field(
+        default=(), max_length=MAX_DESCRIPTORS * 2
+    )
+    registers: tuple[Register, ...] = Field(default=(), max_length=8)
+    articulations: tuple[str, ...] = Field(default=(), max_length=32)
+    envelope_behavior: tuple[str, ...] = Field(default=(), max_length=16)
+    mono_poly: MonoPolyBehavior = "unknown"
+    known_limitations: tuple[str, ...] = Field(default=(), max_length=32)
+    characteristic_provenance: CandidateMetadataProvenance = "unknown"
+    brightness: float | None = Field(default=None, ge=0.0, le=1.0)
+    width: float | None = Field(default=None, ge=0.0, le=1.0)
+    motion: float | None = Field(default=None, ge=0.0, le=1.0)
+    aggression: float | None = Field(default=None, ge=0.0, le=1.0)
+    softness: float | None = Field(default=None, ge=0.0, le=1.0)
+    density: float | None = Field(default=None, ge=0.0, le=1.0)
+    complexity: float | None = Field(default=None, ge=0.0, le=1.0)
+    energy: float | None = Field(default=None, ge=0.0, le=1.0)
     anchor: bool = False
     locked: bool = False
+    anchor_after_selection: bool = False
+    preserve_across_sections: bool = True
     section_scope: tuple[str, ...] = Field(default=(), max_length=32)
     parent_assignment_id: str | None = Field(default=None, max_length=MAX_SOUND_ID)
     selection_action: Literal["keep_current", "select_preset", "loop_starter_reroll"] = "select_preset"
@@ -808,8 +1166,40 @@ class SoundPaletteAssignment(SoundSelectionModel):
     selection_reason: str = Field(default="", max_length=1024)
     fallback_candidate_ids: tuple[str, ...] = Field(default=(), max_length=64)
     required_verification: bool = True
-    confidence: Literal["high", "medium", "low", "unknown"] = "unknown"
+    confidence: ConfidenceLevel = "unknown"
+    metadata_confidence: ConfidenceLevel = "metadata_insufficient"
+    metadata_provenance: CandidateMetadataProvenance = "unknown"
+    metadata_source_id: str | None = Field(default=None, max_length=128)
+    metadata_family_id: str | None = Field(default=None, max_length=128)
+    role_fit_confidence: ConfidenceLevel = "unknown"
+    preset_identity_confidence: ConfidenceLevel = "unknown"
+    total_confidence: ConfidenceLevel = "unknown"
+    score_margin: float | None = Field(default=None, ge=0.0)
+    shortlist: tuple[SoundShortlistItem, ...] = Field(default=(), max_length=4)
+    preference_provenance: tuple[PreferenceOrigin, ...] = Field(default=(), max_length=32)
     warnings: tuple[str, ...] = Field(default=(), max_length=32)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_anchor_fields(cls, value: object) -> object:
+        """Read pre-quality palette records without changing their meaning.
+
+        Older snapshots only had ``anchor``.  A legacy anchored assignment
+        represented a selected identity, so it maps to
+        ``anchor_after_selection``; ``locked`` remains false unless the old
+        record explicitly carried that stronger protection.
+        """
+
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        if "anchor_after_selection" not in data and data.get("anchor") is True:
+            data["anchor_after_selection"] = True
+        return data
+
+    @property
+    def selection_confidence(self) -> ConfidenceLevel:
+        return self.total_confidence if self.total_confidence != "unknown" else self.confidence
 
     @property
     def assignment_id(self) -> str:
@@ -849,6 +1239,9 @@ class SoundPalettePlan(SoundSelectionModel):
     project_key: str | None = Field(default=None, max_length=256)
     policy: SoundSelectionPolicy
     assignments: tuple[SoundPaletteAssignment, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
+    preset_discovery_coverage: tuple[SoundPresetDiscoveryCoverage, ...] = Field(
+        default=(), max_length=MAX_CANDIDATES
+    )
     anchor_roles: tuple[RoleIdentifier, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     flexible_roles: tuple[RoleIdentifier, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     section_variations: tuple[SoundPaletteVariation, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
@@ -888,6 +1281,9 @@ class SoundPaletteVariationPlan(SoundSelectionModel):
     section: str = Field(min_length=1, max_length=128)
     preserve_anchor_roles: bool = True
     assignments: tuple[SoundPaletteAssignment, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
+    preset_discovery_coverage: tuple[SoundPresetDiscoveryCoverage, ...] = Field(
+        default=(), max_length=MAX_CANDIDATES
+    )
     unchanged_role_ids: tuple[RoleIdentifier, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     conflicts: tuple[str, ...] = Field(default=(), max_length=64)
     blockers: tuple[str, ...] = Field(default=(), max_length=64)
@@ -961,19 +1357,89 @@ class SoundFeedbackRequest(SoundSelectionModel):
 
     palette_id: SoundId
     role_id: RoleIdentifier | None = None
+    assignment_id: SoundId | None = None
     verdict: HistoryVerdict
     descriptors: tuple[DescriptorIdentifier, ...] = Field(default=(), max_length=MAX_DESCRIPTORS)
+    desired_descriptors: tuple[DescriptorIdentifier, ...] = Field(
+        default=(), max_length=MAX_DESCRIPTORS
+    )
+    undesired_descriptors: tuple[DescriptorIdentifier, ...] = Field(
+        default=(), max_length=MAX_DESCRIPTORS
+    )
+    hard_exclusion: bool = False
+    hard_preference: bool = False
     note: str | None = Field(default=None, max_length=512)
     persist: bool = True
+    persistence: FeedbackPersistence = Field(
+        default="persist",
+        validation_alias=AliasChoices("persistence", "persistence_choice"),
+        serialization_alias="persistence",
+    )
 
     @model_validator(mode="after")
     def validate_feedback(self) -> "SoundFeedbackRequest":
         descriptors = [item.casefold() for item in self.descriptors]
         if len(set(descriptors)) != len(descriptors):
             raise ValueError("feedback descriptors must not contain duplicates")
+        desired = {item.casefold() for item in self.desired_descriptors}
+        undesired = {item.casefold() for item in self.undesired_descriptors}
+        if desired.intersection(undesired):
+            raise ValueError("desired and undesired feedback descriptors cannot overlap")
         if self.note is not None and not self.note.strip():
             raise ValueError("feedback note must contain text when supplied")
+        if self.hard_exclusion and self.hard_preference:
+            raise ValueError("feedback cannot be both a hard exclusion and hard preference")
+        if self.hard_exclusion or self.hard_preference:
+            if self.verdict == "neutral":
+                raise ValueError("hard feedback requires an accepted or rejected verdict")
         return self
+
+    @property
+    def persistence_choice(self) -> FeedbackPersistence:
+        return self.persistence
+
+
+class SoundRoleFeedback(SoundFeedbackRequest):
+    """Feedback explicitly scoped to one palette role/assignment."""
+
+    # A concrete default keeps static type checkers happy when narrowing the
+    # inherited optional field; the validator below still makes omission
+    # fail closed at runtime.
+    role_id: RoleIdentifier = Field(default="")
+
+    @model_validator(mode="after")
+    def require_role_id(self) -> "SoundRoleFeedback":
+        if not self.role_id.strip():
+            raise ValueError("role feedback requires a role_id")
+        return self
+
+
+class SoundDescriptorFeedback(SoundFeedbackRequest):
+    """Descriptor-only feedback; optional role scope is retained when given."""
+
+    descriptors: tuple[DescriptorIdentifier, ...] = Field(
+        default=(), max_length=MAX_DESCRIPTORS
+    )
+
+    @model_validator(mode="after")
+    def require_descriptor_scope(self) -> "SoundDescriptorFeedback":
+        if not self.descriptors and not self.desired_descriptors and not self.undesired_descriptors:
+            raise ValueError("descriptor feedback requires at least one descriptor")
+        return self
+
+
+class SoundPaletteFeedback(SoundFeedbackRequest):
+    """Palette-level feedback with no implicit role-wide side effects."""
+
+    role_id: RoleIdentifier | None = None
+
+
+def migrate_sound_feedback(value: object) -> SoundFeedbackRequest:
+    """Validate old or new feedback payloads through one compatibility seam."""
+
+    if isinstance(value, SoundFeedbackRequest):
+        return value
+    return SoundFeedbackRequest.model_validate(value)
 
 
 class SoundScoreResult(SoundSelectionModel):
@@ -986,6 +1452,12 @@ class SoundScoreResult(SoundSelectionModel):
     breakdown: SoundScoreBreakdown
     rationale: str = Field(default="", max_length=1024)
     disqualification_reasons: tuple[str, ...] = Field(default=(), max_length=32)
+    metadata_confidence: ConfidenceLevel = "metadata_insufficient"
+    role_fit_confidence: ConfidenceLevel = "unknown"
+    preset_identity_confidence: ConfidenceLevel = "unknown"
+    total_confidence: ConfidenceLevel = "unknown"
+    preference_provenance: tuple[PreferenceOrigin, ...] = Field(default=(), max_length=32)
+    shortlist: SoundRankedShortlist | None = None
 
 
 def canonical_digest(value: Any) -> str:
@@ -1091,6 +1563,9 @@ __all__ = [
     "DescriptorEvidence",
     "DescriptorIdentifier",
     "Digest",
+    "ConfidenceLevel",
+    "CandidateMetadataProvenance",
+    "FeedbackPersistence",
     "DrumKitCandidate",
     "DrumPad",
     "DrumPadMap",
@@ -1101,6 +1576,9 @@ __all__ = [
     "LoadedSoundTarget",
     "PaletteApplyReceipt",
     "PresetDescriptorProvenance",
+    "PreferenceDirective",
+    "PreferenceOrigin",
+    "PreferenceStrength",
     "Register",
     "RoleIdentifier",
     "RoleType",
@@ -1110,6 +1588,7 @@ __all__ = [
     "SOUND_SELECTION_SCHEMA_VERSION",
     "SoundCandidate",
     "SoundCreativeDirection",
+    "SoundDescriptorFeedback",
     "SoundFeedbackRequest",
     "SoundInventory",
     "SoundInventoryItem",
@@ -1118,8 +1597,13 @@ __all__ = [
     "SoundPaletteState",
     "SoundPaletteVariation",
     "SoundPaletteVariationPlan",
+    "SoundPaletteFeedback",
+    "SoundPresetDiscoveryCoverage",
+    "SoundRankedShortlist",
+    "SoundRoleFeedback",
     "SoundScoreBreakdown",
     "SoundScoreResult",
+    "SoundShortlistItem",
     "SoundSelectionModel",
     "SoundSelectionPolicy",
     "SoundSelectionRequest",
@@ -1127,6 +1611,7 @@ __all__ = [
     "SoundTargetInventory",
     "SourceStrategy",
     "canonical_digest",
+    "migrate_sound_feedback",
     "preset_identity_digest",
     "target_identity_key",
 ]

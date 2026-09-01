@@ -163,6 +163,38 @@ run-last-script shortcut. They report focus and key dispatch, never fabricated
 note readback; inspect the Piano Roll before issuing another mutation. Set
 `auto_trigger=false` to generate the script for manual execution instead.
 
+### Armed-ready creation fixtures
+
+Before asking the connected AI for a complete creation request, make a blank,
+disposable project ready for the whole run:
+
+- load the intended generator pool, including a drum-capable generator whose
+  reported map contains kick, snare, and closed-hat roles;
+- leave at least one empty pattern available (the maintainer harness uses
+  Pattern 1); and
+- complete the Postfader Apply prepare/manual-run/confirm handshake in the
+  current MCP process.
+
+The composition acceptance fixture has no loaded effects and should report an
+honest dry processing state. The production fixture adds supported stock
+effects with existing adapters so effect coverage and semantic processing can
+be observed. Readiness aggregates missing setup actions before a run and does
+not ask for confirmation at each phase.
+
+The maintainer-only harness can preview both plans without contacting MCP or
+FL Studio:
+
+```bash
+python scripts/live_creation_acceptance.py --plan --scenario composition
+python scripts/live_creation_acceptance.py --plan --scenario production
+```
+
+For live evidence, provide `--confirm-user-present`,
+`--confirm-disposable-project`, and `--confirm-safe-to-edit`, plus a new
+`--output` path outside this repository. The harness performs one bounded
+Production Run and labels its timing/acceptance targets as unclaimed until a
+real run records them; it never saves the project or claims audible quality.
+
 ## 4. Generate client configuration
 
 Guided setup generates the selected format from the exact interpreter,
@@ -380,6 +412,19 @@ Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
 
 **A write is unverified.** Do not retry automatically. Inspect before/after,
 verification detail, warnings, and the project itself.
+
+**Creation readiness is blocked.** Call `postfader_creation_readiness` (or
+inspect the `readiness_report` in the run result). It returns all detectable
+actions together, such as arming Postfader Apply, loading a generator with
+required drum roles, or leaving an empty pattern. Complete those actions in
+the disposable FL project, then submit a compatible run; do not repeatedly
+retry individual note operations.
+
+**Creation reports dry or partial processing.** Confirm that the requested
+effect is loaded on the intended mixer track, matches an available Atlas
+adapter, and exposes the observed control. Missing effects and unresolved
+controls are honest readiness limitations, not silent substitutions or
+audible-quality failures.
 
 ## Environment variables
 

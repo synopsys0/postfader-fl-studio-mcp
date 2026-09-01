@@ -9,12 +9,14 @@ from unittest import mock
 
 from fl_studio_mcp import creative
 from fl_studio_mcp import production_runs as runs
+from fl_studio_mcp.creation_pipeline import live_readiness
 from fl_studio_mcp.creative import HotkeyDispatch, NoteSequence
 from fl_studio_mcp.sound_selection.models import (
     DrumPad,
     DrumPadMap,
     DrumRoleMapping,
     PaletteApplyReceipt,
+    SoundInventory,
     SoundPaletteAssignment,
     SoundPalettePlan,
     SoundPaletteState,
@@ -22,6 +24,7 @@ from fl_studio_mcp.sound_selection.models import (
     SoundRoleRequest,
     SoundSelectionPolicy,
     SoundSelectionRequest,
+    SoundTargetInventory,
     canonical_digest,
 )
 from fl_studio_mcp.track_b_contracts import (
@@ -267,6 +270,106 @@ class SoundSelectionProductionRunTests(unittest.TestCase):
         )
         self.assertIsInstance(result, NoteSequence)
         self.assertTrue({note.pitch for note in result.notes}.issubset({52, 60, 71}))
+
+    def test_omitted_drum_map_uses_the_single_reported_map(self) -> None:
+        mapped = drum_map()
+        inventory = SoundInventory(
+            session_fingerprint=SESSION,
+            loaded_generators=(
+                SoundTargetInventory(
+                    target=ChannelGeneratorTarget(channel_index=4),
+                    product_name="Synthetic Kit",
+                    pad_map=mapped,
+                ),
+            ),
+        )
+        generated = runs.compose_drums(style="hiphop", bars=1, drum_map=mapped)
+        with mock.patch.object(runs, "compose_drums", return_value=generated) as compose:
+            result = runs._dispatch_operation(
+                runs.GenerateDrumsOperation(operation_id="drums", style="hiphop"),
+                session_fingerprint=SESSION,
+                outputs={},
+                sound_inventory=inventory,
+            )
+
+        self.assertIs(result, generated)
+        self.assertEqual(compose.call_args.kwargs["drum_map"], mapped)
+
+    def test_omitted_drum_map_rejects_ambiguous_reported_maps(self) -> None:
+        first = drum_map()
+        second = first.model_copy(
+            update={
+                "map_id": "mapped-kit-two",
+                "target": ChannelGeneratorTarget(channel_index=5),
+            }
+        )
+        inventory = SoundInventory(
+            session_fingerprint=SESSION,
+            loaded_generators=(
+                SoundTargetInventory(
+                    target=ChannelGeneratorTarget(channel_index=4),
+                    product_name="Synthetic Kit A",
+                    pad_map=first,
+                ),
+                SoundTargetInventory(
+                    target=ChannelGeneratorTarget(channel_index=5),
+                    product_name="Synthetic Kit B",
+                    pad_map=second,
+                ),
+            ),
+        )
+
+        with self.assertRaisesRegex(ValueError, "multiple loaded drum generators"):
+            runs._dispatch_operation(
+                runs.GenerateDrumsOperation(operation_id="drums", style="hiphop"),
+                session_fingerprint=SESSION,
+                outputs={},
+                sound_inventory=inventory,
+            )
+
+    def test_drum_readiness_uses_explicit_target_and_house_requires_open_hat(
+        self,
+    ) -> None:
+        selected = drum_map()
+        other = selected.model_copy(
+            update={
+                "map_id": "mapped-kit-two",
+                "target": ChannelGeneratorTarget(channel_index=5),
+            }
+        )
+        inventory = SoundInventory(
+            session_fingerprint=SESSION,
+            loaded_generators=(
+                SoundTargetInventory(
+                    target=ChannelGeneratorTarget(channel_index=5),
+                    product_name="Other Kit",
+                    pad_map=other,
+                ),
+                SoundTargetInventory(
+                    target=ChannelGeneratorTarget(channel_index=4),
+                    product_name="Selected Kit",
+                    pad_map=selected,
+                ),
+            ),
+        )
+        operations = (
+            runs.InspectDrumMapOperation(
+                operation_id="inspect",
+                target=ChannelGeneratorTarget(channel_index=4),
+            ),
+            runs.GenerateDrumsOperation(operation_id="generate", style="house"),
+        )
+        required = live_readiness._required_drum_roles(operations, None)
+        coverage = live_readiness._drum_coverage(
+            inventory,
+            required,
+            operations,
+            None,
+        )
+
+        self.assertEqual(coverage.target, ChannelGeneratorTarget(channel_index=4))
+        self.assertEqual(coverage.drum_map, selected)
+        self.assertIn("open_hat", coverage.missing_roles)
 
     def test_dynamic_palette_target_scope_blocks_before_write_mode(self) -> None:
         output = runs.ProductionGeneratedOutput(

@@ -9,6 +9,8 @@
     "fl_studio_mcp/plugin_atlas",
     "fl_studio_mcp/plugin_atlas_mcp.py",
     "fl_studio_mcp/sound_selection",
+    "fl_studio_mcp/creation_pipeline",
+    "fl_studio_mcp/production_runs.py",
     "scripts/build_release_bundles.py"
   ],
   "exclude": [

@@ -14,13 +14,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from .models import (
+    ConfidenceLevel,
+    PreferenceDirective,
+    PreferenceOrigin,
     SoundCandidate,
     SoundPaletteAssignment,
+    SoundRankedShortlist,
     SoundRoleRequest,
     SoundScoreBreakdown,
     SoundScoreResult,
     SoundSelectionPolicy,
     SoundSelectionRequest,
+    SoundShortlistItem,
     canonical_digest,
 )
 
@@ -78,7 +83,13 @@ def _normalise(value: str | None) -> str:
 def _descriptor_key(value: str) -> str:
     """Normalize compound descriptor spellings for semantic comparison."""
 
-    return _normalise(value).replace(" ", "-")
+    normalized = _normalise(value).replace(" ", "-")
+    try:
+        from .descriptors import normalize_descriptor
+
+        return normalize_descriptor(normalized).normalized_descriptor
+    except (TypeError, ValueError):
+        return normalized
 
 
 def _effective_role_type(role: SoundRoleRequest) -> str:
@@ -96,6 +107,7 @@ def _effective_role_type(role: SoundRoleRequest) -> str:
 def _is_anchor_role(role: SoundRoleRequest) -> bool:
     return (
         role.lock_existing
+        or role.anchor_after_selection
         or role.role_id.casefold() in _ANCHOR_ROLE_IDS
         or role.continuity_priority >= 0.70
     )
@@ -210,7 +222,76 @@ def _explicit_change_requested(request: SoundSelectionRequest, role: SoundRoleRe
         or request.preset_preferences
         or role.preferred_products
         or role.preferred_presets
+        or any(item.is_hard_constraint for item in (*request.preference_directives, *role.preference_directives))
     )
+
+
+def _legacy_directives(
+    request: SoundSelectionRequest, role: SoundRoleRequest
+) -> tuple[PreferenceDirective, ...]:
+    """Represent legacy preference fields as explicit user directives."""
+
+    rows: list[PreferenceDirective] = []
+    for value in request.product_preferences:
+        rows.append(
+            PreferenceDirective(
+                value=value,
+                dimension="product",
+                origin="user_explicit",
+                strength="hard",
+            )
+        )
+    for value in role.preferred_products:
+        rows.append(
+            PreferenceDirective(
+                value=value,
+                dimension="product",
+                origin="user_explicit",
+                strength="hard",
+                role_id=role.role_id,
+            )
+        )
+    for value in request.preset_preferences:
+        rows.append(
+            PreferenceDirective(
+                value=value,
+                dimension="preset",
+                origin="user_explicit",
+                strength="hard",
+            )
+        )
+    for value in role.preferred_presets:
+        rows.append(
+            PreferenceDirective(
+                value=value,
+                dimension="preset",
+                origin="user_explicit",
+                strength="hard",
+                role_id=role.role_id,
+            )
+        )
+    return tuple((*rows, *request.preference_directives, *role.preference_directives))
+
+
+def _directives_for(
+    request: SoundSelectionRequest,
+    role: SoundRoleRequest,
+    *,
+    dimension: str | None = None,
+) -> tuple[PreferenceDirective, ...]:
+    rows = _legacy_directives(request, role)
+    return tuple(
+        item
+        for item in rows
+        if (dimension is None or item.dimension == dimension)
+        and (item.role_id is None or item.role_id.casefold() == role.role_id.casefold())
+    )
+
+
+def _directive_labels(
+    request: SoundSelectionRequest, role: SoundRoleRequest
+) -> tuple[PreferenceOrigin, ...]:
+    return tuple(dict.fromkeys(item.origin for item in _directives_for(request, role)))
 
 
 def _hard_constraints(
@@ -218,6 +299,7 @@ def _hard_constraints(
     role: SoundRoleRequest,
     request: SoundSelectionRequest,
     existing_assignments: Sequence[SoundPaletteAssignment],
+    history: Any = None,
 ) -> tuple[str, ...]:
     """Return every hard-constraint violation in stable order."""
 
@@ -232,7 +314,11 @@ def _hard_constraints(
     if any(preset_matches(candidate, value) for value in preset_exclusions):
         reasons.append("explicit preset exclusion")
 
-    product_preferences = (*request.product_preferences, *role.preferred_products)
+    product_preferences = tuple(
+        item.value
+        for item in _directives_for(request, role, dimension="product")
+        if item.is_hard_constraint
+    )
     if product_preferences:
         # Product preferences are explicit must-use direction at this core
         # boundary.  If the requested product is not loaded, every executable
@@ -241,7 +327,11 @@ def _hard_constraints(
         if not any(product_matches(candidate, value) for value in product_preferences):
             reasons.append("explicit product preference requires another loaded product")
 
-    preset_preferences = (*request.preset_preferences, *role.preferred_presets)
+    preset_preferences = tuple(
+        item.value
+        for item in _directives_for(request, role, dimension="preset")
+        if item.is_hard_constraint
+    )
     if preset_preferences:
         if not any(preset_matches(candidate, value) for value in preset_preferences):
             reasons.append("explicit preset preference requires another loaded preset")
@@ -279,6 +369,8 @@ def _hard_constraints(
         reasons.append("explicit Loop Starter strategy requires a Loop Starter candidate")
 
     existing = _existing_for_role(role.role_id, existing_assignments)
+    if role.lock_existing and existing is None:
+        reasons.append("lock_existing requires an existing assignment")
     if existing is not None:
         same = (
             _target_equal(candidate.target, existing.target)
@@ -296,10 +388,17 @@ def _hard_constraints(
             and role.allow_section_variation
             and not _is_anchor_role(role)
         )
+        # A role-level anchor is a promise about the selected identity, not a
+        # blanket claim that any preloaded placeholder was intentional.  A
+        # legacy ``anchor`` field is treated as the selected-identity form by
+        # the model migration validator.
+        established_anchor = existing.anchor_after_selection or existing.anchor
+        ordinary_preserve = not _is_anchor_role(role) or established_anchor
         preserve = hard_lock or (
             request.preserve_existing_roles
             and not _explicit_change_requested(request, role)
             and not exploratory_flexible
+            and ordinary_preserve
         )
         if preserve and not same:
             reasons.append("preserved or locked role assignment")
@@ -309,6 +408,67 @@ def _hard_constraints(
             and candidate.drum_map_id != existing.drum_map_id
         ):
             reasons.append("drum-kit changes are disabled for this request")
+
+    # Descriptor directives are hard only for explicit user/profile/feedback
+    # origins.  Model suggestions remain ordinary score inputs.
+    descriptors = _descriptor_names(candidate)
+    for directive in _directives_for(request, role, dimension="descriptor"):
+        if not directive.is_hard_constraint:
+            continue
+        descriptor = _descriptor_key(directive.value)
+        if directive.value.casefold().startswith(("avoid ", "without ", "avoid-", "without-")):
+            avoided = descriptor.removeprefix("avoid-").removeprefix("without-")
+            if avoided in descriptors:
+                reasons.append("explicit hard descriptor exclusion")
+        elif descriptor not in descriptors:
+            reasons.append("explicit hard descriptor preference requires another candidate")
+
+    # Hard identity/descriptor feedback is scoped to the requested role.  A
+    # palette-level verdict with no role remains descriptive and cannot reject
+    # every role in a future palette.
+    view = _history_view(history)
+    candidate_product = (candidate.product_id or candidate.product_name).casefold()
+    candidate_digest = candidate.identity_digest.casefold()
+    role_key = role.role_id.casefold()
+    for row in view.feedback:
+        row_role = _history_value(row, "role_id")
+        if not isinstance(row_role, str) or row_role.casefold() != role_key:
+            continue
+        hard_exclusion = bool(_history_value(row, "hard_exclusion", False))
+        hard_preference = bool(_history_value(row, "hard_preference", False))
+        row_product = _history_value(row, "product_id")
+        row_digest = _history_value(row, "preset_identity_digest")
+        identity_match = (
+            isinstance(row_product, str)
+            and isinstance(row_digest, str)
+            and row_product.casefold() == candidate_product
+            and row_digest.casefold() == candidate_digest
+        )
+        if hard_exclusion and identity_match:
+            reasons.append("explicit hard feedback excludes this exact preset")
+        if hard_preference and not identity_match and isinstance(row_product, str) and isinstance(row_digest, str):
+            reasons.append("explicit hard feedback prefers another exact preset")
+        feedback_descriptors = {
+            _descriptor_key(value)
+            for value in _history_value(row, "descriptors", ())
+            if isinstance(value, str)
+        }
+        desired_feedback_descriptors = {
+            _descriptor_key(value)
+            for value in _history_value(row, "desired_descriptors", ())
+            if isinstance(value, str)
+        }
+        undesired_feedback_descriptors = {
+            _descriptor_key(value)
+            for value in _history_value(row, "undesired_descriptors", ())
+            if isinstance(value, str)
+        }
+        exclusion_descriptors = feedback_descriptors | undesired_feedback_descriptors
+        preference_descriptors = feedback_descriptors | desired_feedback_descriptors
+        if exclusion_descriptors and hard_exclusion and exclusion_descriptors.intersection(descriptors):
+            reasons.append("explicit hard feedback excludes these descriptors")
+        if preference_descriptors and hard_preference and not preference_descriptors.issubset(descriptors):
+            reasons.append("explicit hard feedback requires preferred descriptors")
 
     selected = candidate.selected_preset
     if selected is not None and _normalise(selected) != _normalise(candidate.current_preset):
@@ -333,14 +493,31 @@ def _user_direction_fit(
     descriptors = _descriptor_names(candidate)
     wanted = {_descriptor_key(item) for item in (*role.desired_descriptors,)}
     unwanted = {_descriptor_key(item) for item in role.undesired_descriptors}
+    directive_descriptors = _directives_for(request, role, dimension="descriptor")
+    wanted.update(
+        _descriptor_key(item.value)
+        for item in directive_descriptors
+        if item.is_soft_preference
+        and not item.value.casefold().startswith(("avoid ", "without "))
+    )
+    unwanted.update(
+        _descriptor_key(item.value.removeprefix("avoid ").removeprefix("without "))
+        for item in directive_descriptors
+        if item.is_soft_preference
+        and item.value.casefold().startswith(("avoid ", "without "))
+    )
     descriptor_match = _overlap(wanted, descriptors) if wanted else 0.0
     descriptor_penalty = _overlap(unwanted, descriptors) if unwanted else 0.0
     product_match = 0.0
-    preferences = (*request.product_preferences, *role.preferred_products)
+    preferences = tuple(
+        item.value for item in _directives_for(request, role, dimension="product")
+    )
     if preferences:
         product_match = 1.0 if any(product_matches(candidate, value) for value in preferences) else 0.0
     preset_match = 0.0
-    preset_preferences = (*request.preset_preferences, *role.preferred_presets)
+    preset_preferences = tuple(
+        item.value for item in _directives_for(request, role, dimension="preset")
+    )
     if preset_preferences:
         preset_match = 1.0 if any(preset_matches(candidate, value) for value in preset_preferences) else 0.0
 
@@ -588,6 +765,12 @@ def _history_view(history: Any) -> _HistoryView:
     return _HistoryView(rows, ())
 
 
+def _history_value(row: Any, name: str, default: Any = None) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(name, default)
+    return getattr(row, name, default)
+
+
 def _history_fit(
     candidate: SoundCandidate,
     role: SoundRoleRequest,
@@ -601,9 +784,15 @@ def _history_fit(
     records = [
         row
         for row in view.records
-        if hasattr(row, "last_used_at")
+        if _history_value(row, "last_used_at") is not None
     ]
-    records.sort(key=lambda row: (row.last_used_at, row.record_id), reverse=True)
+    records.sort(
+        key=lambda row: (
+            _history_value(row, "last_used_at"),
+            _history_value(row, "record_id", ""),
+        ),
+        reverse=True,
+    )
     recent = records[: policy.recent_use_window]
     digest = candidate.identity_digest.casefold()
     product = (candidate.product_id or candidate.product_name).casefold()
@@ -611,14 +800,14 @@ def _history_fit(
     exact_count = sum(
         1
         for row in recent
-        if _fold(getattr(row, "preset_identity_digest", None)) == digest
-        and _fold(getattr(row, "role_id", None)) == role_key
+        if _fold(_history_value(row, "preset_identity_digest")) == digest
+        and _fold(_history_value(row, "role_id")) == role_key
     )
     same_product_count = sum(
         1
         for row in recent
-        if _fold(getattr(row, "product_id", None)) == product
-        and _fold(getattr(row, "role_id", None)) == role_key
+        if _fold(_history_value(row, "product_id")) == product
+        and _fold(_history_value(row, "role_id")) == role_key
     )
     if not recent:
         exact_count = min(policy.recent_use_window, candidate.cross_project_usage)
@@ -634,25 +823,27 @@ def _history_fit(
     rejected = candidate.rejected_count
     for row in view.records:
         if (
-            _fold(getattr(row, "product_id", None)) == product
-            and _fold(getattr(row, "preset_identity_digest", None)) == digest
-            and _fold(getattr(row, "role_id", None)) == role_key
+            _fold(_history_value(row, "product_id")) == product
+            and _fold(_history_value(row, "preset_identity_digest")) == digest
+            and _fold(_history_value(row, "role_id")) == role_key
         ):
-            accepted += getattr(row, "accepted_count", 0)
-            rejected += getattr(row, "rejected_count", 0)
+            accepted += _history_value(row, "accepted_count", 0)
+            rejected += _history_value(row, "rejected_count", 0)
 
     descriptor_feedback = 0.0
     role_feedback = 0.0
     candidate_descriptors = _descriptor_names(candidate)
-    feedback_rows = [row for row in view.feedback if hasattr(row, "recorded_at")]
+    feedback_rows = [
+        row for row in view.feedback if _history_value(row, "recorded_at") is not None
+    ]
     feedback_rows.sort(
         key=lambda row: (
             (
-                getattr(row, "recorded_at").isoformat()
-                if hasattr(getattr(row, "recorded_at", None), "isoformat")
-                else str(getattr(row, "recorded_at", ""))
+                _history_value(row, "recorded_at").isoformat()
+                if hasattr(_history_value(row, "recorded_at"), "isoformat")
+                else str(_history_value(row, "recorded_at", ""))
             ),
-            _fold(getattr(row, "feedback_id", None)),
+            _fold(_history_value(row, "feedback_id")),
         ),
         reverse=True,
     )
@@ -660,9 +851,9 @@ def _history_fit(
     # effective until the bounded store prunes it.  ``recent_use_window`` is
     # for repeat-use penalties, not a silent expiry for user verdicts.
     for row in feedback_rows:
-        row_product = getattr(row, "product_id", None)
-        row_digest = getattr(row, "preset_identity_digest", None)
-        row_role = getattr(row, "role_id", None)
+        row_product = _history_value(row, "product_id")
+        row_digest = _history_value(row, "preset_identity_digest")
+        row_role = _history_value(row, "role_id")
         row_role_key = _fold(row_role)
         if row_role_key and row_role_key != role_key:
             continue
@@ -673,8 +864,9 @@ def _history_fit(
             and row_digest.casefold() == digest
         )
         if identity_match:
-            accepted += 1 if row.verdict == "accepted" else 0
-            rejected += 1 if row.verdict == "rejected" else 0
+            verdict = _history_value(row, "verdict")
+            accepted += 1 if verdict == "accepted" else 0
+            rejected += 1 if verdict == "rejected" else 0
 
         # Descriptor and complete-palette feedback has no executable identity
         # by design.  It is therefore a soft signal only: match descriptors
@@ -683,28 +875,45 @@ def _history_fit(
         # ranking without turning a past verdict into an absolute rule.
         descriptor_keys = {
             _descriptor_key(item)
-            for item in getattr(row, "descriptors", ())
+            for item in (
+                *(_history_value(row, "descriptors", ()) or ()),
+                *(_history_value(row, "desired_descriptors", ()) or ()),
+            )
+            if isinstance(item, str)
+        }
+        undesired_keys = {
+            _descriptor_key(item)
+            for item in (_history_value(row, "undesired_descriptors", ()) or ())
             if isinstance(item, str)
         }
         descriptor_overlap = _overlap(descriptor_keys, candidate_descriptors)
+        undesired_overlap = _overlap(undesired_keys, candidate_descriptors)
         if descriptor_overlap > 0.0:
             signal = (
                 policy.accepted_choice_bonus
-                if row.verdict == "accepted"
+                if _history_value(row, "verdict") == "accepted"
                 else -policy.rejected_choice_penalty
-                if row.verdict == "rejected"
+                if _history_value(row, "verdict") == "rejected"
                 else 0.0
             )
             descriptor_feedback += signal * descriptor_overlap
+        if undesired_overlap > 0.0:
+            descriptor_feedback += (
+                -policy.rejected_choice_penalty
+                if _history_value(row, "verdict") == "accepted"
+                else policy.accepted_choice_bonus
+                if _history_value(row, "verdict") == "rejected"
+                else 0.0
+            ) * undesired_overlap
         elif (
             not identity_match
             and not descriptor_keys
             and row_role_key
-            and row.verdict in {"accepted", "rejected"}
+            and _history_value(row, "verdict") in {"accepted", "rejected"}
         ):
             # Role-only feedback is intentionally weaker because it cannot
             # identify which sound within the role the user meant.
-            role_feedback += 0.10 if row.verdict == "accepted" else -0.15
+            role_feedback += 0.10 if _history_value(row, "verdict") == "accepted" else -0.15
 
     descriptor_feedback = max(-0.35, min(0.35, descriptor_feedback))
     role_feedback = max(-0.15, min(0.15, role_feedback))
@@ -734,14 +943,102 @@ def _verification_fit(candidate: SoundCandidate) -> float:
     return min(1.0, value)
 
 
-def _confidence(candidate: SoundCandidate, score: float) -> str:
-    if candidate.preset_readback_available and candidate.preset_identity_stable and candidate.atlas_confidence == "high":
+_CONFIDENCE_RANK = {
+    "metadata_insufficient": 0,
+    "unknown": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+}
+
+
+def _metadata_confidence(candidate: SoundCandidate) -> ConfidenceLevel:
+    if candidate.metadata_confidence != "metadata_insufficient":
+        return candidate.metadata_confidence
+    provenances = {
+        item.provenance for item in candidate.descriptor_provenance
+    }
+    if candidate.metadata_provenance in {"bundled_reviewed", "user_local_reviewed"}:
         return "high"
-    if candidate.target is not None and (candidate.product_id is not None or candidate.atlas_confidence in {"medium", "high"}):
+    if "bundled_reviewed" in provenances or "user_local_reviewed" in provenances:
+        return "high"
+    if candidate.descriptors or candidate.style_tags or candidate.atlas_confidence in {"medium", "high"}:
+        return "medium"
+    if "preset_name_token" in provenances:
+        return "low"
+    return "metadata_insufficient"
+
+
+def _role_fit_confidence(candidate: SoundCandidate, role: SoundRoleRequest) -> ConfidenceLevel:
+    if candidate.role_compatibility >= 0.80:
+        return "high"
+    role_terms = _tokens(role.role_id) | _tokens(role.role_type)
+    known = {
+        token
+        for value in (*candidate.role_ids, *candidate.atlas_common_roles)
+        for token in _tokens(value)
+    }
+    if role_terms and role_terms.intersection(known):
+        return "high"
+    if candidate.role_compatibility > 0.0 or candidate.descriptors or candidate.atlas_confidence in {"medium", "high"}:
         return "medium"
     if candidate.target is not None:
         return "low"
     return "unknown"
+
+
+def _preset_identity_confidence(candidate: SoundCandidate) -> ConfidenceLevel:
+    if candidate.selected_preset is None:
+        return "unknown"
+    if candidate.preset_identity_stable and (
+        candidate.preset_index is not None or candidate.preset_readback_available
+    ):
+        return "high"
+    if candidate.preset_identity_stable or candidate.preset_readback_available:
+        return "medium"
+    if candidate.product_id is not None or candidate.target is not None:
+        return "low"
+    return "unknown"
+
+
+def _total_confidence(
+    candidate: SoundCandidate,
+    role: SoundRoleRequest,
+    score: float,
+) -> tuple[ConfidenceLevel, ConfidenceLevel, ConfidenceLevel, ConfidenceLevel]:
+    metadata = _metadata_confidence(candidate)
+    role_fit = _role_fit_confidence(candidate, role)
+    identity = _preset_identity_confidence(candidate)
+    floor = min(
+        _CONFIDENCE_RANK[metadata],
+        _CONFIDENCE_RANK[role_fit],
+        _CONFIDENCE_RANK[identity],
+    )
+    if candidate.target is None:
+        total: ConfidenceLevel = "unknown"
+    elif floor >= 3:
+        total = "high"
+    elif floor >= 2:
+        total = "medium"
+    elif metadata == "metadata_insufficient":
+        total = "low"
+    else:
+        total = "low"
+    return metadata, role_fit, identity, total
+
+
+def _confidence(candidate: SoundCandidate, score: float, role: SoundRoleRequest | None = None) -> ConfidenceLevel:
+    """Compatibility confidence accessor retained for older callers."""
+
+    if role is None:
+        if candidate.preset_readback_available and candidate.preset_identity_stable and candidate.atlas_confidence == "high":
+            return "high"
+        if candidate.target is not None and (candidate.product_id is not None or candidate.atlas_confidence in {"medium", "high"}):
+            return "medium"
+        if candidate.target is not None:
+            return "low"
+        return "unknown"
+    return _total_confidence(candidate, role, score)[-1]
 
 
 def _candidate_rationale(
@@ -749,15 +1046,26 @@ def _candidate_rationale(
     role: SoundRoleRequest,
     breakdown: SoundScoreBreakdown,
     reasons: Sequence[str],
+    request: SoundSelectionRequest | None = None,
 ) -> str:
     if reasons:
         return f"Not eligible for {role.role_id}: " + "; ".join(reasons)
     selected = candidate.selected_preset or "current state"
+    provenance = _directive_labels(
+        request or SoundSelectionRequest(brief=f"select {role.role_id}", roles=(role,)),
+        role,
+    )
+    provenance_text = (
+        " Preference sources: " + ", ".join(provenance) + "."
+        if provenance
+        else " No provenance-aware preference directives were supplied."
+    )
     return (
         f"{candidate.product_name} / {selected} matched {role.role_id} "
         f"with user-direction {breakdown.user_direction:.2f}, role fit "
         f"{breakdown.role_fit:.2f}, continuity {breakdown.continuity:.2f}, "
         "and metadata-level palette evidence."
+        + provenance_text
     )
 
 
@@ -782,16 +1090,24 @@ def score_candidate(
     elif not isinstance(request, SoundSelectionRequest):
         request = SoundSelectionRequest.model_validate(request)
     reasons = (
-        *_hard_constraints(candidate, role, request, existing_assignments),
+        *_hard_constraints(candidate, role, request, existing_assignments, history),
         *_selected_assignment_conflicts(candidate, role, selected_candidates),
     )
     if reasons:
         breakdown = SoundScoreBreakdown(hard_constraints=-100.0, total=-100.0)
+        metadata_confidence, role_confidence, identity_confidence, total_confidence = _total_confidence(
+            candidate, role, -100.0
+        )
         scored = candidate.model_copy(
             update={
                 "score": -100.0,
                 "score_breakdown": breakdown,
-                "confidence": _confidence(candidate, -100.0),
+                "confidence": total_confidence,
+                "metadata_confidence": metadata_confidence,
+                "role_fit_confidence": role_confidence,
+                "preset_identity_confidence": identity_confidence,
+                "total_confidence": total_confidence,
+                "preference_provenance": _directive_labels(request, role),
                 "disqualification_reasons": tuple(reasons),
             }
         )
@@ -801,8 +1117,13 @@ def score_candidate(
             eligible=False,
             score=-100.0,
             breakdown=breakdown,
-            rationale=_candidate_rationale(scored, role, breakdown, reasons),
+            rationale=_candidate_rationale(scored, role, breakdown, reasons, request),
             disqualification_reasons=tuple(reasons),
+            metadata_confidence=metadata_confidence,
+            role_fit_confidence=role_confidence,
+            preset_identity_confidence=identity_confidence,
+            total_confidence=total_confidence,
+            preference_provenance=_directive_labels(request, role),
         )
 
     policy = request.selection_policy
@@ -829,11 +1150,19 @@ def score_candidate(
     )
     total = round(breakdown.component_total, 8)
     breakdown = breakdown.model_copy(update={"total": total})
+    metadata_confidence, role_confidence, identity_confidence, total_confidence = _total_confidence(
+        candidate, role, total
+    )
     scored = candidate.model_copy(
         update={
             "score": total,
             "score_breakdown": breakdown,
-            "confidence": _confidence(candidate, total),
+            "confidence": total_confidence,
+            "metadata_confidence": metadata_confidence,
+            "role_fit_confidence": role_confidence,
+            "preset_identity_confidence": identity_confidence,
+            "total_confidence": total_confidence,
+            "preference_provenance": _directive_labels(request, role),
             "disqualification_reasons": (),
         }
     )
@@ -843,7 +1172,12 @@ def score_candidate(
         eligible=True,
         score=total,
         breakdown=breakdown,
-        rationale=_candidate_rationale(scored, role, breakdown, ()),
+        rationale=_candidate_rationale(scored, role, breakdown, (), request),
+        metadata_confidence=metadata_confidence,
+        role_fit_confidence=role_confidence,
+        preset_identity_confidence=identity_confidence,
+        total_confidence=total_confidence,
+        preference_provenance=_directive_labels(request, role),
     )
 
 
@@ -881,7 +1215,7 @@ def score_candidates(
         )
         for candidate in candidates
     )
-    return tuple(
+    ordered = tuple(
         sorted(
             rows,
             key=lambda item: (
@@ -892,6 +1226,127 @@ def score_candidates(
             ),
         )
     )
+    shortlist = _build_shortlist(ordered, role)
+    if shortlist is None:
+        return ordered
+    winner_index = next((index for index, item in enumerate(ordered) if item.eligible), None)
+    if winner_index is None:
+        return tuple(item.model_copy(update={"shortlist": shortlist}) for item in ordered)
+    winner = ordered[winner_index]
+    candidate = winner.candidate.model_copy(
+        update={
+            "score_margin": shortlist.score_margin,
+            "shortlist": shortlist.items,
+        }
+    )
+    return tuple(
+        item.model_copy(
+            update={
+                "candidate": candidate,
+                "shortlist": shortlist,
+            }
+        )
+        if index == winner_index
+        else item
+        for index, item in enumerate(ordered)
+    )
+
+
+def _build_shortlist(
+    rows: Sequence[SoundScoreResult], role: SoundRoleRequest, *, limit: int = 4
+) -> SoundRankedShortlist | None:
+    """Build a bounded explainability view from already sorted score rows."""
+
+    eligible = tuple(item for item in rows if item.eligible)
+    source = eligible[: max(1, min(4, limit))] if eligible else tuple(rows[: max(1, min(4, limit))])
+    if not source:
+        return None
+    winner = source[0] if eligible else None
+    winner_score = None if winner is None else winner.score
+    items: list[SoundShortlistItem] = []
+    for row in source:
+        breakdown = row.breakdown
+        metadata = row.metadata_confidence
+        items.append(
+            SoundShortlistItem(
+                candidate_id=row.candidate.candidate_id,
+                identity_digest=row.candidate.identity_digest,
+                score=row.score,
+                score_margin=(
+                    max(0.0, round(winner_score - row.score, 8))
+                    if row.eligible and winner_score is not None
+                    else 0.0
+                ),
+                user_direction_score=breakdown.user_direction,
+                role_fit_score=breakdown.role_fit,
+                cohesion_score=breakdown.palette_cohesion,
+                continuity_score=breakdown.continuity,
+                recency_score=breakdown.cross_project_diversity,
+                feedback_score=breakdown.feedback,
+                verification_confidence_score=breakdown.verification,
+                metadata_confidence=metadata,
+                role_fit_confidence=row.role_fit_confidence,
+                preset_identity_confidence=row.preset_identity_confidence,
+                total_confidence=row.total_confidence,
+                eligible=row.eligible,
+                disqualification_reasons=row.disqualification_reasons,
+                rationale=row.rationale,
+            )
+        )
+    margin = None
+    if len(eligible) > 1:
+        margin = max(0.0, round(eligible[0].score - eligible[1].score, 8))
+    weak = any(
+        item.metadata_confidence in {"low", "metadata_insufficient", "unknown"}
+        for item in source
+    )
+    narrow = margin is not None and margin < 1.0
+    if winner is None:
+        rationale = (
+            f"{role.role_id} has no eligible candidate in the bounded shortlist; "
+            "all observed rows were disqualified by hard constraints."
+        )
+    elif margin is not None:
+        rationale = (
+            f"{role.role_id} winner has a {margin:.2f}-point margin over the next "
+            "eligible candidate."
+        )
+    else:
+        rationale = f"{role.role_id} has one eligible candidate in the bounded shortlist."
+    if weak:
+        rationale += " Metadata is weak; identity verification does not prove sonic suitability."
+    return SoundRankedShortlist(
+        role_id=role.role_id,
+        items=tuple(items),
+        winner_candidate_id=(
+            None
+            if winner is None
+            else winner.candidate.candidate_id or winner.candidate.identity_digest
+        ),
+        winner_score=winner_score,
+        score_margin=margin,
+        narrow_margin=narrow,
+        metadata_weak=weak,
+        rationale=rationale,
+    )
+
+
+def rank_shortlist(
+    candidates: Sequence[SoundCandidate],
+    role: SoundRoleRequest,
+    request: SoundSelectionRequest,
+    **kwargs: Any,
+) -> SoundRankedShortlist:
+    """Return a bounded winner/alternative view with score margins."""
+
+    rows = score_candidates(candidates, role, request, **kwargs)
+    shortlist = next((item.shortlist for item in rows if item.shortlist is not None), None)
+    if shortlist is None:
+        return SoundRankedShortlist(role_id=role.role_id)
+    return shortlist
+
+
+ranked_shortlist = rank_shortlist
 
 
 def rank_candidates(
@@ -998,6 +1453,8 @@ __all__ = [
     "SoundSelectionScorer",
     "product_matches",
     "preset_matches",
+    "rank_shortlist",
+    "ranked_shortlist",
     "rank_candidates",
     "rank_sound_candidates",
     "score_candidate",

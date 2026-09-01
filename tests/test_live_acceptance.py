@@ -15,6 +15,7 @@ from collections import Counter
 from pathlib import Path
 from unittest import mock
 
+
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, os.fspath(ROOT))

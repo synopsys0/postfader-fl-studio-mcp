@@ -24,6 +24,41 @@ from .scoring import score_candidates
 
 MAX_PALETTE_STATES = 128
 
+
+def migrate_palette_assignment(value: Any) -> SoundPaletteAssignment:
+    """Migrate a legacy assignment into explicit quality-era semantics."""
+
+    if isinstance(value, SoundPaletteAssignment):
+        return value
+    if not isinstance(value, dict):
+        return SoundPaletteAssignment.model_validate(value, strict=False)
+    data = dict(value)
+    if "anchor_after_selection" not in data:
+        data["anchor_after_selection"] = bool(data.get("anchor", False))
+    data.setdefault("preserve_across_sections", True)
+    return SoundPaletteAssignment.model_validate(data, strict=False)
+
+
+def migrate_palette_state(value: Any) -> SoundPaletteState:
+    """Read old stored palette snapshots without treating placeholders as locks."""
+
+    if isinstance(value, SoundPaletteState):
+        return value
+    if not isinstance(value, dict):
+        return SoundPaletteState.model_validate(value, strict=False)
+    data = dict(value)
+    data["schema_version"] = "1.0"
+    if "assignments" in data:
+        data["assignments"] = tuple(migrate_palette_assignment(item) for item in data["assignments"])
+    if "locked_assignments" not in data:
+        data["locked_assignments"] = tuple(
+            item.assignment_id for item in data.get("assignments", ()) if item.locked
+        )
+    return SoundPaletteState.model_validate(data, strict=False)
+
+
+migrate_palette_record = migrate_palette_assignment
+
 _ALLOWED_STATE_TRANSITIONS: dict[str, frozenset[str]] = {
     "planned": frozenset(
         {"planned", "applying", "applied", "partially_applied", "failed", "superseded"}
@@ -85,7 +120,19 @@ def _candidate_inventory_material(candidate: SoundCandidate) -> dict[str, Any]:
     # Scores and explanations are outputs of planning, not inventory
     # observations.  Including them would make an otherwise identical plan
     # acquire a different identity after a caller reuses scored candidates.
-    for field in ("score", "score_breakdown", "confidence", "disqualification_reasons"):
+    for field in (
+        "score",
+        "score_breakdown",
+        "confidence",
+        "metadata_confidence",
+        "role_fit_confidence",
+        "preset_identity_confidence",
+        "total_confidence",
+        "score_margin",
+        "shortlist",
+        "preference_provenance",
+        "disqualification_reasons",
+    ):
         material.pop(field, None)
     for field in (
         "product_aliases",
@@ -166,13 +213,15 @@ def _state_assignments(
     if isinstance(existing, (SoundPaletteState, SoundPalettePlan)):
         return existing.assignments
     return tuple(
-        item if isinstance(item, SoundPaletteAssignment) else SoundPaletteAssignment.model_validate(item)
+        item if isinstance(item, SoundPaletteAssignment) else migrate_palette_assignment(item)
         for item in existing
     )
 
 
-def _is_anchor(role: SoundRoleRequest) -> bool:
-    return role.lock_existing or role.role_id in {
+def _anchor_after_selection(role: SoundRoleRequest) -> bool:
+    """Whether a newly selected identity should become a section anchor."""
+
+    return role.anchor_after_selection or role.role_id in {
         "main_chords",
         "main_lead",
         "primary_bass",
@@ -180,6 +229,12 @@ def _is_anchor(role: SoundRoleRequest) -> bool:
         "vocal_chop",
         "drums",
     } or role.continuity_priority >= 0.70
+
+
+def _is_anchor(role: SoundRoleRequest) -> bool:
+    """Order lock/anchor roles first without conflating their meanings."""
+
+    return role.lock_existing or _anchor_after_selection(role)
 
 
 def _assignment_from_candidate(
@@ -207,8 +262,26 @@ def _assignment_from_candidate(
         selected_preset=selected,
         selected_preset_index=candidate.preset_index,
         preset_identity_digest=candidate.identity_digest,
+        descriptors=candidate.descriptors,
+        descriptor_provenance=candidate.descriptor_provenance,
+        registers=candidate.registers,
+        articulations=candidate.articulations,
+        envelope_behavior=candidate.envelope_behavior,
+        mono_poly=candidate.mono_poly,
+        known_limitations=candidate.known_limitations,
+        characteristic_provenance=candidate.metadata_provenance,
+        brightness=candidate.brightness,
+        width=candidate.width,
+        motion=candidate.motion,
+        aggression=candidate.aggression,
+        softness=candidate.softness,
+        density=candidate.density,
+        complexity=candidate.complexity,
+        energy=candidate.energy,
         anchor=anchor,
         locked=role.lock_existing or (existing.locked if existing is not None else False),
+        anchor_after_selection=anchor,
+        preserve_across_sections=role.preserve_across_sections,
         section_scope=role.section_scope or candidate.section_scope,
         parent_assignment_id=None if existing is None else existing.assignment_id,
         selection_action=action,
@@ -224,6 +297,16 @@ def _assignment_from_candidate(
         ),
         required_verification=action != "keep_current",
         confidence=candidate.confidence,
+        metadata_confidence=candidate.metadata_confidence,
+        metadata_provenance=candidate.metadata_provenance,
+        metadata_source_id=candidate.metadata_source_id,
+        metadata_family_id=candidate.metadata_family_id,
+        role_fit_confidence=candidate.role_fit_confidence,
+        preset_identity_confidence=candidate.preset_identity_confidence,
+        total_confidence=candidate.total_confidence,
+        score_margin=candidate.score_margin,
+        shortlist=candidate.shortlist,
+        preference_provenance=candidate.preference_provenance,
         warnings=candidate.warnings,
     )
 
@@ -264,6 +347,11 @@ def plan_palette(
             inventory_session_fingerprint=inventory_session,
             project_key=request.project_key,
             policy=request.selection_policy,
+            preset_discovery_coverage=(
+                ()
+                if not isinstance(inventory, SoundInventory)
+                else inventory.preset_discovery_coverage
+            ),
             blockers=("request contains no sound roles",),
             rationale="No roles were supplied; planning made no target or history changes.",
             plan_digest=None,
@@ -286,8 +374,9 @@ def plan_palette(
     flexible_roles: list[str] = []
 
     for role in ordered_roles:
-        anchor = _is_anchor(role)
-        (anchor_roles if anchor else flexible_roles).append(role.role_id)
+        is_anchor_role = _is_anchor(role)
+        anchor_after_selection = _anchor_after_selection(role)
+        (anchor_roles if is_anchor_role else flexible_roles).append(role.role_id)
         scored = score_candidates(
             all_candidates,
             role,
@@ -310,7 +399,7 @@ def plan_palette(
         assignment = _assignment_from_candidate(
             role,
             winner,
-            anchor=anchor,
+            anchor=anchor_after_selection,
             existing=existing_assignment,
             fallbacks=fallback,
         )
@@ -359,6 +448,11 @@ def plan_palette(
         project_key=request.project_key,
         policy=request.selection_policy,
         assignments=tuple(selected_assignments),
+        preset_discovery_coverage=(
+            ()
+            if not isinstance(inventory, SoundInventory)
+            else inventory.preset_discovery_coverage
+        ),
         anchor_roles=tuple(anchor_roles),
         flexible_roles=tuple(flexible_roles),
         drum_map=drum_map,
@@ -406,8 +500,14 @@ def create_palette_variation(
     explicit_replacements.update(
         role_id
         for role_id, role in requested_roles.items()
-        if role.preferred_products or role.preferred_presets
+        if role.preferred_products
+        or role.preferred_presets
+        or any(item.is_hard_constraint for item in role.preference_directives)
     )
+    if request.product_preferences or request.preset_preferences or any(
+        item.is_hard_constraint for item in request.preference_directives
+    ):
+        explicit_replacements.update(requested_roles)
     chosen_section = section or next(
         (scope for role in request.roles for scope in role.section_scope),
         "variation",
@@ -419,8 +519,17 @@ def create_palette_variation(
     selected_candidates: list[SoundCandidate] = []
     for assignment in base_assignments:
         role = requested_roles.get(assignment.role_id.casefold())
-        is_anchor = assignment.anchor or assignment.locked
-        if role is None or (is_anchor and assignment.role_id.casefold() not in explicit_replacements):
+        is_anchor = assignment.anchor_after_selection or assignment.anchor or assignment.locked
+        preserve_sections = (
+            assignment.preserve_across_sections
+            if role is None
+            else role.preserve_across_sections
+        )
+        if role is None or (
+            is_anchor
+            and preserve_sections
+            and assignment.role_id.casefold() not in explicit_replacements
+        ):
             unchanged.append(assignment.role_id)
             continue
         if role is not None and not role.allow_section_variation and assignment.role_id.casefold() not in explicit_replacements:
@@ -516,6 +625,11 @@ def create_palette_variation(
         section=chosen_section,
         preserve_anchor_roles=True,
         assignments=tuple(deltas),
+        preset_discovery_coverage=(
+            inventory.preset_discovery_coverage
+            if isinstance(inventory, SoundInventory)
+            else ()
+        ),
         unchanged_role_ids=tuple(dict.fromkeys(unchanged)),
         blockers=tuple(dict.fromkeys(blockers)),
         warnings=tuple(dict.fromkeys(warnings)),

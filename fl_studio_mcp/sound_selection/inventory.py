@@ -28,16 +28,26 @@ def expand_inventory(
     *,
     include_effects: bool = False,
     max_presets: int = 4096,
+    metadata_catalog: object = None,
 ) -> tuple[SoundCandidate, ...]:
     """Expand loaded targets into a bounded deterministic candidate sequence."""
 
     if isinstance(inventory, SoundInventory):
-        return inventory.candidates(include_effects=include_effects, max_presets=max_presets)
+        return inventory.candidates(
+            include_effects=include_effects,
+            max_presets=max_presets,
+            metadata_catalog=metadata_catalog,
+        )
     rows = tuple(inventory)
     candidates: list[SoundCandidate] = []
     for item in rows:
         target = item if isinstance(item, SoundTargetInventory) else SoundTargetInventory.model_validate(item)
-        candidates.extend(target.candidates(max_presets=max_presets))
+        candidates.extend(
+            target.candidates(
+                max_presets=max_presets,
+                metadata_catalog=metadata_catalog,
+            )
+        )
     return tuple(candidates)
 
 

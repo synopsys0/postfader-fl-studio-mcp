@@ -32,13 +32,18 @@ SOUND_SELECTION_REQUIRED.update(
     path.relative_to(ROOT).as_posix()
     for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.json")
 )
+CREATION_PIPELINE_ROOT = ROOT / "fl_studio_mcp" / "creation_pipeline"
+CREATION_PIPELINE_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_PIPELINE_ROOT.rglob("*.py")
+}
 REQUIRED = {
     "manifest.json",
     "mcpb_entry.py",
     "pyproject.toml",
     "fl_studio_mcp/mcp_server.py",
     "fl_studio_mcp/_bridge/device_UniversalBridge.py",
-} | ATLAS_REQUIRED | SOUND_SELECTION_REQUIRED
+} | ATLAS_REQUIRED | SOUND_SELECTION_REQUIRED | CREATION_PIPELINE_REQUIRED
 FORBIDDEN_PARTS = {
     ".git",
     ".github",

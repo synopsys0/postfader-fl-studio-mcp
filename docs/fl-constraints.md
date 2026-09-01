@@ -23,6 +23,31 @@ instrument pool manually before planning a palette. Loop Starter is separate
 and must be requested explicitly; its reroll exposes dispatch but no stable
 selected-loop identity.
 
+## Creation readiness is observational
+
+The creation-readiness scorecard aggregates what this bridge can detect before
+the first write: connection/provenance, Piano Roll arming, loaded generators,
+semantic drum coverage, empty patterns and arrangement limits, loaded-effect
+coverage, and manual handoff requirements. It performs no mutation and cannot
+make an unloaded instrument/effect, missing pad, or unavailable Playlist
+operation appear ready. A complete Production Run performs that readiness
+preflight once, caches the bounded session/target/project context, and then
+uses phase-specific checks rather than rescanning the full project before
+every phase.
+
+Sound-aware composition uses metadata such as register, articulation, envelope,
+density, and mono/poly behavior only when its provenance and confidence allow
+it. Name inference is never audible evidence. A selected sound can therefore
+produce a technical composition receipt while audible quality remains
+`not_evaluated`.
+
+Effect coverage has the same boundary. A semantic processing action requires a
+loaded effect, Atlas capability evidence, an adapter, and a runtime control
+observation. Processing plans are read-only; applies use existing verified
+display/option/normalized setters and later-tick readback. Missing effects or
+unresolved controls yield an honest dry/partial result, not a claim that FL
+was processed or that the result sounds correct.
+
 ## The embedded Python environment cannot use files or sockets
 
 Inside FL Studio's MIDI-script interpreter, low-level file construction can

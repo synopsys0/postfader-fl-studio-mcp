@@ -28,7 +28,7 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**111 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**114 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
@@ -212,12 +212,26 @@ without changing notes. The AI submits the structured plan; PostFader validates
 scope, resolves references, applies supported operations, and records truthful
 receipts.
 
+Creation runs now begin with one silent readiness scorecard covering the live
+bridge, Piano Roll, generator pool, drum map, patterns, loaded processing, and
+known manual handoffs. A ready run keeps that bounded context through palette,
+composition, note application, processing, and finalization instead of
+rescanning the complete project before each change. Sound choices retain
+confidence and alternatives; generated notes can adapt to known articulation,
+envelope, register, and polyphony; supported loaded effects can be planned by
+semantic goal and applied through the existing verified setters.
+
 Autonomy belongs to that request only—there is no permanent autonomous-mode
 toggle. A plan-only request never changes FL Studio. An authorized execution
 run enables the existing session write gate once, then continues until the
 submitted plan completes or reaches a real blocker. Earlier verified changes
 remain visible if a later operation fails; PostFader never claims rollback,
 replays an ambiguous mutation, or saves the project automatically.
+
+The consolidated result reports technical execution, arrangement delivery,
+processing, manual handoff, and audible quality separately. Technical success
+never means PostFader heard or approved the song. See [Creation pipeline](docs/creation-pipeline.md),
+[Production Runs](docs/production-runs.md), and [Sound Selection](docs/sound-selection.md).
 
 See the [Production Runs guide](docs/production-runs.md) for chat examples,
 the supported MVP operation set, continuation and stop behavior, process-local

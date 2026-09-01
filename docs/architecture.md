@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current public surface contains 111 tools and 8 resources.
+controller script. The current development surface contains 114 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -16,6 +16,7 @@ fl_studio_mcp/mcp_server.py
         ├── workflows.py ──────────┤
         ├── production_runs.py ────┤
         ├── sound_selection/ ───────┤
+        ├── creation_pipeline/ ──────┤
         ├── mixing.py ─────────────┤
         ├── plugin_atlas_mcp.py ───┤
         ├── creative.py ───────────┤
@@ -35,11 +36,21 @@ The MCP process and bridge are local. The MCP client is a separate trust
 boundary: depending on that client's design, tool arguments and results may be
 sent to a remote model provider.
 
+The creation-pipeline modules are pure contracts and phase services around
+the existing bridge gates. They do not add a raw FL command surface or a
+model. `readiness` and `live_readiness` collect one bounded observation,
+`context` caches same-process target/session facts, `phases` orders work,
+`timing` records local diagnostics, `sound_characteristics` and
+`composition_adaptation` carry metadata-aware note constraints, `processing`
+and `semantic_actions` resolve loaded-effect goals, and `outcomes` keeps
+technical, arrangement, processing, audible, and manual-handoff results
+separate.
+
 ## Components
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 111 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 114 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
@@ -115,6 +126,25 @@ process-local registry, and ordered executor. It delegates composition and
 Piano Roll work to `creative.py` and direct project mutations to the existing
 verified writers and batch executor. The connected AI remains the creative
 planner; PostFader never embeds a model or interprets arbitrary chat itself.
+
+### Creation pipeline
+
+`fl_studio_mcp/creation_pipeline/` supplies the read-only readiness scorecard,
+immutable run-context snapshot, ordered `preflight`/`palette`/`composition`/
+`note_application`/`processing`/`finalization` phases, bounded phase timing,
+sound-characteristic provenance, and multi-dimensional completion outcomes.
+When a run contains sound planning or processing plus mutations, the executor
+performs one readiness preflight and reuses the snapshot across phases. A
+ready-with-limitations state proceeds without another prompt; a blocking state
+returns all detected setup actions together. Narrow session/target checks still
+run immediately before each mutation.
+
+Sound-aware composition constrains register, articulation, envelope, density,
+and practical polyphony only from evidence with explicit confidence. Semantic
+processing requires a loaded effect, Atlas capability, compatible adapter, and
+runtime control evidence, then uses the existing verified display/option or
+normalized setter. These layers never hear live audio and never turn metadata
+into an audible-quality verdict.
 
 ### Sound Selection
 

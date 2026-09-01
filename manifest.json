@@ -4,7 +4,7 @@
   "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 111-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "long_description": "A local 114-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -420,6 +420,18 @@
     {
       "name": "sound_selection_history_reset",
       "description": "Explicitly remove bounded local selection history; project state is unchanged."
+    },
+    {
+      "name": "postfader_creation_readiness",
+      "description": "Aggregate all detectable setup blockers without changing FL Studio."
+    },
+    {
+      "name": "processing_plan",
+      "description": "Plan loaded-effect processing without enabling writes or mutating FL."
+    },
+    {
+      "name": "processing_apply_plan",
+      "description": "Apply a semantic plan through one task-scoped verified Production Run."
     },
     {
       "name": "postfader_validate_run",

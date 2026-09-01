@@ -44,6 +44,26 @@ loaded targets observed in the current project, while Atlas-only products are
 recommendations rather than executable assignments. A loaded but unprofiled
 plug-in remains eligible for palette planning with lower semantic confidence.
 
+## Effect coverage and semantic processing
+
+Effect coverage is an observation, not a support badge. For each requested
+role and technique, PostFader records the loaded mixer-effect targets,
+product/Atlas matches, adapter matches, supported semantic techniques, and
+unresolved controls. A loaded target is processing-ready only when the Atlas
+capability, compatible adapter, and runtime parameter evidence agree. Missing
+or unresolved capabilities are returned before a creation run writes anything;
+an Atlas-only product is never treated as a loaded effect.
+
+`processing_plan` is read-only and resolves conservative goals such as
+`reduce_mud`, `control_dynamics`, `add_depth`, or `rhythmic_echo` to exact
+controls. It prefers a displayed-value or exact-option setter when the adapter
+establishes that representation. `processing_apply_plan` and the equivalent
+Production Run operation use the existing session/target guards and
+later-idle-tick readback. Results distinguish restrained first-pass,
+partial-processing, dry-by-design, and dry-missing-effects states. None of
+these technical states is an audible-quality verdict; that dimension remains
+unevaluated until a user review or bounce analysis.
+
 ## Presets and drum maps
 
 The preset tools are target-aware and work for both mixer effects and global
@@ -64,6 +84,15 @@ note, color, empty, muted, and reported name fields. Sound Selection uses that
 observation to build semantic drum roles without assuming General MIDI. The
 fixed General MIDI map in `compose_drums` remains an explicit fallback only
 when no reported map is supplied.
+
+Sound Selection can walk bounded preset pages beyond the first page when a
+requested identity or a useful candidate is not yet observed. The result
+records page coverage, truncation, duplicate names, and unresolved exact
+identities. Bundled preset/family metadata is versioned separately from Atlas
+and may be supplemented by an isolated user-local layer. Provenance and
+confidence distinguish reviewed exact metadata, family evidence, normalized
+name inference, explicit user preference, and unknowns; absence never proves
+that a preset is unsuitable.
 
 ## How support works for what can be reached
 

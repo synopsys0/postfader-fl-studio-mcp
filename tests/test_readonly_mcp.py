@@ -86,12 +86,15 @@ WRITE_TOOLS = {
     "fl_set_step_sequence",
 }
 PRODUCTION_READ_TOOLS = {
+    "postfader_creation_readiness",
     "postfader_validate_run",
     "postfader_get_run",
+    "processing_plan",
 }
 PRODUCTION_MUTATING_TOOLS = {
     "postfader_execute_run",
     "postfader_continue_run",
+    "processing_apply_plan",
 }
 PRODUCTION_WORKFLOW_TOOLS = {"postfader_stop_run"}
 EPHEMERAL_TOOLS = {"fl_trigger_note"}

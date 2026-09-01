@@ -8,6 +8,7 @@ recursive-include fl_studio_mcp/_bridge *.py
 recursive-include fl_studio_mcp/plugin_atlas *.py
 recursive-include fl_studio_mcp/plugin_atlas_data *.json
 recursive-include fl_studio_mcp/sound_selection *.py *.json
+recursive-include fl_studio_mcp/creation_pipeline *.py
 recursive-include docs *.md
 recursive-include scripts *.py *.sh *.ps1
 recursive-include tests *.py

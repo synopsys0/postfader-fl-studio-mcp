@@ -16,6 +16,22 @@ from unittest import mock
 
 from fl_studio_mcp import production_runs as runs
 from fl_studio_mcp.contracts import ConnectionInfo, ProjectSummary, TransportState
+from fl_studio_mcp.creation_pipeline.context import (
+    PianoRollArmingReceipt,
+    build_context_snapshot,
+)
+from fl_studio_mcp.creation_pipeline.live_readiness import (
+    MCP_PROCESS_IDENTITY,
+    CollectedCreationReadiness,
+)
+from fl_studio_mcp.creation_pipeline.models import (
+    ConnectionReadiness,
+    CreationReadinessInput,
+    EffectCoverageReport,
+    MissingProcessingCapability,
+    PianoRollReadiness,
+    RoleEffectCoverage,
+)
 from fl_studio_mcp.creative import (
     CreativeNote,
     NoteSequence,
@@ -444,14 +460,28 @@ class ProductionRunTests(unittest.TestCase):
             )
 
         self.assertEqual(result.status, "completed")
-        mode.set_write_mode.assert_called_once_with(
-            enabled=True,
-            confirm_user_present=True,
-            session_fingerprint=SESSION,
+        self.assertEqual(
+            mode.set_write_mode.call_args_list,
+            [
+                mock.call(
+                    enabled=True,
+                    confirm_user_present=True,
+                    session_fingerprint=SESSION,
+                ),
+                mock.call(
+                    enabled=False,
+                    confirm_user_present=False,
+                    session_fingerprint=SESSION,
+                ),
+            ],
         )
+        self.assertEqual(result.write_mode_enable_count, 1)
+        self.assertEqual(result.write_mode_disable_count, 1)
+        self.assertFalse(result.write_mode_active)
+        self.assertTrue(result.write_mode_shutdown_verified)
         self.assertEqual(dispatch.call_count, 2)
 
-    def test_mutating_continuation_reuses_the_runs_single_write_transition(
+    def test_mutating_continuation_reuses_authorization_and_reopens_scoped_gate(
         self,
     ) -> None:
         registry = runs.ProductionRunRegistry()
@@ -499,8 +529,183 @@ class ProductionRunTests(unittest.TestCase):
 
         self.assertEqual(first.status, "completed")
         self.assertEqual(continued.status, "completed")
-        self.assertEqual(mode.set_write_mode.call_count, 1)
+        self.assertEqual(mode.set_write_mode.call_count, 4)
+        self.assertEqual(continued.write_mode_enable_count, 2)
+        self.assertEqual(continued.write_mode_disable_count, 2)
+        self.assertFalse(continued.write_mode_active)
         self.assertEqual(dispatch.call_count, 2)
+
+    def test_continuation_rebuilds_readiness_for_revised_request_from_cached_facts(
+        self,
+    ) -> None:
+        connection = ConnectionInfo(
+            connected=True,
+            compatible=True,
+            compatibility_reason="ok",
+            bridge_transport="midi",
+            bridge_mode="read_only",
+            runtime_write_mode_control=True,
+            bridge_provenance="matching",
+            bridge_provenance_verified=True,
+            session_fingerprint=SESSION,
+        )
+        project = ProjectSummary(
+            observed_at=datetime.now(timezone.utc),
+            connection=connection,
+            mixer_track_count=8,
+            channel_count=8,
+            pattern_count=8,
+            playlist_track_count=8,
+            transport=TransportState(playing=False, recording=False),
+        )
+        piano = PianoRollReadiness(
+            required=True,
+            apply_script_present=True,
+            armed_this_process=True,
+            authenticated_arming_receipt=True,
+            arming_receipt_id="piano-receipt",
+            target_selection_supported=True,
+            persistence_receipt_supported=True,
+        )
+        missing = MissingProcessingCapability(
+            category="requested_first_pass_processing",
+            reason="No compatible Mixer effects were observed as loaded.",
+            required_for_completion=True,
+            classification="blocking",
+        )
+        effects = EffectCoverageReport(
+            roles=(
+                RoleEffectCoverage(
+                    role_id="project",
+                    state="missing_requested_effect",
+                    missing_capabilities=(missing,),
+                    processing_required_for_completion=True,
+                ),
+            ),
+            missing_capabilities=(missing,),
+            completion_target="mix_ready",
+            processing_required_for_completion=True,
+            can_produce_dry_draft=True,
+            state="missing_requested_effect",
+        )
+        readiness_connection = ConnectionReadiness(
+            connection_info=connection,
+            mcp_process_identity=MCP_PROCESS_IDENTITY,
+            midi_endpoint="Postfader",
+            midi_input_available=True,
+            midi_output_available=True,
+            queue_healthy=True,
+            supported_fl_build=True,
+            runtime_write_mode_control=True,
+            current_write_state="disabled",
+            require_process_identity=True,
+            require_midi=True,
+        )
+        context = build_context_snapshot(
+            session_fingerprint=SESSION,
+            project=project,
+            mcp_process_identity=MCP_PROCESS_IDENTITY,
+            piano_roll_arming_receipt=PianoRollArmingReceipt(
+                receipt_id="piano-receipt",
+                process_identity=MCP_PROCESS_IDENTITY,
+                authenticated=True,
+                script_present=True,
+            ),
+        )
+        facts = CreationReadinessInput(
+            connection=readiness_connection,
+            project=project,
+            piano_roll=piano,
+            effects=effects,
+            completion_target="mix_ready",
+            processing_required=True,
+            context_snapshot=context,
+            project_checkpoint_digest=context.project_checkpoint.digest,
+        )
+        initial_report = runs.CreationReadinessService().evaluate(facts)
+        collection = CollectedCreationReadiness(
+            readiness_input=facts,
+            context_snapshot=context,
+            sound_inventory=None,
+            loaded_processing_observations=(),
+            full_inventory_scan_count=1,
+            target_refresh_count=0,
+            preset_enumeration_count=0,
+            connection=connection,
+            project=project,
+        )
+        revised_request = request(allowed_changes=("notes",)).model_copy(
+            update={"completion_target": "A playable draft."}
+        )
+        write = runs.WriteNoteSequenceOperation(
+            operation_id="write-notes",
+            sequence=sequence(),
+            channel_index=1,
+            pattern_number=2,
+            mode="replace",
+        )
+        registry = runs.ProductionRunRegistry()
+        mode = mock.Mock()
+        mode.set_write_mode.return_value = SimpleNamespace(
+            session_fingerprint=SESSION,
+            after_enabled=True,
+        )
+        with (
+            mock.patch.object(
+                runs, "_collect_run_readiness", return_value=(initial_report, collection)
+            ) as collect,
+            mock.patch.object(runs, "_current_session_matches", return_value=(True, "")),
+            mock.patch.object(runs, "WriteModeManager", return_value=mode),
+            mock.patch.object(
+                runs, "_dispatch_operation", return_value=verified_selection()
+            ) as dispatch,
+        ):
+            first = registry.execute(
+                request(
+                    allowed_changes=("composition", "notes"),
+                ).model_copy(
+                    update={"completion_target": "A mix-ready production."}
+                ),
+                plan(
+                    melody("compose"),
+                    runs.WriteNoteSequenceOperation(
+                        operation_id="initial-notes",
+                        sequence=sequence(),
+                        channel_index=1,
+                        pattern_number=2,
+                    ),
+                ),
+            )
+            before = registry.get(first.run_id)
+            assert before.state is not None
+            continued = registry.continue_run(
+                first.run_id,
+                runs.ProductionRunDelta(
+                    mode="replace_remaining",
+                    operations=(write,),
+                    request=revised_request,
+                ),
+            )
+
+        self.assertEqual(first.status, "blocked")
+        self.assertIn("required_processing_missing", {item.code for item in first.blockers})
+        self.assertEqual(continued.status, "completed")
+        self.assertNotIn(
+            "required_processing_missing", {item.code for item in continued.blockers}
+        )
+        self.assertIsNotNone(continued.readiness_report)
+        assert continued.readiness_report is not None
+        self.assertEqual(continued.readiness_report.overall_state, "ready_with_limitations")
+        self.assertEqual(collect.call_count, 1)
+        self.assertEqual(dispatch.call_count, 1)
+        after = registry.get(first.run_id)
+        assert after.state is not None
+        assert after.state.run_context is not None
+        self.assertEqual(
+            after.state.run_context.mcp_process_identity,
+            MCP_PROCESS_IDENTITY,
+        )
+        self.assertEqual(after.state.receipts[0].operation_id, "write-notes")
 
     def test_validation_and_plan_only_do_not_enable_write_mode(self) -> None:
         mode = mock.Mock()

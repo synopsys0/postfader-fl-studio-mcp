@@ -35,8 +35,12 @@ SOURCE_DIRECTORIES = ("docs", "fl_studio_mcp", "scripts")
 # staged.  Keep this explicit and narrow so the public bundle remains
 # Git-reviewed and arbitrary untracked files are still excluded.
 WORKTREE_FEATURE_PATHS = (
+    Path("docs/creation-pipeline.md"),
+    Path("docs/releases/dev-v10.md"),
     Path("docs/sound-selection.md"),
+    Path("fl_studio_mcp/creation_pipeline"),
     Path("fl_studio_mcp/sound_selection"),
+    Path("scripts/live_creation_acceptance.py"),
     Path("scripts/live_sound_selection_acceptance.py"),
 )
 BUNDLE_SPECS = (

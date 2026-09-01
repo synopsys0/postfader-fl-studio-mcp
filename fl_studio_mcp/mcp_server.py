@@ -144,6 +144,8 @@ from .mixing import (
     run_mix_doctor,
 )
 from .performance import TrackBController, TrackBInspector
+from .creation_pipeline.models import CreationReadinessReport
+from .creation_pipeline.processing import ProcessingPlan, ProcessingRequest
 from .plugin_atlas_mcp import (
     AtlasGetProductRequest,
     AtlasInspectLoadedRequest,
@@ -159,6 +161,7 @@ from .plugin_atlas_mcp import (
     search_atlas,
 )
 from .production_runs import (
+    ApplyProcessingPlanOperation,
     PRODUCTION_RUNS,
     ProductionRunDelta,
     ProductionRunLookup,
@@ -166,6 +169,9 @@ from .production_runs import (
     ProductionRunRequest,
     ProductionRunResult,
     ProductionRunValidation,
+    ProductionScope,
+    creation_readiness,
+    plan_live_processing,
     validate_production_run,
 )
 from .sound_selection.executor import (
@@ -313,7 +319,7 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 111 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 114 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -342,6 +348,16 @@ request to make changes, postfader_execute_run enables the existing write
 boundary once internally; do not ask for a separate mode transition between
 run operations. Use lower-level tools for precise one-off changes and a
 Production Run for multi-stage, outcome-oriented work.
+
+For a complete creation request, postfader_execute_run performs one creation
+readiness preflight internally; call postfader_creation_readiness separately
+only when a read-only scorecard is useful. The scorecard aggregates connection,
+Piano Roll, instrument, drum, pattern, effect, scope, and manual-handoff needs.
+A ready run reuses one bounded context through palette, composition, note,
+processing, and finalization phases, then shuts write mode down automatically.
+Warnings and alternatives do not require confirmation. Final outcomes keep
+technical execution, arrangement delivery, processing, manual handoff, and
+audible quality separate.
 
 When the user asks only for ideas, options, analysis, or a plan, use read-only
 inspection, postfader_validate_run, or a plan_only run and do not submit
@@ -375,10 +391,24 @@ is the strongest input; balanced planning preserves
 core sounds within a song and uses bounded local recency only to distinguish
 similarly suitable choices. Plan and apply a palette before complete-song
 Production Runs write notes, then reference its generator roles and drum map.
+Preset discovery uses bounded complete or stratified catalog coverage. Keep
+preference provenance, confidence, alternatives, and score margins in
+structured state: model suggestions are soft, while only explicit user,
+profile, or feedback directives may be hard. lock_existing preserves the
+pre-run sound; anchor_after_selection preserves the verified selected identity
+across related sections. Adapt composition to selected-sound articulation,
+register, polyphony, envelope, and density evidence when available.
 Use sound_selection_create_variation for later sections rather than replacing
 anchors without a request. Do not ask for confirmation between role changes in
 one authorized run. Atlas-only products are recommendations, never executable
 assignments, and no preset choice is claimed as heard audio.
+
+Use processing_plan for focused read-only semantic effect planning and
+processing_apply_plan for a separately authorized focused application. For a
+complete creation request, keep plan_processing and apply_processing_plan in
+the same Production Run. Only loaded effects with Atlas capability evidence,
+a compatible adapter, and runtime control evidence are candidates. Prefer
+displayed-value and exact-option writes; Atlas-only products are not loaded.
 
 plugins_list_presets and plugins_get_current_preset expose bounded exact
 identity; fl_select_plugin_preset navigates only within a bounded search and
@@ -3423,6 +3453,124 @@ async def sound_selection_history_reset(
 # ---------------------------------------------------------------------------
 # Task-scoped Production Runs
 # ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="postfader_creation_readiness",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Inspect creation readiness"}
+    ),
+)
+async def postfader_creation_readiness(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(description="Task-scoped creation objective and project constraints."),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed run plan whose complete setup needs are inspected."),
+    ],
+) -> CreationReadinessReport:
+    """Aggregate all detectable setup blockers without changing FL Studio."""
+    return await _mix(creation_readiness, request, plan)
+
+
+@mcp.tool(
+    name="processing_plan",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Plan semantic processing"}
+    ),
+)
+async def processing_plan(
+    request: Annotated[
+        ProcessingRequest,
+        Field(
+            description=(
+                "Restrained processing goals resolved only against effects that are "
+                "loaded, Atlas-matched, adapter-backed, and controllable."
+            )
+        ),
+    ],
+) -> ProcessingPlan:
+    """Plan loaded-effect processing without enabling writes or mutating FL."""
+    return await _mix(plan_live_processing, request)
+
+
+@mcp.tool(
+    name="processing_apply_plan",
+    annotations=MUTATING.model_copy(
+        update={"title": "Apply semantic processing plan"}
+    ),
+)
+async def processing_apply_plan(
+    plan: Annotated[
+        ProcessingPlan,
+        Field(description="Bounded semantic plan returned by processing_plan."),
+    ],
+    session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
+    authorized_to_modify: Annotated[
+        bool,
+        Field(
+            description=(
+                "True only when the current user explicitly authorized these "
+                "processing changes."
+            )
+        ),
+    ],
+) -> ProductionRunResult:
+    """Apply a semantic plan through one task-scoped verified Production Run."""
+    if (
+        plan.session_fingerprint is not None
+        and plan.session_fingerprint != session_fingerprint
+    ):
+        raise ValueError(
+            "session_fingerprint does not match the processing plan's captured session"
+        )
+    if any(
+        action.session_fingerprint is not None
+        and action.session_fingerprint != session_fingerprint
+        for action in plan.actions
+    ):
+        raise ValueError(
+            "session_fingerprint does not match a semantic action's captured session"
+        )
+    prepared = plan.model_copy(
+        update={
+            "session_fingerprint": session_fingerprint,
+            "actions": tuple(
+                (
+                    action
+                    if action.session_fingerprint is not None
+                    else action.model_copy(
+                        update={"session_fingerprint": session_fingerprint}
+                    )
+                )
+                for action in plan.actions
+            ),
+        }
+    )
+    request = ProductionRunRequest(
+        brief="Apply the selected loaded-effect processing plan.",
+        scope=ProductionScope(
+            kind="whole_project",
+            description="Processing targets in this plan.",
+        ),
+        allowed_changes=("plugin_parameters",),
+        completion_target=plan.completion_target.replace("_", " "),
+        interaction_policy="execute_once",
+        max_operations=1,
+        authorized_to_modify=authorized_to_modify,
+    )
+    run_plan = ProductionRunPlan(
+        plan_id=f"processing-{plan.plan_id}"[:64],
+        operations=(
+            ApplyProcessingPlanOperation(
+                operation_id="apply_processing",
+                plan=prepared,
+            ),
+        ),
+    )
+    return await _mix(PRODUCTION_RUNS.execute, request, run_plan)
 
 
 @mcp.tool(
