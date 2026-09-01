@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
 
+from fl_studio_mcp import creative as creative_module  # noqa: E402
 from fl_studio_mcp.bridge_install import expected_bridge_deployment  # noqa: E402
 from fl_studio_mcp.creative import (  # noqa: E402
     PIANO_ROLL,
@@ -96,6 +97,11 @@ def target_receipt() -> PianoRollTargetReceipt:
     )
 
 
+def run_prepared_piano_roll_script(script_path: str) -> None:
+    source = Path(script_path).read_text(encoding="ascii")
+    exec(compile(source, "Postfader_Apply.pyscript", "exec"), {})
+
+
 class CreativeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._bridge_write_state = (
@@ -112,6 +118,9 @@ class CreativeTests(unittest.TestCase):
             PIANO_ROLL._last_count = None
             PIANO_ROLL._last_digest = None
             PIANO_ROLL._last_operation = None
+            PIANO_ROLL._arm_request_id = None
+            PIANO_ROLL._arm_receipt_secret = None
+            PIANO_ROLL._arm_receipt_path = None
 
     def tearDown(self) -> None:
         bridge.LEAN_WRITES_ENABLED, bridge.WRITE_MODE_ORIGIN = (
@@ -322,6 +331,7 @@ class CreativeTests(unittest.TestCase):
             self.assertFalse(prepared.armed_this_session)
             with self.assertRaises(ValueError):
                 PIANO_ROLL.bridge_action("confirm")
+            run_prepared_piano_roll_script(prepared.script_path)
             armed = PIANO_ROLL.bridge_action(
                 "confirm", confirm_user_ran_script=True
             )
@@ -357,6 +367,121 @@ class CreativeTests(unittest.TestCase):
             transform_source = Path(transform.script_path).read_text("ascii")
             self.assertIn('operation == "humanize"', transform_source)
             compile(transform_source, "Postfader_Apply.pyscript", "exec")
+
+    def test_piano_roll_receipt_uses_exclusive_direct_final_binary_write(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = Path(directory) / "arm.json"
+            source = creative_module._bootstrap_script(
+                request_id="a" * 32,
+                receipt_path=receipt_path,
+                receipt_secret="b" * 64,
+            )
+            self.assertIn('open(RECEIPT_PATH, "xb")', source)
+            self.assertNotIn("os.replace", source)
+            self.assertNotIn("os.rename", source)
+            self.assertNotIn("os.link", source)
+            exec(compile(source, "Postfader_Apply.pyscript", "exec"), {})
+
+            self.assertTrue(receipt_path.is_file())
+            self.assertFalse(Path(f"{receipt_path}.tmp").exists())
+            with self.assertRaises(FileExistsError):
+                exec(compile(source, "Postfader_Apply.pyscript", "exec"), {})
+
+    def test_piano_roll_receipt_wait_retries_partial_or_malformed_receipts(self) -> None:
+        notes = [CreativeNote(pitch=60, start_beats=0, duration_beats=1)]
+        digest = creative_module.note_digest(notes)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            path.write_bytes(b"{")
+            expected_evidence = object()
+            with (
+                mock.patch.object(
+                    creative_module,
+                    "_read_piano_roll_receipt",
+                    side_effect=[(None, "partial receipt"), (expected_evidence, None)],
+                ),
+                mock.patch.object(creative_module.time, "sleep"),
+            ):
+                evidence, error = creative_module._await_piano_roll_receipt(
+                    path,
+                    receipt_secret="4" * 64,
+                    request_id="3" * 32,
+                    requested_note_digest=digest,
+                    notes=notes,
+                    mode="replace",
+                )
+
+            self.assertIs(evidence, expected_evidence)
+            self.assertIsNone(error)
+
+            expected_persistence = object()
+            with (
+                mock.patch.object(
+                    creative_module,
+                    "_read_persistence_receipt",
+                    side_effect=[
+                        (None, "malformed persistence receipt"),
+                        (expected_persistence, None),
+                    ],
+                ),
+                mock.patch.object(creative_module.time, "sleep"),
+            ):
+                persistence, error = creative_module._await_persistence_receipt(
+                    path,
+                    receipt_secret="4" * 64,
+                    request_id="3" * 32,
+                    expected_score_note_count=1,
+                    expected_score_digest="5" * 64,
+                    expected_ppq=96,
+                )
+
+            self.assertIs(persistence, expected_persistence)
+            self.assertIsNone(error)
+
+            with (
+                mock.patch.object(
+                    creative_module,
+                    "_read_arm_receipt",
+                    side_effect=[(False, "partial arming receipt"), (True, None)],
+                ),
+                mock.patch.object(creative_module.time, "sleep"),
+            ):
+                armed, error = creative_module._await_arm_receipt(
+                    path, receipt_secret="4" * 64, request_id="3" * 32
+                )
+
+            self.assertTrue(armed)
+            self.assertIsNone(error)
+
+    def test_piano_roll_receipt_wait_reports_last_validation_error(self) -> None:
+        notes = [CreativeNote(pitch=60, start_beats=0, duration_beats=1)]
+        digest = creative_module.note_digest(notes)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            path.write_bytes(b"malformed")
+            with (
+                mock.patch.object(
+                    creative_module,
+                    "PIANO_ROLL_RECEIPT_WAIT_SECONDS",
+                    0.0,
+                ),
+                mock.patch.object(
+                    creative_module,
+                    "_read_piano_roll_receipt",
+                    return_value=(None, "latest validation error"),
+                ),
+            ):
+                evidence, error = creative_module._await_piano_roll_receipt(
+                    path,
+                    receipt_secret="4" * 64,
+                    request_id="3" * 32,
+                    requested_note_digest=digest,
+                    notes=notes,
+                    mode="replace",
+                )
+
+        self.assertIsNone(evidence)
+        self.assertEqual(error, "latest validation error")
 
     def test_piano_roll_directory_reuses_platform_aware_user_data_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -400,6 +525,32 @@ class CreativeTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "must be an absolute"):
                     piano_roll_scripts_directory()
 
+    def test_macos_piano_roll_shortcut_targets_fl_studio_process(self) -> None:
+        completed = mock.Mock(returncode=0, stderr="")
+        with (
+            mock.patch.object(
+                creative_module, "_platform_label", return_value="macos"
+            ),
+            mock.patch.object(
+                creative_module.subprocess, "run", return_value=completed
+            ) as run,
+        ):
+            dispatch = creative_module._trigger_piano_roll_shortcut()
+
+        self.assertTrue(dispatch.hotkey_dispatched)
+        run.assert_called_once()
+        command = run.call_args.args[0]
+        self.assertEqual(command[:2], ["osascript", "-e"])
+        script = command[2]
+        self.assertIn('tell application "System Events"', script)
+        self.assertIn('tell process "FL Studio"', script)
+        self.assertIn("set frontmost to true", script)
+        self.assertIn("delay 0.4", script)
+        self.assertIn(
+            'keystroke "y" using {command down, option down}', script
+        )
+        self.assertNotIn('tell application "FL Studio" to activate', script)
+
     def test_piano_roll_auto_trigger_reports_dispatch_not_application(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
             os.environ,
@@ -407,6 +558,9 @@ class CreativeTests(unittest.TestCase):
             clear=False,
         ):
             PIANO_ROLL.bridge_action("prepare")
+            run_prepared_piano_roll_script(
+                PIANO_ROLL.status().script_path
+            )
             PIANO_ROLL.bridge_action("confirm", confirm_user_ran_script=True)
             with (
                 mock.patch("fl_studio_mcp.creative._target_piano_roll", return_value=target_receipt()),
@@ -420,6 +574,10 @@ class CreativeTests(unittest.TestCase):
                         hotkey_dispatched=True,
                     ),
                 ),
+                mock.patch(
+                    "fl_studio_mcp.creative._await_piano_roll_receipt",
+                    return_value=(None, "Synthetic missing receipt."),
+                ),
             ):
                 receipt = write_piano_roll_notes(
                     [CreativeNote(pitch=67, start_beats=0, duration_beats=2)],
@@ -431,6 +589,300 @@ class CreativeTests(unittest.TestCase):
         self.assertTrue(receipt.target.selected_target_verified)
         self.assertTrue(receipt.trigger.hotkey_dispatched)
         self.assertFalse(receipt.application_verified)
+
+    def test_piano_roll_script_runtime_receipt_verifies_exact_score_delta(self) -> None:
+        class FakeNote:
+            def __init__(self) -> None:
+                self.number = 60
+                self.time = 0
+                self.length = 96
+                self.velocity = 0.8
+                self.pan = 0.5
+                self.release = 0.5
+                self.color = 0
+                self.pitchofs = 0
+                self.slide = False
+                self.porta = False
+                self.muted = False
+                self.selected = True
+
+        class FakeScore:
+            PPQ = 96
+
+            def __init__(self) -> None:
+                existing = FakeNote()
+                existing.number = 48
+                self.notes = [existing]
+
+            @property
+            def noteCount(self) -> int:
+                return len(self.notes)
+
+            def getNote(self, index: int) -> FakeNote:
+                return self.notes[index]
+
+            def addNote(self, note: FakeNote) -> None:
+                # FL treats editor selection as transient UI state and clears
+                # it after the note is committed to the score.
+                note.selected = False
+                self.notes.append(note)
+
+            def clearNotes(self, _all: bool = False) -> None:
+                self.notes.clear()
+
+        notes = [
+            CreativeNote(
+                pitch=67,
+                start_beats=0.5,
+                duration_beats=1.25,
+                velocity=0.73,
+                pan=0.4,
+            ),
+            CreativeNote(pitch=71, start_beats=2.0, duration_beats=0.5),
+        ]
+        request_id = "1" * 32
+        receipt_secret = "2" * 64
+        requested_digest = creative_module.note_digest(notes)
+        fake_module = types.ModuleType("flpianoroll")
+        fake_module.Note = FakeNote
+        fake_module.score = FakeScore()
+
+        with tempfile.TemporaryDirectory() as directory:
+            receipt_path = Path(directory) / "receipt.json"
+            source = creative_module._notes_script(
+                notes,
+                "append",
+                request_id,
+                requested_note_digest=requested_digest,
+                receipt_path=receipt_path,
+                receipt_secret=receipt_secret,
+            )
+            self.assertIn('open(RECEIPT_PATH, "xb")', source)
+            self.assertNotIn("os.replace", source)
+            self.assertNotIn("os.rename", source)
+            self.assertNotIn("os.link", source)
+            with mock.patch.dict(sys.modules, {"flpianoroll": fake_module}):
+                exec(compile(source, "Postfader_Apply.pyscript", "exec"), {})
+            evidence, error = creative_module._read_piano_roll_receipt(
+                receipt_path,
+                receipt_secret=receipt_secret,
+                request_id=request_id,
+                requested_note_digest=requested_digest,
+                notes=notes,
+                mode="append",
+            )
+            assert evidence is not None
+            verification_path = Path(directory) / "persistence.json"
+            verification_source = creative_module._persistence_script(
+                request_id=request_id,
+                expected_score_note_count=evidence.score_note_count,
+                expected_score_digest=evidence.score_digest_sha256,
+                receipt_path=verification_path,
+                receipt_secret=receipt_secret,
+            )
+            self.assertIn('open(RECEIPT_PATH, "xb")', verification_source)
+            self.assertNotIn("os.replace", verification_source)
+            self.assertNotIn("os.rename", verification_source)
+            self.assertNotIn("os.link", verification_source)
+            with mock.patch.dict(sys.modules, {"flpianoroll": fake_module}):
+                exec(
+                    compile(
+                        verification_source,
+                        "Postfader_Apply.pyscript",
+                        "exec",
+                    ),
+                    {},
+                )
+            persistence, persistence_error = (
+                creative_module._read_persistence_receipt(
+                    verification_path,
+                    receipt_secret=receipt_secret,
+                    request_id=request_id,
+                    expected_score_note_count=evidence.score_note_count,
+                    expected_score_digest=evidence.score_digest_sha256,
+                    expected_ppq=evidence.ppq,
+                )
+            )
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(evidence)
+        assert evidence is not None
+        self.assertTrue(evidence.script_completed)
+        self.assertTrue(evidence.postcondition_verified)
+        self.assertEqual(evidence.before_note_count, 1)
+        self.assertEqual(evidence.score_note_count, 3)
+        self.assertEqual(evidence.ppq, 96)
+        self.assertIsNone(persistence_error)
+        self.assertIsNotNone(persistence)
+        assert persistence is not None
+        self.assertTrue(persistence.persistence_check_verified)
+
+    def test_runtime_note_digest_uses_fl_control_grid_without_timing_tolerance(self) -> None:
+        requested = CreativeNote(
+            pitch=60,
+            start_beats=0.5,
+            duration_beats=1.25,
+            velocity=0.72,
+            pan=0.72,
+            release=0.72,
+        )
+        requested_digest = creative_module._runtime_note_digest([requested], ppq=96)
+
+        # FL persists each of these controls at the nearest 1/128 position.
+        for field in ("velocity", "pan", "release"):
+            persisted = requested.model_copy(update={field: 0.71875})
+            self.assertEqual(
+                requested_digest,
+                creative_module._runtime_note_digest([persisted], ppq=96),
+            )
+
+        # The next representable control position is still a meaningful change.
+        neighboring_control = requested.model_copy(update={"velocity": 93 / 128})
+        self.assertNotEqual(
+            requested_digest,
+            creative_module._runtime_note_digest([neighboring_control], ppq=96),
+        )
+
+        # Pitch, start time, and duration remain exact identity fields; no broad
+        # float tolerance may make a musically different note look unchanged.
+        for field, value in (
+            ("pitch", 61),
+            ("start_beats", 0.75),
+            ("duration_beats", 1.5),
+            ("color", 1),
+            ("pitch_offset_tenths", 1),
+            ("slide", True),
+            ("portamento", True),
+            ("muted", True),
+        ):
+            changed_note = requested.model_copy(update={field: value})
+            self.assertNotEqual(
+                requested_digest,
+                creative_module._runtime_note_digest([changed_note], ppq=96),
+            )
+
+        # Selection is an editor-only flag.  FL may clear it after dispatch,
+        # so it must not turn a semantically identical persisted note into a
+        # false verification failure.
+        deselected = requested.model_copy(update={"selected": False})
+        self.assertEqual(
+            requested_digest,
+            creative_module._runtime_note_digest([deselected], ppq=96),
+        )
+
+    def test_authenticated_script_runtime_evidence_verifies_dispatch(self) -> None:
+        notes = [CreativeNote(pitch=67, start_beats=0, duration_beats=2)]
+        digest = creative_module.note_digest(notes)
+        evidence = creative_module.PianoRollScriptRuntimeEvidence(
+            request_id="5" * 32,
+            operation="write_notes",
+            mode="replace",
+            requested_note_digest=digest,
+            expected_added_note_count=1,
+            ppq=96,
+            before_note_count=None,
+            score_note_count=1,
+            added_note_digest_sha256=creative_module._runtime_note_digest(
+                notes, ppq=96
+            ),
+            score_digest_sha256="6" * 64,
+            script_completed=True,
+            postcondition_verified=True,
+            receipt_path="/tmp/synthetic-piano-roll-receipt.json",
+            receipt_sha256="7" * 64,
+            persistence_check_completed=False,
+            persistence_check_verified=False,
+        )
+        persistence = creative_module._PianoRollPersistenceReceipt(
+            request_id=evidence.request_id,
+            operation="verify_write_notes",
+            ppq=96,
+            expected_score_note_count=1,
+            observed_score_note_count=1,
+            expected_score_digest_sha256="6" * 64,
+            observed_score_digest_sha256="6" * 64,
+            persistence_check_completed=True,
+            persistence_check_verified=True,
+            receipt_path="/tmp/synthetic-piano-roll-persistence.json",
+            receipt_sha256="8" * 64,
+        )
+        trigger = HotkeyDispatch(
+            platform="macos",
+            shortcut="Cmd+Opt+Y",
+            fl_window_found=True,
+            fl_window_focused=True,
+            hotkey_dispatched=True,
+        )
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ,
+            {"POSTFADER_PIANO_ROLL_SCRIPTS_DIR": directory},
+            clear=False,
+        ):
+            with (
+                mock.patch.object(PIANO_ROLL, "require_armed"),
+                mock.patch.object(
+                    creative_module,
+                    "_target_piano_roll",
+                    return_value=target_receipt(),
+                ),
+                mock.patch.object(
+                    creative_module,
+                    "_trigger_piano_roll_shortcut",
+                    return_value=trigger,
+                ),
+                mock.patch.object(
+                    creative_module,
+                    "_await_piano_roll_receipt",
+                    return_value=(evidence, None),
+                ),
+                mock.patch.object(
+                    creative_module,
+                    "_await_persistence_receipt",
+                    return_value=(persistence, None),
+                ),
+                mock.patch.object(
+                    creative_module.os,
+                    "urandom",
+                    side_effect=[b"\x55" * 16, b"\x22" * 32],
+                ),
+            ):
+                receipt = write_piano_roll_notes(
+                    notes,
+                    channel_index=2,
+                    pattern_number=3,
+                    mode="replace",
+                    auto_trigger=True,
+                )
+
+        self.assertEqual(receipt.status, "script_runtime_verified")
+        self.assertTrue(receipt.application_verified)
+        assert receipt.script_runtime_evidence is not None
+        self.assertTrue(
+            receipt.script_runtime_evidence.persistence_check_verified
+        )
+        self.assertFalse(receipt.authoritative_note_readback_available)
+
+    def test_piano_roll_script_runtime_receipt_rejects_tampering(self) -> None:
+        notes = [CreativeNote(pitch=60, start_beats=0, duration_beats=1)]
+        request_id = "3" * 32
+        digest = creative_module.note_digest(notes)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            path.write_text(
+                '{"hmac_sha256":"' + "0" * 64 + '","payload":{}}',
+                encoding="ascii",
+            )
+            evidence, error = creative_module._read_piano_roll_receipt(
+                path,
+                receipt_secret="4" * 64,
+                request_id=request_id,
+                requested_note_digest=digest,
+                notes=notes,
+                mode="replace",
+            )
+
+        self.assertIsNone(evidence)
+        self.assertIn("payload fields", error)
 
     def _assert_piano_roll_live_sequence_is_serial(self, operation: str) -> None:
         events: list[tuple[str, str]] = []
@@ -541,8 +993,6 @@ class CreativeTests(unittest.TestCase):
         self._assert_piano_roll_live_sequence_is_serial("transform")
 
     def test_piano_roll_prepare_cannot_replace_an_in_flight_dispatch(self) -> None:
-        from fl_studio_mcp import creative as creative_module
-
         trigger_entered = threading.Event()
         release_trigger = threading.Event()
         prepare_started = threading.Event()
@@ -554,7 +1004,7 @@ class CreativeTests(unittest.TestCase):
             PIANO_ROLL._armed = True
 
         def atomic(_path: Path, content: str) -> str:
-            if content == creative_module._BOOTSTRAP_SCRIPT:
+            if "POSTFADER_BOOTSTRAP = True" in content:
                 bootstrap_written.set()
             return "c" * 64
 

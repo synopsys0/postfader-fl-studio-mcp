@@ -1464,11 +1464,13 @@ def check_lean_writes(c):
 def check_track_b():
     """Track B against stateful fake FL APIs, including failure paths."""
     import channels as fake_channels
+    import midi as fake_midi
     import mixer as fake_mixer
     import patterns as fake_patterns
     import playlist as fake_playlist
     import plugins as fake_plugins
     import transport as fake_transport
+    import ui as fake_ui
 
     _state.reset()
     w = _load_bridge_with_writes()
@@ -1565,6 +1567,115 @@ def check_track_b():
           (playlist_same, selection_calls))
 
     print("\n-- creative targeting, section markers and automation boundaries --")
+    absent = object()
+    saved_open_event_editor = getattr(fake_ui, "openEventEditor", absent)
+    saved_rec_chan_piano_roll = getattr(fake_midi, "REC_Chan_PianoRoll", absent)
+    saved_ee_pr = getattr(fake_midi, "EE_PR", absent)
+    saved_get_rec_event_id = fake_channels.getRecEventId
+    saved_show_window = fake_ui.showWindow
+    event_calls = []
+    rec_event_calls = []
+    show_window_calls = []
+
+    def recording_get_rec_event_id(index, *args):
+        rec_event_calls.append((index, args))
+        return saved_get_rec_event_id(index, *args)
+
+    def recording_open_event_editor(event_id, flags):
+        event_calls.append((event_id, flags))
+        _state.VISIBLE_WINDOWS.add(fake_midi.widPianoRoll)
+
+    def recording_show_window(window):
+        show_window_calls.append(window)
+        return saved_show_window(window)
+
+    fake_channels.getRecEventId = recording_get_rec_event_id
+    fake_ui.openEventEditor = recording_open_event_editor
+    fake_midi.REC_Chan_PianoRoll = 2048
+    fake_midi.EE_PR = 77
+    try:
+        event_target, event_target_yields = drive(
+            w,
+            "creative.prepare_piano_roll",
+            channel=2,
+            pattern=3,
+            index_scope="global",
+            session_fingerprint=session,
+        )
+        check("Piano Roll event editor targets requested global channel",
+              event_target["ok"] and event_target_yields == 1
+              and rec_event_calls == [(2, ())]
+              and event_calls == [
+                  (saved_get_rec_event_id(2) + fake_midi.REC_Chan_PianoRoll,
+                   fake_midi.EE_PR)
+              ]
+              and event_target["result"]["selected_target_verified"]
+              and event_target["result"]["piano_roll_visibility_verified"] is True,
+              (event_target, rec_event_calls, event_calls))
+
+        repeated_event_target, repeated_event_target_yields = drive(
+            w,
+            "creative.prepare_piano_roll",
+            channel=2,
+            pattern=3,
+            index_scope="global",
+            session_fingerprint=session,
+        )
+        check("Piano Roll preparation is idempotent for a visible matching target",
+              repeated_event_target["ok"]
+              and repeated_event_target_yields == 1
+              and rec_event_calls == [(2, ())]
+              and event_calls == [
+                  (saved_get_rec_event_id(2) + fake_midi.REC_Chan_PianoRoll,
+                   fake_midi.EE_PR)
+              ]
+              and repeated_event_target["result"]["piano_roll_visible_before"] is True
+              and repeated_event_target["result"]["piano_roll_visible_after"] is True
+              and repeated_event_target["result"]["selected_target_verified"]
+              and repeated_event_target["result"]["piano_roll_visibility_verified"] is True,
+              (repeated_event_target, rec_event_calls, event_calls))
+
+        delattr(fake_ui, "openEventEditor")
+        fake_ui.showWindow = recording_show_window
+        fallback_target, fallback_target_yields = drive(
+            w,
+            "creative.prepare_piano_roll",
+            channel=0,
+            pattern=3,
+            index_scope="global",
+            session_fingerprint=session,
+        )
+        check("Piano Roll falls back to showWindow when event editor is unavailable",
+              fallback_target["ok"] and fallback_target_yields == 1
+              and show_window_calls == [fake_midi.widPianoRoll]
+              and fallback_target["result"]["selected_target_verified"]
+              and fallback_target["result"]["piano_roll_visibility_verified"] is True,
+              (fallback_target, show_window_calls))
+    finally:
+        fake_channels.getRecEventId = saved_get_rec_event_id
+        if saved_open_event_editor is absent:
+            try:
+                delattr(fake_ui, "openEventEditor")
+            except AttributeError:
+                pass
+        else:
+            fake_ui.openEventEditor = saved_open_event_editor
+        if saved_rec_chan_piano_roll is absent:
+            try:
+                delattr(fake_midi, "REC_Chan_PianoRoll")
+            except AttributeError:
+                pass
+        else:
+            fake_midi.REC_Chan_PianoRoll = saved_rec_chan_piano_roll
+        if saved_ee_pr is absent:
+            try:
+                delattr(fake_midi, "EE_PR")
+            except AttributeError:
+                pass
+        else:
+            fake_midi.EE_PR = saved_ee_pr
+        fake_ui.showWindow = saved_show_window
+
     target, target_yields = drive(
         w,
         "creative.prepare_piano_roll",

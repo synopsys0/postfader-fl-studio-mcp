@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest import mock
 
-from fl_studio_mcp import production_runs as runs
 from fl_studio_mcp import creative
+from fl_studio_mcp import production_runs as runs
 from fl_studio_mcp.creative import HotkeyDispatch, NoteSequence
 from fl_studio_mcp.sound_selection.models import (
     DrumPad,
@@ -24,7 +24,12 @@ from fl_studio_mcp.sound_selection.models import (
     SoundSelectionRequest,
     canonical_digest,
 )
-from fl_studio_mcp.track_b_contracts import ChannelGeneratorTarget
+from fl_studio_mcp.track_b_contracts import (
+    ChannelGeneratorTarget,
+    PluginPresetState,
+    TargetedPluginSummary,
+    VerifiedPluginPresetSelection,
+)
 
 
 SESSION = "a" * 32
@@ -483,6 +488,117 @@ class SoundSelectionProductionRunTests(unittest.TestCase):
         )
         atomic_text.assert_not_called()
         trigger.assert_not_called()
+
+    def test_get_run_rehydrates_sound_selection_apply_receipt_with_track_b_warnings(self) -> None:
+        base = palette()
+        assignment = base.assignments[0]
+        assert assignment.target is not None
+        target_fingerprint = "c" * 64
+        selection = VerifiedPluginPresetSelection(
+            applied_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            verified=True,
+            verification_summary="FL read the requested preset identity back.",
+            target=assignment.target,
+            plugin=TargetedPluginSummary(
+                target=assignment.target,
+                name="Synthetic Lead",
+                target_fingerprint=target_fingerprint,
+                reported_parameter_count=0,
+            ),
+            requested_preset_name=assignment.selected_preset,
+            requested_preset_index=assignment.selected_preset_index,
+            before=PluginPresetState(
+                name="Previous Lead", index=2, identity_status="stable"
+            ),
+            after=PluginPresetState(
+                name=assignment.selected_preset,
+                index=assignment.selected_preset_index,
+                identity_status="stable",
+            ),
+            outcome="verified",
+            navigation_direction="next",
+            navigation_steps=1,
+            max_navigation_steps=4,
+            settle_tick_limit=1,
+            target_fingerprint=target_fingerprint,
+            warnings=["FL undo evidence confirms the preset change."],
+        )
+        assignment_receipt = PaletteApplyReceipt(
+            assignment_id=assignment.assignment_id,
+            role_id=assignment.role_id,
+            verified=True,
+            verification_summary="Verified palette assignment.",
+            selected_preset=assignment.selected_preset,
+        )
+        stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        palette_state = SoundPaletteState(
+            palette_id=base.palette_id,
+            status="applied",
+            created_at=stamp,
+            updated_at=stamp,
+            session_identity=SESSION,
+            assignments=base.assignments,
+            apply_receipts=(assignment_receipt,),
+        )
+        applied = runs.SoundSelectionApplyResult(
+            palette_id=base.palette_id,
+            status="applied",
+            session_fingerprint=SESSION,
+            state=palette_state,
+            assignment_scope=(assignment,),
+            receipts=(selection,),
+            assignment_receipts=(assignment_receipt,),
+            verified_count=1,
+        )
+        operation = runs.ApplySoundPaletteOperation(
+            operation_id="apply",
+            palette=base,
+        )
+        plan = runs.ProductionRunPlan(
+            plan_id="apply-plan",
+            operations=(operation,),
+        )
+        receipt = runs.ProductionOperationReceipt(
+            operation_index=0,
+            operation_id=operation.operation_id,
+            operation=operation.operation,
+            status="verified",
+            mutating=True,
+            outcome_known=True,
+            verified=True,
+            result=applied,
+        )
+        state = runs.ProductionRunState(
+            run_id="d" * 32,
+            request=run_request(),
+            plan_id=plan.plan_id,
+            plan_digest=runs.production_plan_digest(plan),
+            status="completed",
+            created_at=stamp,
+            updated_at=stamp,
+            started_at=stamp,
+            finished_at=stamp,
+            session_fingerprint=SESSION,
+            iteration=1,
+            current_operation_index=1,
+            total_operations=1,
+            completed_operations=(operation.operation_id,),
+            receipts=(receipt,),
+        )
+        registry = runs.ProductionRunRegistry()
+        registry._runs[state.run_id] = runs._RunRecord(plan=plan, state=state)
+
+        lookup = registry.get(state.run_id)
+
+        self.assertTrue(lookup.found)
+        assert lookup.state is not None
+        restored = lookup.state.receipts[0].result
+        self.assertIsInstance(restored, runs.SoundSelectionApplyResult)
+        assert isinstance(restored, runs.SoundSelectionApplyResult)
+        self.assertEqual(
+            restored.receipts[0].warnings,
+            ["FL undo evidence confirms the preset change."],
+        )
 
     def test_valid_generator_target_reaches_piano_roll_mutation(self) -> None:
         target_fingerprint = "c" * 64
