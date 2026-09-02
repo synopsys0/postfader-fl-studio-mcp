@@ -1,0 +1,135 @@
+{
+  "comparison": {
+    "improvements": [
+      "build_to_drop_contrast",
+      "primary_bass_level"
+    ],
+    "regressions": [
+      "stereo_correlation"
+    ]
+  },
+  "feedback": {
+    "accepted": [
+      "main_chords"
+    ],
+    "rejected": [
+      "main_lead"
+    ],
+    "role_notes": {
+      "primary_bass": "too soft"
+    }
+  },
+  "generated_outputs": [
+    {
+      "role_id": "main_chords",
+      "sequence_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "role_id": "main_lead",
+      "sequence_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "role_id": "primary_bass",
+      "sequence_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "role_id": "sub_bass",
+      "sequence_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    },
+    {
+      "role_id": "drums",
+      "sequence_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    }
+  ],
+  "palette": {
+    "anchors": [
+      "main_chords",
+      "primary_bass",
+      "sub_bass",
+      "drums"
+    ],
+    "palette_id": "synthetic-palette",
+    "roles": [
+      "main_chords",
+      "main_lead",
+      "primary_bass",
+      "sub_bass",
+      "drums"
+    ]
+  },
+  "playlist_handoff": [
+    {
+      "end_bar": 9,
+      "pattern_name": "PF Intro",
+      "pattern_number": 1,
+      "playlist_track_number": 1,
+      "start_bar": 1
+    },
+    {
+      "end_bar": 17,
+      "pattern_name": "PF Build",
+      "pattern_number": 2,
+      "playlist_track_number": 2,
+      "start_bar": 9
+    },
+    {
+      "end_bar": 25,
+      "pattern_name": "PF Drop A",
+      "pattern_number": 3,
+      "playlist_track_number": 3,
+      "start_bar": 17
+    },
+    {
+      "end_bar": 33,
+      "pattern_name": "PF Drop B",
+      "pattern_number": 4,
+      "playlist_track_number": 4,
+      "start_bar": 25
+    }
+  ],
+  "revision": {
+    "operations": [
+      "adjust_role_level",
+      "change_sound_assignment"
+    ],
+    "plan_id": "synthetic-revision-1"
+  },
+  "schema_version": "1.0",
+  "sections": [
+    {
+      "end_bar": 9,
+      "name": "Intro",
+      "section_id": "intro",
+      "start_bar": 1
+    },
+    {
+      "end_bar": 17,
+      "name": "Build",
+      "section_id": "build",
+      "start_bar": 9
+    },
+    {
+      "end_bar": 25,
+      "name": "Drop A",
+      "section_id": "drop_a",
+      "start_bar": 17
+    },
+    {
+      "end_bar": 33,
+      "name": "Drop B",
+      "section_id": "drop_b",
+      "start_bar": 25
+    }
+  ],
+  "source_run": {
+    "brief": "Create a synthetic four-section electronic draft.",
+    "plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "run_id": "11111111111111111111111111111111",
+    "status": "completed",
+    "tempo_bpm": 120.0,
+    "time_signature": [
+      4,
+      4
+    ]
+  }
+}

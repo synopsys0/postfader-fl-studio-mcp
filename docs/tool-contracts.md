@@ -1,13 +1,14 @@
 # Tool and command reference
 
-PostFader exposes 114 MCP tools and 8 MCP resources on the current development branch. The MCP layer is the supported
+PostFader exposes 127 MCP tools and 8 MCP resources on the current development branch. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. The surface contains 50 read-only tools, 39 directly
-guarded FL setters, 12 specialized mutating workflows, 8 non-destructive
-workflow/dispatch tools, and 2 idempotent destructive controls.
+and non-finite numbers. Tool annotations distinguish read-only inspection,
+directly guarded FL setters, non-destructive workflow/dispatch, and destructive
+controls; the 13 Creation Review tools are documented in their own section
+below.
 `fl_set_write_mode` changes the session write capability;
 `sound_selection_history_reset` deletes only the bounded local history after
 explicit confirmation.
@@ -462,6 +463,74 @@ them. A Production Run never renders, inserts plug-ins, creates Playlist clips,
 saves the FL Studio project, retries an ambiguous mutation, or claims an
 automatic rollback. See [Production Runs](production-runs.md) for examples and
 current limitations.
+
+## Creation Review, revision, and delivery
+
+Creation Review is a bounded continuation of one completed Production Run. It
+keeps the source-run snapshot and its receipts immutable, evaluates explicit
+caller-selected bounces, records producer feedback and independent locks,
+compiles one closed revision plan, and prepares comparison and delivery
+evidence. The public surface contains 13 dedicated MCP tools:
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `postfader_review_start` | Open a Review Session from one completed Production Run. The request carries the review brief, scope, preservation rules, feedback, revision budget, evaluation policy, and opt-in persistence settings; it does not change FL Studio. |
+| `postfader_review_attach_assets` | Validate and attach an explicit full mix, before/after bounce, reference, synchronized stem, or section bounce. Paths must be caller-selected regular audio files; attaching never changes FL Studio. |
+| `postfader_review_evaluate` | Measure one attached asset set globally and against the known section map, with optional tempo, time signature, and export offset. It reports findings and limitations and applies zero FL mutations. |
+| `postfader_review_get` | Read a process-local or persisted Review Session, retained evidence, status, blockers, and exact next action. |
+| `postfader_review_compare` | Compare distinct before and after asset IDs when their digests, channels, duration, offsets, and section alignment are usable. An `after_full_mix` must reference its recorded revision pass; recording comparison advances that pass from `attached` to `compared`. Technical improvements and regressions remain separate from user approval. |
+| `postfader_review_plan_revision` | Compile and validate one closed, ordered `RevisionPlan` against findings/feedback, preserved elements, locks, source digests, live targets, scope, and risk limits. The plan binds to a canonical `RevisionRequest` digest; `authorized_to_modify` is excluded and must be asserted afresh at apply. Planning never mutates FL Studio. |
+| `postfader_delivery_manifest` | Build the current read-only delivery view, including independent technical, arrangement, processing, audible-quality, approval, and manual-handoff states. It writes no file or project. |
+| `postfader_review_export_handoff` | Return one exact next full-mix export request and only the stems needed to resolve an identified uncertainty. It does not render or discover arbitrary files. |
+| `postfader_review_apply_revision` | Apply one recorded revision through the existing Production Run executor. A clear modification request uses one readiness preflight and one task-scoped authorization; stale or unknown outcomes stop without replay or rollback. If FL mutation completes but session persistence fails afterward, the result is blocked with a process-local receipt and no replay. |
+| `postfader_review_record_feedback` | Store explicit structured producer feedback and any accepted-element locks. Silence, measurements, and model interpretation never become approval. |
+| `postfader_review_stop` | Stop future work for one Review Session without undoing completed FL changes or rewriting receipts. |
+| `postfader_review_delete` | Delete one Review Session's local metadata after `confirm=true`; audio files and the FL Studio project are untouched. The deleted metadata is not recoverable by PostFader. |
+| `postfader_delivery_export_manifest` | Create-only export of the delivery view as JSON and/or Markdown. Existing files are never overwritten; the result includes the logical manifest digest and exact artifact SHA-256 hashes, and newly created companions are cleaned up if the paired write fails. The FL Studio project is never saved. |
+
+The table intentionally names `postfader_delivery_manifest` once as a delivery
+view tool; the 13-tool count is the 11 `postfader_review_*` tools, that one
+delivery-view tool, and `postfader_delivery_export_manifest`.
+
+Opt-in Review persistence is bounded versioned local JSON at
+`<FL Studio user-data>/Settings/PostFader/creation-review-sessions-v1.json`,
+unless `POSTFADER_CREATION_REVIEW_PATH` (or its compatibility alias) supplies
+another absolute path. The request defaults to three revision passes (hard cap
+eight); the store caps 64 sessions, 256 assets, 256 findings per evaluation, 32
+evaluations, 64 comparisons, 32 delivery manifests, and a 16 MiB serialized
+document. A private per-path advisory lock serializes writers across MCP
+processes, and deterministic pruning keeps findings referenced by retained
+plans or passes ahead of lower-ranked unreferenced findings. Durable and
+delivery serializers remove credentials, prompts, transcripts, encoded or raw
+audio, cloud identifiers, and arbitrary private paths; `persist_asset_paths=true`
+permits only canonical attached `ReviewAudioAsset.path` fields. The public
+delete tool requires explicit confirmation; store reset/repair is also explicit
+and never automatic. A persistence failure after a verified FL mutation
+returns a blocked process-local receipt and must not be replayed.
+
+### Creation Review operations inside a Production Run
+
+The same workflow is available to a typed Production Run through a closed set
+of 9 review operations. Their names are distinct from the 13 top-level MCP
+tools and can be linked with the run's typed output references:
+
+| Operation | Result and boundary |
+| --- | --- |
+| `start_review_session` | Snapshot one completed source run into a bounded Review Session and expose retained authoritative sections as typed `section_definition` items; read-only local state. |
+| `attach_review_assets` | Validate and retain explicit audio asset metadata for the referenced Review Session; no FL mutation. |
+| `evaluate_creation` | Analyze the selected bounce and known sections, returning an evaluation report and findings; no FL mutation. |
+| `record_creation_feedback` | Retain explicit producer feedback and any feedback locks; no FL mutation. |
+| `plan_creation_revision` | Compile a closed revision plan with traceable findings, feedback, dependencies, expected movements, and manual actions; no FL mutation. |
+| `apply_creation_revision` | Apply the recorded plan through the existing Production Run writers with one preflight and authorization boundary; mutating and verification-gated. |
+| `compare_revision_bounces` | Compare distinct before/after assets and expose objective results, improvements, regressions, and insufficient evidence; no FL mutation. |
+| `create_playlist_handoff` | Create a precise manual Playlist placement/delta handoff; Playlist clip placement remains outside the public API. |
+| `create_delivery_manifest` | Assemble the final multi-dimensional delivery manifest; it does not render, save, or write project state. |
+
+Review operations are bounded by the source request's pass, asset, finding,
+feedback, and operation limits. A run can retain review outputs as typed
+references (`review_session`, `evaluation_report`, `finding`, `feedback_lock`,
+`section_definition`, `revision_plan`, `revision_pass`,
+`revision_comparison`, `playlist_handoff`, and `delivery_manifest`).
 
 ## Creative, MIDI, arrangement, and automation tools
 

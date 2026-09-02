@@ -61,8 +61,10 @@ probe still reports 94 diagnostics while the enforced Pyright baseline is
 clean; this difference is why mypy is documented as exploratory rather than a
 second failing CI gate.
 
-`pyrightconfig.json` uses basic checking and includes exactly those seven
-entry modules. Their imported application modules are analyzed normally.
+`pyrightconfig.json` uses basic checking over the established typed core plus
+Plugin Atlas, Sound Selection, Creation Pipeline, Production Runs, Creation
+Review, and the review fixture/live-acceptance scripts. Imported application
+modules are analyzed normally.
 The FL-only controller and test harnesses are excluded for the same runtime
 reasons described above. The only source-level compatibility adjustment is a
 targeted `reportMissingImports` comment on the Python 3.10-only `tomli`

@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_TOOL_COUNT = 114
+EXPECTED_TOOL_COUNT = 127
 EXPECTED_RESOURCE_COUNT = 8
 
 
@@ -33,6 +33,8 @@ def main(argv=None) -> int:
     )
     from fl_studio_mcp.creation_pipeline import models as creation_pipeline_models
     from fl_studio_mcp.creation_pipeline import timing as creation_pipeline_timing
+    from fl_studio_mcp.creation_review import models as creation_review_models
+    from fl_studio_mcp.creation_review import persistence as creation_review_persistence
     from fl_studio_mcp.mcp_server import mcp
     from fl_studio_mcp.plugin_atlas import load_bundled_registry
     from fl_studio_mcp.sound_selection import (
@@ -96,9 +98,16 @@ def main(argv=None) -> int:
             failures.append("installed creation-pipeline model module is empty")
         if creation_pipeline_timing.RunTimingReport.__name__ != "RunTimingReport":
             failures.append("installed creation-pipeline timing module is unavailable")
+        if creation_review_models.CREATION_REVIEW_SCHEMA_VERSION != "1.0":
+            failures.append("installed Creation Review schema version is unavailable")
+        if (
+            creation_review_persistence.REVIEW_SESSION_SCHEMA_VERSION
+            != creation_review_models.CREATION_REVIEW_SCHEMA_VERSION
+        ):
+            failures.append("installed Creation Review persistence schema is mismatched")
     except Exception as error:  # pragma: no cover - exercised in clean installs
         failures.append(
-            "installed creation-pipeline or preset metadata resources could not be loaded: %s"
+            "installed creation-pipeline, Creation Review, or preset metadata resources could not be loaded: %s"
             % error
         )
 

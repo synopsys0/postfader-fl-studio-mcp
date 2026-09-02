@@ -5,6 +5,12 @@ pipeline. A connected AI still interprets the producer's request and submits a
 closed typed plan; PostFader does not contain an LLM, audition live audio, or
 invent unsupported FL Studio operations.
 
+The pipeline's completion outcome is also the source state for a bounded
+[Creation Review](creation-review.md) session. Review never rewrites creation
+receipts: it retains the original palette, generated sequences, processing
+evidence, section intent, timing, and manual handoffs, then records evaluation
+and revision results alongside that immutable source snapshot.
+
 ## One readiness preflight
 
 `postfader_creation_readiness` is a read-only scorecard. The normal

@@ -28,7 +28,7 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**114 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**127 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
 
@@ -237,6 +237,26 @@ See the [Production Runs guide](docs/production-runs.md) for chat examples,
 the supported MVP operation set, continuation and stop behavior, process-local
 run lifetime, and FL Studio limitations.
 
+## Creation Review, Revision, and Delivery
+
+After a Production Run creates a playable draft, export one bounce and ask the
+connected AI to review and improve it. PostFader validates and measures the
+selected file globally and by known song section, combines that evidence with
+your explicit feedback, protects accepted sounds or notes with independent
+locks, and compiles the smallest bounded revision into the existing Production
+Run executor. One revision pass uses one readiness preflight and one
+task-scoped write authorization.
+
+Export the revised bounce with matching settings and PostFader can compare the
+two versions, report improvements and regressions separately, and prepare an
+exact Playlist, export, and delivery handoff. Technical measurements and
+section-energy proxies never substitute for your artistic approval. Sessions
+can persist locally without storing audio bytes or paths you chose not to
+retain. PostFader still does not render, save, create Playlist clips, insert
+plug-ins, or hear FL Studio's live output. See the
+[Creation Review guide](docs/creation-review.md), which documents its 13 MCP
+tools and 9 corresponding Production Run operations.
+
 ## Feature depth
 
 ### Mix and finish
@@ -425,6 +445,7 @@ first write test, and disable write mode when you are done.
 | [Setup and troubleshooting](docs/setup.md) | Full installation, virtual MIDI, bridge, client configuration, upgrades, and diagnostics |
 | [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
 | [Sound Selection](docs/sound-selection.md) | Producer direction, coherent palettes, exact preset verification, drum maps, local history, and Production Run references |
+| [Creation Review](docs/creation-review.md) | Bounce evaluation, explicit feedback and locks, one bounded revision, before/after comparison, persistence, and delivery handoffs |
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |

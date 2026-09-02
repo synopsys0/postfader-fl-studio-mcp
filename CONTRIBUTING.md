@@ -185,7 +185,7 @@ run the complete safe suite.
 ## MCP surface changes
 
 The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the current public surface contains 114 tools and 8 resources. Preserve
+`fl-studio`, and the current public surface contains 127 tools and 8 resources. Preserve
 existing names and response contracts unless a deliberate compatibility change
 has been discussed.
 

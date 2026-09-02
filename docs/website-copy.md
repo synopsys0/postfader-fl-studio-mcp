@@ -9,7 +9,7 @@ capabilities or duplicating the full technical manuals.
 
 1. Hero and downloads
 2. Category statement
-3. Four workflow stories
+3. Five workflow stories
 4. One complete production workflow
 5. Feature depth
 6. Generic category comparison
@@ -45,7 +45,7 @@ another local MCP client.
 
 **Secondary action:** Explore what PostFader can do
 
-**Proof strip:** 114 tools · 8 live resources · Windows and macOS · Open source ·
+**Proof strip:** 127 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.
@@ -241,6 +241,40 @@ MCP process and does not provide controller-side note readback.
 Reproducible musical parts, an importable multi-track MIDI file, or a prepared
 editing and arrangement starting point—not merely a stream of disconnected
 notes.
+
+---
+
+## Workflow E — Review a draft and prepare delivery
+
+### You ask
+
+> “The drop is weak but keep the lead melody. Review my bounce, improve the
+> arrangement, and tell me exactly what to export next.”
+
+### PostFader uses
+
+- a completed Production Run snapshot;
+- the full-mix bounce and any synchronized stems or reference you choose;
+- section-aware technical measurements and disclosed arrangement proxies;
+- explicit producer feedback and independent preservation locks; and
+- one bounded revision, before/after comparison, and delivery handoff.
+
+### What it does
+
+Creation Review keeps measured evidence separate from producer judgment. It
+plans and applies one revision through the existing Production Run executor
+when you clearly request a change, then asks for a matching revised bounce.
+Technical improvements and regressions remain separate, and Playlist placement,
+rendering, project saving, and artistic approval stay with you.
+
+### You receive
+
+A reviewable evaluation, traceable revision receipts, an exact next-export
+request, and a create-only JSON/Markdown delivery manifest when requested.
+
+See the [Creation Review guide](creation-review.md) for its 13 MCP tools, 9
+Production Run operations, persistence controls, troubleshooting, and
+maintainer acceptance boundaries.
 
 ---
 

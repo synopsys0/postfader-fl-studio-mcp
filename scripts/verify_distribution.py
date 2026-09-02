@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import email.parser
 import json
 import tarfile
@@ -50,11 +51,16 @@ CREATION_PIPELINE_RUNTIME_MODULES = {
     path.relative_to(ROOT).as_posix()
     for path in CREATION_PIPELINE_ROOT.rglob("*.py")
 }
+CREATION_REVIEW_ROOT = ROOT / "fl_studio_mcp" / "creation_review"
+CREATION_REVIEW_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_REVIEW_ROOT.rglob("*.py")
+}
 RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
-} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES
-EXPECTED_TOOL_COUNT = 114
+} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES | CREATION_REVIEW_RUNTIME_MODULES
+EXPECTED_TOOL_COUNT = 127
 EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
@@ -82,6 +88,7 @@ SDIST_REQUIRED_SUFFIXES = (
     "/docs/plugin-matrix.md",
     "/docs/architecture.md",
     "/docs/creation-pipeline.md",
+    "/docs/creation-review.md",
     "/docs/distribution.md",
     "/docs/fl-constraints.md",
     "/docs/plugin-atlas.md",
@@ -98,6 +105,8 @@ SDIST_REQUIRED_SUFFIXES = (
     "/scripts/live_read_acceptance.py",
     "/scripts/live_sound_selection_acceptance.py",
     "/scripts/live_creation_acceptance.py",
+    "/scripts/live_creation_review_acceptance.py",
+    "/scripts/generate_creation_review_fixtures.py",
     "/scripts/live_write_acceptance.py",
     "/scripts/live_note_acceptance.py",
     "/scripts/verify_distribution.py",
@@ -204,6 +213,7 @@ def inspect_sdist(sdist: Path) -> list[str]:
                 | SOUND_SELECTION_RUNTIME_MODULES
                 | SOUND_SELECTION_DATA_FILES
                 | CREATION_PIPELINE_RUNTIME_MODULES
+                | CREATION_REVIEW_RUNTIME_MODULES
             ):
                 suffix = "/" + required
                 if not any(name.endswith(suffix) for name in names):
@@ -261,6 +271,27 @@ def version_failures(version: str) -> list[str]:
                 EXPECTED_TOOL_COUNT,
                 len(tools) if isinstance(tools, list) else "invalid",
             )
+        )
+    server_tree = ast.parse(
+        (ROOT / "fl_studio_mcp" / "mcp_server.py").read_text(encoding="utf-8")
+    )
+    resource_count = sum(
+        1
+        for node in ast.walk(server_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "resource"
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == "mcp"
+            for decorator in node.decorator_list
+        )
+    )
+    if resource_count != EXPECTED_RESOURCE_COUNT:
+        failures.append(
+            "registered resource count is not %d: %d"
+            % (EXPECTED_RESOURCE_COUNT, resource_count)
         )
     return failures
 

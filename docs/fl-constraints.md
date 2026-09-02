@@ -16,6 +16,13 @@ Neither surface adds capabilities that FL Studio does not expose here. In
 particular, Atlas and the matrix cannot insert, remove, or reorder plug-ins,
 save or render a project, or read FL Studio's live audio output.
 
+Creation Review consequently works from explicit audio exports selected by the
+caller. It can measure those files, map known Production Run sections, compare
+matching before/after bounces, and request only the stems needed for an
+unresolved finding. It cannot capture FL's live output, render the revised
+project, save the project, separate stems, verify manual Playlist placement, or
+establish artistic approval from measurements.
+
 Sound Selection follows the same boundary: it chooses only from generators and
 effects already loaded in the open project. Atlas-only products can be
 recommended, but they cannot be loaded or assigned by PostFader. Load the

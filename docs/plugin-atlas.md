@@ -5,6 +5,12 @@ loaded from package data and works offline; the normal runtime does not scrape
 vendor sites or search the user's filesystem. The installed bundle is the
 source of truth for the CLI and the four Atlas MCP reads.
 
+Creation Review may retain Atlas-backed capability and palette evidence from a
+source Production Run when a revision changes a sound or semantic processing
+goal. Atlas still does not prove that a target remains loaded or controllable;
+the revision preflight must revalidate the live target and established control
+before the existing verified writer can apply it.
+
 ## What Atlas means
 
 Atlas keeps four kinds of information separate:

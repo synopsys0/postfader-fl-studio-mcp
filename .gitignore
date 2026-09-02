@@ -48,3 +48,4 @@ renders/
 *.ogg
 *.oga
 !tests/fixtures/audio/*.wav
+!tests/fixtures/creation_review/*.wav

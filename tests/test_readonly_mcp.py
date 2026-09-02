@@ -95,6 +95,7 @@ PRODUCTION_MUTATING_TOOLS = {
     "postfader_execute_run",
     "postfader_continue_run",
     "processing_apply_plan",
+    "postfader_review_apply_revision",
 }
 PRODUCTION_WORKFLOW_TOOLS = {"postfader_stop_run"}
 EPHEMERAL_TOOLS = {"fl_trigger_note"}
@@ -134,6 +135,8 @@ WORKFLOW_STATE_TOOLS = {
     "mix_create_gain_stage_plan",
     "mix_create_plan",
     "piano_roll_bridge",
+    "postfader_review_record_feedback",
+    "postfader_review_stop",
 }
 PLAN_APPLY_TOOLS = {"mix_apply_plan"}
 CREATIVE_READ_TOOLS = {
@@ -151,7 +154,21 @@ CREATIVE_FL_TOOLS = {
     "arrangement_add_section_markers",
     "automation_record_value",
 }
-FILE_MUTATING_TOOLS = {"midi_export_type1"}
+FILE_MUTATING_TOOLS = {
+    "midi_export_type1",
+    "postfader_review_delete",
+    "postfader_delivery_export_manifest",
+}
+CREATION_REVIEW_READ_TOOLS = {
+    "postfader_review_start",
+    "postfader_review_attach_assets",
+    "postfader_review_evaluate",
+    "postfader_review_get",
+    "postfader_review_compare",
+    "postfader_review_plan_revision",
+    "postfader_delivery_manifest",
+    "postfader_review_export_handoff",
+}
 EXPECTED_TOOLS = WRITE_TOOLS | {
     "fl_get_capabilities",
     "fl_get_project_summary",
@@ -190,6 +207,7 @@ EXPECTED_TOOLS = WRITE_TOOLS | {
     *PRESET_MUTATING_TOOLS,
     *SOUND_SELECTION_MUTATING_TOOLS,
     *SOUND_SELECTION_WORKFLOW_TOOLS,
+    *CREATION_REVIEW_READ_TOOLS,
     # File measurement, not FL control.
     "audio_analyze_file",
     "audio_compare_files",

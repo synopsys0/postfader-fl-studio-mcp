@@ -1191,6 +1191,21 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "postfader_continue_run",
             "processing_apply_plan",
         }
+        creation_review_tools = {
+            "postfader_review_start",
+            "postfader_review_attach_assets",
+            "postfader_review_evaluate",
+            "postfader_review_get",
+            "postfader_review_compare",
+            "postfader_review_plan_revision",
+            "postfader_delivery_manifest",
+            "postfader_review_export_handoff",
+            "postfader_review_apply_revision",
+            "postfader_review_record_feedback",
+            "postfader_review_stop",
+            "postfader_review_delete",
+            "postfader_delivery_export_manifest",
+        }
         plan_apply_tools = {"mix_apply_plan"}
         creative_read_tools = {
             "compose_chord_progression",
@@ -1227,7 +1242,8 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             | sound_selection_read_tools
             | preset_mutating_tools
             | sound_selection_mutating_tools
-            | sound_selection_workflow_tools,
+            | sound_selection_workflow_tools
+            | creation_review_tools,
         )
         # Still no render, rollback ceremony, project save, or reflective
         # escape hatch, whatever it might be called.
@@ -1236,7 +1252,8 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "render",
             "api_call",
             "save",
-            "eval",
+            "python_eval",
+            "raw_eval",
         )
         self.assertFalse(
             [

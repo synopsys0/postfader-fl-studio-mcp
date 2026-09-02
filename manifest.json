@@ -4,7 +4,7 @@
   "display_name": "PostFader for FL Studio",
   "version": "0.20.0",
   "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 114-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "long_description": "A local 127-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, review exported creation bounces with 13 Creation Review tools and 9 corresponding run operations, plan one bounded revision, prepare delivery handoffs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -452,6 +452,58 @@
     {
       "name": "postfader_stop_run",
       "description": "Stop future run operations without undoing completed project changes."
+    },
+    {
+      "name": "postfader_review_start",
+      "description": "Start a bounded Review Session from one completed Production Run."
+    },
+    {
+      "name": "postfader_review_attach_assets",
+      "description": "Validate and attach explicit audio assets without changing FL Studio."
+    },
+    {
+      "name": "postfader_review_evaluate",
+      "description": "Measure one bounce globally and by known section; apply zero FL mutations."
+    },
+    {
+      "name": "postfader_review_get",
+      "description": "Read a Review Session, retained evidence, status, and exact next action."
+    },
+    {
+      "name": "postfader_review_compare",
+      "description": "Compare before and after bounces without implying producer approval."
+    },
+    {
+      "name": "postfader_review_plan_revision",
+      "description": "Compile and validate one bounded RevisionPlan before any project mutation."
+    },
+    {
+      "name": "postfader_delivery_manifest",
+      "description": "Build the final multi-dimensional delivery view without writing a file."
+    },
+    {
+      "name": "postfader_review_export_handoff",
+      "description": "Return one precise full-mix export request and only necessary stems."
+    },
+    {
+      "name": "postfader_review_apply_revision",
+      "description": "Apply one bounded revision with one preflight and one write authorization."
+    },
+    {
+      "name": "postfader_review_record_feedback",
+      "description": "Record explicit feedback; silence and measurements never grant approval."
+    },
+    {
+      "name": "postfader_review_stop",
+      "description": "Stop future review work without undoing completed project changes."
+    },
+    {
+      "name": "postfader_review_delete",
+      "description": "Delete one Review Session record without touching audio or the FL project."
+    },
+    {
+      "name": "postfader_delivery_export_manifest",
+      "description": "Create local delivery files without overwriting or saving the FL project."
     },
     {
       "name": "piano_roll_bridge",
