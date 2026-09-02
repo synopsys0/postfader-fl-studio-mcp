@@ -80,6 +80,30 @@ from .creation_pipeline.sound_characteristics import (
     characteristics_from_palette_assignment,
 )
 from .creation_pipeline.timing import RunTimingCollector, RunTimingReport
+from .creation_review.models import (
+    MAX_REVIEW_ASSETS,
+    MAX_REVIEW_FINDINGS,
+    MAX_REVIEW_OPERATIONS,
+    MAX_REVIEW_SECTIONS,
+    AcceptedElementLock,
+    CreationEvaluationReport,
+    CreationFeedback,
+    DeliveryManifest,
+    EvaluationFinding,
+    MetricExpectation,
+    PlaylistHandoff,
+    ReviewAudioAsset,
+    ReviewReferenceSectionPair,
+    ReviewSection,
+    ReviewSectionRangeInput,
+    ReviewSession,
+    ReviewSessionRequest,
+    RevisionComparison,
+    RevisionOperation,
+    RevisionPass,
+    RevisionPlan,
+    RevisionRequest,
+)
 from .creative import (
     MAX_PIANO_ROLL_NOTES,
     PIANO_ROLL,
@@ -168,6 +192,7 @@ ChangeCategory: TypeAlias = Literal[
     "routing",
     "plugin_parameters",
     "sound_selection",
+    "review",
 ]
 TargetKind: TypeAlias = Literal["mixer_track", "channel", "pattern", "playlist_track"]
 BlockerCategory: TypeAlias = Literal[
@@ -319,6 +344,12 @@ class ProductionRunRequest(ProductionRunModel):
     max_operations: int = Field(default=32, ge=1, le=MAX_PRODUCTION_OPERATIONS)
     max_iterations: int = Field(default=4, ge=1, le=MAX_PRODUCTION_ITERATIONS)
     authorized_to_modify: StrictBool = False
+    expected_session_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$"
+    )
+    expected_project_state_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
     @model_validator(mode="after")
     def validate_allowed_changes(self) -> "ProductionRunRequest":
@@ -345,6 +376,16 @@ class OperationOutputReference(ProductionRunModel):
         "selected_preset",
         "section_variation",
         "processing_plan",
+        "review_session",
+        "evaluation_report",
+        "finding",
+        "feedback_lock",
+        "section_definition",
+        "revision_plan",
+        "revision_pass",
+        "revision_comparison",
+        "playlist_handoff",
+        "delivery_manifest",
     ] = "note_sequence"
     role_id: str | None = Field(
         default=None,
@@ -352,14 +393,27 @@ class OperationOutputReference(ProductionRunModel):
         max_length=64,
         pattern=r"^[a-z0-9][a-z0-9_.-]*$",
     )
+    item_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
 
     @model_validator(mode="after")
     def validate_selector(self) -> "OperationOutputReference":
         role_outputs = {"palette_assignment", "generator_target"}
+        item_outputs = {"finding", "feedback_lock", "section_definition"}
         if self.output in role_outputs and self.role_id is None:
             raise ValueError(f"{self.output} references require role_id")
         if self.output not in role_outputs and self.role_id is not None:
             raise ValueError("role_id is only valid for role-scoped palette outputs")
+        if self.output in item_outputs and self.item_id is None:
+            raise ValueError(f"{self.output} references require item_id")
+        if self.output not in item_outputs and self.item_id is not None:
+            raise ValueError(
+                "item_id is only valid for finding, feedback-lock, and section-definition outputs"
+            )
         return self
 
 
@@ -526,6 +580,9 @@ class WriteNoteSequenceOperation(ProductionOperationBase):
     channel_index: int | OperationOutputReference
     pattern_number: int = Field(ge=1, le=999)
     mode: Literal["append", "replace"] = "append"
+    target_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
     @model_validator(mode="after")
     def validate_channel_reference(self) -> "WriteNoteSequenceOperation":
@@ -739,6 +796,180 @@ class ApplySemanticPluginActionOperation(ProductionOperationBase):
     action: SemanticPluginAction
 
 
+ReviewSessionSelector: TypeAlias = str | OperationOutputReference
+
+
+def _validate_review_session_reference(
+    value: ReviewSessionSelector,
+) -> ReviewSessionSelector:
+    if isinstance(value, OperationOutputReference) and value.output != "review_session":
+        raise ValueError("Review Session references require a review_session output")
+    return value
+
+
+class StartReviewSessionOperation(ProductionOperationBase):
+    operation: Literal["start_review_session"] = "start_review_session"
+    request: ReviewSessionRequest
+
+
+class AttachReviewAssetsOperation(ProductionOperationBase):
+    operation: Literal["attach_review_assets"] = "attach_review_assets"
+    review_session: ReviewSessionSelector
+    assets: tuple[ReviewAudioAsset, ...] = Field(
+        min_length=1, max_length=MAX_REVIEW_ASSETS
+    )
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "AttachReviewAssetsOperation":
+        _validate_review_session_reference(self.review_session)
+        if any(item.path is None for item in self.assets):
+            raise ValueError("review asset operations require explicit file paths")
+        return self
+
+
+class EvaluateCreationOperation(ProductionOperationBase):
+    operation: Literal["evaluate_creation"] = "evaluate_creation"
+    review_session: ReviewSessionSelector
+    asset_set_id: str | None = Field(default=None, min_length=1, max_length=128)
+    section_ranges: tuple[ReviewSectionRangeInput, ...] = Field(
+        default=(), max_length=MAX_REVIEW_SECTIONS
+    )
+    reference_section_pairs: tuple[ReviewReferenceSectionPair, ...] = Field(
+        default=(), max_length=MAX_REVIEW_SECTIONS
+    )
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "EvaluateCreationOperation":
+        _validate_review_session_reference(self.review_session)
+        section_ids = [item.section_id.casefold() for item in self.section_ranges]
+        if len(section_ids) != len(set(section_ids)):
+            raise ValueError("section_ranges must use unique section IDs")
+        pair_keys = [
+            canonical_digest(item.model_dump(mode="json"))
+            for item in self.reference_section_pairs
+        ]
+        if len(pair_keys) != len(set(pair_keys)):
+            raise ValueError("reference_section_pairs must not contain duplicates")
+        return self
+
+
+class RecordCreationFeedbackOperation(ProductionOperationBase):
+    operation: Literal["record_creation_feedback"] = "record_creation_feedback"
+    review_session: ReviewSessionSelector
+    feedback: CreationFeedback
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "RecordCreationFeedbackOperation":
+        _validate_review_session_reference(self.review_session)
+        if (
+            isinstance(self.review_session, str)
+            and self.feedback.review_session_id is not None
+            and self.feedback.review_session_id != self.review_session
+        ):
+            raise ValueError("feedback belongs to a different Review Session")
+        return self
+
+
+class PlanCreationRevisionOperation(ProductionOperationBase):
+    operation: Literal["plan_creation_revision"] = "plan_creation_revision"
+    review_session: ReviewSessionSelector
+    request: RevisionRequest
+    revision_operations: tuple[RevisionOperation, ...] = Field(
+        min_length=1, max_length=MAX_REVIEW_OPERATIONS
+    )
+    revision_plan_id: str = Field(
+        default="revision-plan",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    )
+    targeted_findings: tuple[str, ...] = Field(default=(), max_length=256)
+    expected_objectives: tuple[MetricExpectation, ...] = Field(
+        default=(), max_length=32
+    )
+    subjective_objectives: tuple[str, ...] = Field(default=(), max_length=32)
+    manual_actions: tuple[str, ...] = Field(default=(), max_length=64)
+    source_evaluation: OperationOutputReference | None = None
+    finding_refs: tuple[OperationOutputReference, ...] = Field(
+        default=(), max_length=MAX_REVIEW_OPERATIONS
+    )
+    accepted_lock_refs: tuple[OperationOutputReference, ...] = Field(
+        default=(), max_length=MAX_REVIEW_OPERATIONS
+    )
+    section_refs: tuple[OperationOutputReference, ...] = Field(
+        default=(), max_length=MAX_REVIEW_SECTIONS
+    )
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "PlanCreationRevisionOperation":
+        _validate_review_session_reference(self.review_session)
+        if (
+            self.source_evaluation is not None
+            and self.source_evaluation.output != "evaluation_report"
+        ):
+            raise ValueError("source_evaluation requires an evaluation_report output")
+        if any(item.output != "finding" for item in self.finding_refs):
+            raise ValueError("finding_refs require finding outputs")
+        if any(item.output != "feedback_lock" for item in self.accepted_lock_refs):
+            raise ValueError("accepted_lock_refs require feedback_lock outputs")
+        if any(item.output != "section_definition" for item in self.section_refs):
+            raise ValueError("section_refs require section_definition outputs")
+        return self
+
+
+class ApplyCreationRevisionOperation(ProductionOperationBase):
+    operation: Literal["apply_creation_revision"] = "apply_creation_revision"
+    review_session: ReviewSessionSelector
+    plan: RevisionPlan | OperationOutputReference
+    request: RevisionRequest
+    authorized_to_modify: StrictBool
+    expected_session_fingerprint: str | None = Field(
+        default=None, pattern=SESSION_FINGERPRINT_PATTERN
+    )
+
+    @model_validator(mode="after")
+    def validate_review_references(self) -> "ApplyCreationRevisionOperation":
+        _validate_review_session_reference(self.review_session)
+        if isinstance(self.plan, OperationOutputReference) and self.plan.output != "revision_plan":
+            raise ValueError("revision apply requires a revision_plan output reference")
+        return self
+
+
+class CompareRevisionBouncesOperation(ProductionOperationBase):
+    operation: Literal["compare_revision_bounces"] = "compare_revision_bounces"
+    review_session: ReviewSessionSelector
+    before_asset_id: str = Field(min_length=1, max_length=128)
+    after_asset_id: str = Field(min_length=1, max_length=128)
+    revision_plan_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "CompareRevisionBouncesOperation":
+        _validate_review_session_reference(self.review_session)
+        if self.before_asset_id == self.after_asset_id:
+            raise ValueError("before and after asset IDs must differ")
+        return self
+
+
+class CreatePlaylistHandoffOperation(ProductionOperationBase):
+    operation: Literal["create_playlist_handoff"] = "create_playlist_handoff"
+    review_session: ReviewSessionSelector
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "CreatePlaylistHandoffOperation":
+        _validate_review_session_reference(self.review_session)
+        return self
+
+
+class CreateDeliveryManifestOperation(ProductionOperationBase):
+    operation: Literal["create_delivery_manifest"] = "create_delivery_manifest"
+    review_session: ReviewSessionSelector
+
+    @model_validator(mode="after")
+    def validate_review_reference(self) -> "CreateDeliveryManifestOperation":
+        _validate_review_session_reference(self.review_session)
+        return self
+
+
 class UnavailableProductionOperation(ProductionOperationBase):
     """Closed capability probes that Production Runs must reject before mutation."""
 
@@ -773,6 +1004,15 @@ ProductionOperation = Annotated[
     | PlanProcessingOperation
     | ApplyProcessingPlanOperation
     | ApplySemanticPluginActionOperation
+    | StartReviewSessionOperation
+    | AttachReviewAssetsOperation
+    | EvaluateCreationOperation
+    | RecordCreationFeedbackOperation
+    | PlanCreationRevisionOperation
+    | ApplyCreationRevisionOperation
+    | CompareRevisionBouncesOperation
+    | CreatePlaylistHandoffOperation
+    | CreateDeliveryManifestOperation
     | UnavailableProductionOperation,
     Field(discriminator="operation"),
 ]
@@ -835,6 +1075,14 @@ ProductionResultPayload = (
     | SoundFeedbackReceipt
     | ProcessingPlan
     | ProcessingPlanReceipt
+    | ReviewSession
+    | CreationEvaluationReport
+    | AcceptedElementLock
+    | RevisionPlan
+    | RevisionPass
+    | RevisionComparison
+    | PlaylistHandoff
+    | DeliveryManifest
 )
 
 
@@ -891,8 +1139,19 @@ class ProductionGeneratedOutput(ProductionRunModel):
         "section_variation",
         "composition_adaptation",
         "processing_plan",
+        "review_session",
+        "evaluation_report",
+        "finding",
+        "feedback_lock",
+        "section_definition",
+        "revision_plan",
+        "revision_pass",
+        "revision_comparison",
+        "playlist_handoff",
+        "delivery_manifest",
     ] = "note_sequence"
     role_id: str | None = Field(default=None, min_length=1, max_length=64)
+    item_id: str | None = Field(default=None, min_length=1, max_length=128)
     value: (
         NoteSequence
         | SoundPalettePlan
@@ -904,6 +1163,16 @@ class ProductionGeneratedOutput(ProductionRunModel):
         | SoundPaletteVariationPlan
         | CompositionAdaptationReport
         | ProcessingPlan
+        | ReviewSession
+        | CreationEvaluationReport
+        | EvaluationFinding
+        | AcceptedElementLock
+        | ReviewSection
+        | RevisionPlan
+        | RevisionPass
+        | RevisionComparison
+        | PlaylistHandoff
+        | DeliveryManifest
     )
     target_fingerprint: str | None = Field(
         default=None, pattern=r"^[0-9a-f]{64}$"
@@ -921,6 +1190,16 @@ class ProductionGeneratedOutput(ProductionRunModel):
             "section_variation": (SoundPaletteVariationPlan,),
             "composition_adaptation": (CompositionAdaptationReport,),
             "processing_plan": (ProcessingPlan,),
+            "review_session": (ReviewSession,),
+            "evaluation_report": (CreationEvaluationReport,),
+            "finding": (EvaluationFinding,),
+            "feedback_lock": (AcceptedElementLock,),
+            "section_definition": (ReviewSection,),
+            "revision_plan": (RevisionPlan,),
+            "revision_pass": (RevisionPass,),
+            "revision_comparison": (RevisionComparison,),
+            "playlist_handoff": (PlaylistHandoff,),
+            "delivery_manifest": (DeliveryManifest,),
         }
         if not isinstance(self.value, expected[self.output]):
             raise ValueError(f"{self.output} output carries an incompatible value")
@@ -929,7 +1208,18 @@ class ProductionGeneratedOutput(ProductionRunModel):
                 raise ValueError(f"{self.output} output requires role_id")
         elif self.role_id is not None:
             raise ValueError("role_id is only valid for role-scoped outputs")
+        if self.output in {"finding", "feedback_lock", "section_definition"}:
+            if self.item_id is None:
+                raise ValueError(f"{self.output} output requires item_id")
+        elif self.item_id is not None:
+            raise ValueError(
+                "item_id is only valid for finding, feedback-lock, and section-definition outputs"
+            )
         return self
+
+    @property
+    def selector_id(self) -> str | None:
+        return self.role_id or self.item_id
 
 
 class ProductionBlocker(ProductionRunModel):
@@ -1043,7 +1333,7 @@ class ProductionRunState(ProductionRunModel):
         if not set(self.completed_operations).issubset(receipt_ids):
             raise ValueError("completed operations must have receipts")
         output_keys = [
-            (item.operation_id, item.output, item.role_id)
+            (item.operation_id, item.output, item.role_id, item.item_id)
             for item in self.generated_outputs
         ]
         if len(output_keys) != len(set(output_keys)):
@@ -1072,6 +1362,19 @@ class ProductionRunResult(ProductionRunModel):
     phase_plan: CreationPhasePlan | None = None
     timing_report: RunTimingReport | None = None
     creation_outcome: CreationOutcome | None = None
+    receipts: tuple[ProductionOperationReceipt, ...] = Field(
+        default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
+    )
+    generated_outputs: tuple[ProductionGeneratedOutput, ...] = Field(
+        default_factory=tuple, max_length=MAX_PRODUCTION_OUTPUTS
+    )
+    session_fingerprint: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{32}$"
+    )
+    project_state_digest: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    run_context: CreationRunContextSnapshot | None = None
     rollback_attempted: Literal[False] = False
     project_saved: Literal[False] = False
 
@@ -1086,6 +1389,29 @@ class ProductionRunLookup(ProductionRunModel):
     def validate_lookup(self) -> "ProductionRunLookup":
         if self.found != (self.state is not None):
             raise ValueError("found must match whether state is present")
+        return self
+
+
+class ProductionRunSnapshot(ProductionRunModel):
+    """Immutable process-local source snapshot for Creation Review.
+
+    The public get tool intentionally returns only run state. Review Sessions
+    also need the original closed plan so section markers, generated roles, and
+    pattern intent can be retained without reconstructing them from prose.
+    This internal snapshot never exposes a mutable registry record.
+    """
+
+    found: bool
+    process_local: Literal[True] = True
+    message: str = Field(min_length=1, max_length=512)
+    state: ProductionRunState | None = None
+    plan: ProductionRunPlan | None = None
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> "ProductionRunSnapshot":
+        present = self.state is not None and self.plan is not None
+        if self.found != present:
+            raise ValueError("found must match whether state and plan are present")
         return self
 
 
@@ -1130,6 +1456,7 @@ _SCOPE_BASE_CHANGES: dict[str, set[ChangeCategory]] = {
         "routing",
         "plugin_parameters",
         "sound_selection",
+        "review",
     },
     "mix_only": {
         "mixer",
@@ -1137,13 +1464,15 @@ _SCOPE_BASE_CHANGES: dict[str, set[ChangeCategory]] = {
         "automation",
         "routing",
         "plugin_parameters",
+        "review",
     },
     "arrangement_only": {
         "arrangement",
         "pattern_metadata",
         "playlist_metadata",
+        "review",
     },
-    "note_content_only": {"composition", "notes", "pattern_metadata"},
+    "note_content_only": {"composition", "notes", "pattern_metadata", "review"},
     "selected_targets": {
         "composition",
         "notes",
@@ -1155,6 +1484,7 @@ _SCOPE_BASE_CHANGES: dict[str, set[ChangeCategory]] = {
         "routing",
         "plugin_parameters",
         "sound_selection",
+        "review",
     },
 }
 
@@ -1316,7 +1646,12 @@ def _project_state_digest(project: ProjectSummary) -> str:
 
 def _is_mutating(operation: ProductionOperation) -> bool:
     return _requires_project_write(operation) or isinstance(
-        operation, RecordSoundFeedbackOperation
+        operation,
+        (
+            RecordSoundFeedbackOperation,
+            RecordCreationFeedbackOperation,
+            ApplyCreationRevisionOperation,
+        ),
     )
 
 
@@ -1331,6 +1666,15 @@ def _requires_project_write(operation: ProductionOperation) -> bool:
             InspectDrumMapOperation,
             RecordSoundFeedbackOperation,
             PlanProcessingOperation,
+            StartReviewSessionOperation,
+            AttachReviewAssetsOperation,
+            EvaluateCreationOperation,
+            RecordCreationFeedbackOperation,
+            PlanCreationRevisionOperation,
+            ApplyCreationRevisionOperation,
+            CompareRevisionBouncesOperation,
+            CreatePlaylistHandoffOperation,
+            CreateDeliveryManifestOperation,
         ),
     )
 
@@ -1361,6 +1705,31 @@ def _output_types(operation: ProductionOperation) -> tuple[str, ...]:
         # The verified receipt is retained in ProductionOperationReceipt; it
         # is not advertised as a referenceable generated output.
         return ()
+    if isinstance(
+        operation,
+        (
+            StartReviewSessionOperation,
+            AttachReviewAssetsOperation,
+            RecordCreationFeedbackOperation,
+        ),
+    ):
+        if isinstance(operation, StartReviewSessionOperation):
+            return ("review_session", "section_definition")
+        return ("review_session", "feedback_lock") if isinstance(
+            operation, RecordCreationFeedbackOperation
+        ) else ("review_session",)
+    if isinstance(operation, EvaluateCreationOperation):
+        return ("evaluation_report", "finding")
+    if isinstance(operation, PlanCreationRevisionOperation):
+        return ("revision_plan",)
+    if isinstance(operation, ApplyCreationRevisionOperation):
+        return ("revision_pass",)
+    if isinstance(operation, CompareRevisionBouncesOperation):
+        return ("revision_comparison",)
+    if isinstance(operation, CreatePlaylistHandoffOperation):
+        return ("playlist_handoff",)
+    if isinstance(operation, CreateDeliveryManifestOperation):
+        return ("delivery_manifest",)
     if isinstance(operation, PreparePatternOperation):
         return ("pattern_preparation",)
     if isinstance(operation, SelectPatternOperation):
@@ -1412,6 +1781,21 @@ def _operation_categories(
         (ApplyProcessingPlanOperation, ApplySemanticPluginActionOperation),
     ):
         return ("plugin_parameters",)
+    if isinstance(
+        operation,
+        (
+            StartReviewSessionOperation,
+            AttachReviewAssetsOperation,
+            EvaluateCreationOperation,
+            RecordCreationFeedbackOperation,
+            PlanCreationRevisionOperation,
+            ApplyCreationRevisionOperation,
+            CompareRevisionBouncesOperation,
+            CreatePlaylistHandoffOperation,
+            CreateDeliveryManifestOperation,
+        ),
+    ):
+        return ("review",)
     if isinstance(operation, (PreparePatternOperation, SelectPatternOperation)):
         return ("pattern_metadata",)
     if isinstance(operation, _PIANO_ROLL_TYPES):
@@ -1467,6 +1851,31 @@ def _required_capabilities(
         if isinstance(operation, PlanProcessingOperation):
             add("loaded_effect_inventory")
             add("plugin_atlas_semantic_adapters")
+            continue
+        if isinstance(
+            operation,
+            (
+                StartReviewSessionOperation,
+                AttachReviewAssetsOperation,
+                EvaluateCreationOperation,
+                RecordCreationFeedbackOperation,
+                PlanCreationRevisionOperation,
+                CompareRevisionBouncesOperation,
+                CreatePlaylistHandoffOperation,
+                CreateDeliveryManifestOperation,
+            ),
+        ):
+            add("creation_review_workflow")
+            add("bounded_local_review_state")
+            if isinstance(
+                operation,
+                (AttachReviewAssetsOperation, EvaluateCreationOperation, CompareRevisionBouncesOperation),
+            ):
+                add("caller_selected_audio_analysis")
+            continue
+        if isinstance(operation, ApplyCreationRevisionOperation):
+            add("creation_review_revision_preflight")
+            add("task_scoped_production_run_revision")
             continue
         add("compatible_live_fl_bridge")
         add("runtime_write_mode_control")
@@ -1954,6 +2363,21 @@ def _structural_validation(
             estimated_outputs += 1 + estimated_palette_roles(operation) * 2
         elif isinstance(operation, CreateSoundPaletteVariationOperation):
             estimated_outputs += 1 + len(operation.request.roles) * 2
+        elif isinstance(operation, StartReviewSessionOperation):
+            # A source run may retain the bounded Review Section ceiling.
+            # Reserve those typed item outputs before any later mutation.
+            estimated_outputs += 1 + MAX_REVIEW_SECTIONS
+        elif isinstance(operation, EvaluateCreationOperation):
+            # The exact finding count depends on decoded evidence, so reserve
+            # the report plus the session's hard finding ceiling before any
+            # operation in this plan can mutate the project.
+            estimated_outputs += 1 + MAX_REVIEW_FINDINGS
+        elif isinstance(operation, RecordCreationFeedbackOperation):
+            from .creation_review.feedback import build_feedback_locks
+
+            estimated_outputs += 1 + len(
+                build_feedback_locks(operation.feedback)
+            )
         else:
             estimated_outputs += len(
                 {
@@ -3305,10 +3729,11 @@ def _resolve_output_record(
     reference: OperationOutputReference,
     outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
 ) -> ProductionGeneratedOutput:
+    selector_id = reference.role_id or reference.item_id
     output = outputs.get(
-        _output_key(reference.operation_id, reference.output, reference.role_id)
+        _output_key(reference.operation_id, reference.output, selector_id)
     )
-    if output is None and reference.role_id is None:
+    if output is None and selector_id is None:
         # Preserve the private adapter shape used by v0.20 tests and callers;
         # registry-owned state always uses the fully typed selector key.
         output = cast(Any, outputs).get(reference.operation_id)
@@ -3317,8 +3742,8 @@ def _resolve_output_record(
             f"{reference.output} output {reference.operation_id!r}"
             + (
                 ""
-                if reference.role_id is None
-                else f" for role {reference.role_id!r}"
+                if selector_id is None
+                else f" for selector {selector_id!r}"
             )
             + " is unavailable"
         )
@@ -3330,6 +3755,18 @@ def _resolve_output_reference(
     outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
 ) -> object:
     return _resolve_output_record(reference, outputs).value
+
+
+def _resolve_review_session_id(
+    value: ReviewSessionSelector,
+    outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
+) -> str:
+    if isinstance(value, str):
+        return value
+    resolved = _resolve_output_reference(value, outputs)
+    if not isinstance(resolved, ReviewSession):
+        raise ValueError("the referenced output is not a Review Session")
+    return resolved.review_session_id
 
 
 def _resolve_plugin_target_with_proof(
@@ -3494,6 +3931,7 @@ def _generated_outputs_for(
         output: str,
         value: object,
         role_id: str | None = None,
+        item_id: str | None = None,
         *,
         target_fingerprint: str | None = None,
     ) -> None:
@@ -3502,6 +3940,7 @@ def _generated_outputs_for(
                 operation_id=operation.operation_id,
                 output=cast(Any, output),
                 role_id=role_id,
+                item_id=item_id,
                 value=cast(Any, value),
                 target_fingerprint=target_fingerprint,
             )
@@ -3577,6 +4016,39 @@ def _generated_outputs_for(
             add("drum_map", result.drum_map)
     elif isinstance(result, ProcessingPlan):
         add("processing_plan", result)
+    elif isinstance(result, ReviewSession):
+        add("review_session", result)
+        if isinstance(operation, StartReviewSessionOperation):
+            sections = (
+                result.section_map.sections
+                if result.section_map is not None
+                else result.source_sections
+            )
+            for section in sections:
+                add(
+                    "section_definition",
+                    section,
+                    item_id=section.section_id,
+                )
+        if isinstance(operation, RecordCreationFeedbackOperation) and result.feedback:
+            from .creation_review.feedback import build_feedback_locks
+
+            for lock in build_feedback_locks(result.feedback[-1]):
+                add("feedback_lock", lock, item_id=lock.lock_id)
+    elif isinstance(result, CreationEvaluationReport):
+        add("evaluation_report", result)
+        for finding in result.findings:
+            add("finding", finding, item_id=finding.finding_id)
+    elif isinstance(result, RevisionPlan):
+        add("revision_plan", result)
+    elif isinstance(result, RevisionPass):
+        add("revision_pass", result)
+    elif isinstance(result, RevisionComparison):
+        add("revision_comparison", result)
+    elif isinstance(result, PlaylistHandoff):
+        add("playlist_handoff", result)
+    elif isinstance(result, DeliveryManifest):
+        add("delivery_manifest", result)
     return tuple(rows)
 
 
@@ -3675,6 +4147,30 @@ def _operation_references(
         operation.plan, OperationOutputReference
     ):
         references.append(operation.plan)
+    if isinstance(
+        operation,
+        (
+            AttachReviewAssetsOperation,
+            EvaluateCreationOperation,
+            RecordCreationFeedbackOperation,
+            PlanCreationRevisionOperation,
+            ApplyCreationRevisionOperation,
+            CompareRevisionBouncesOperation,
+            CreatePlaylistHandoffOperation,
+            CreateDeliveryManifestOperation,
+        ),
+    ) and isinstance(operation.review_session, OperationOutputReference):
+        references.append(operation.review_session)
+    if isinstance(operation, PlanCreationRevisionOperation):
+        if operation.source_evaluation is not None:
+            references.append(operation.source_evaluation)
+        references.extend(operation.finding_refs)
+        references.extend(operation.accepted_lock_refs)
+        references.extend(operation.section_refs)
+    if isinstance(operation, ApplyCreationRevisionOperation) and isinstance(
+        operation.plan, OperationOutputReference
+    ):
+        references.append(operation.plan)
     return tuple(references)
 
 
@@ -3746,6 +4242,193 @@ def _dispatch_operation(
     processing_observations: tuple[dict[str, Any], ...] = (),
 ) -> ProductionResultPayload:
     """Adapt one production operation to an existing PostFader implementation."""
+
+    if isinstance(operation, StartReviewSessionOperation):
+        from .creation_review.mcp import review_start
+
+        return review_start(operation.request)
+    if isinstance(operation, AttachReviewAssetsOperation):
+        from .creation_review.mcp import (
+            ReviewAssetInput,
+            ReviewAttachAssetsRequest,
+            review_attach_assets,
+        )
+
+        review_session_id = _resolve_review_session_id(
+            operation.review_session, outputs
+        )
+        assets = tuple(
+            ReviewAssetInput(
+                path=cast(str, item.path),
+                asset_kind=item.asset_kind,
+                asset_id=item.asset_id,
+                display_label=item.display_label,
+                role_id=item.role_id,
+                section_id=item.section_id,
+                revision_pass_id=item.revision_pass_id,
+                expected_start_seconds=item.expected_start_seconds,
+                declared_offset_seconds=item.declared_offset_seconds,
+            )
+            for item in operation.assets
+        )
+        return review_attach_assets(
+            ReviewAttachAssetsRequest(
+                review_session_id=review_session_id,
+                assets=assets,
+            )
+        )
+    if isinstance(operation, EvaluateCreationOperation):
+        from .creation_review.mcp import ReviewEvaluateRequest, review_evaluate
+
+        return review_evaluate(
+            ReviewEvaluateRequest(
+                review_session_id=_resolve_review_session_id(
+                    operation.review_session, outputs
+                ),
+                asset_set_id=operation.asset_set_id,
+                section_ranges=operation.section_ranges,
+                reference_section_pairs=operation.reference_section_pairs,
+            )
+        )
+    if isinstance(operation, RecordCreationFeedbackOperation):
+        from .creation_review.mcp import review_record_feedback
+
+        review_session_id = _resolve_review_session_id(
+            operation.review_session, outputs
+        )
+        feedback = operation.feedback
+        if feedback.review_session_id is None:
+            feedback = feedback.model_copy(
+                update={"review_session_id": review_session_id}
+            )
+        elif feedback.review_session_id != review_session_id:
+            raise ValueError("feedback belongs to a different Review Session")
+        return review_record_feedback(feedback)
+    if isinstance(operation, PlanCreationRevisionOperation):
+        from .creation_review.mcp import (
+            ReviewPlanRevisionRequest,
+            review_plan_revision,
+        )
+
+        revision_request = operation.request
+        if operation.source_evaluation is not None:
+            resolved_evaluation = _resolve_output_reference(
+                operation.source_evaluation, outputs
+            )
+            if not isinstance(resolved_evaluation, CreationEvaluationReport):
+                raise ValueError(
+                    "the referenced source evaluation is not an evaluation report"
+                )
+            revision_request = revision_request.model_copy(
+                update={"source_evaluation_id": resolved_evaluation.evaluation_id}
+            )
+        resolved_findings: list[str] = list(operation.targeted_findings)
+        for reference in operation.finding_refs:
+            finding = _resolve_output_reference(reference, outputs)
+            if not isinstance(finding, EvaluationFinding):
+                raise ValueError("a referenced finding output is incompatible")
+            if finding.finding_id not in resolved_findings:
+                resolved_findings.append(finding.finding_id)
+        resolved_locks: list[AcceptedElementLock] = list(
+            revision_request.accepted_element_locks
+        )
+        for reference in operation.accepted_lock_refs:
+            lock = _resolve_output_reference(reference, outputs)
+            if not isinstance(lock, AcceptedElementLock):
+                raise ValueError("a referenced feedback lock output is incompatible")
+            if all(item.lock_id != lock.lock_id for item in resolved_locks):
+                resolved_locks.append(lock)
+        if tuple(resolved_locks) != revision_request.accepted_element_locks:
+            revision_request = revision_request.model_copy(
+                update={"accepted_element_locks": tuple(resolved_locks)}
+            )
+        resolved_sections = list(revision_request.section_scope)
+        for reference in operation.section_refs:
+            section = _resolve_output_reference(reference, outputs)
+            if not isinstance(section, ReviewSection):
+                raise ValueError("a referenced section output is incompatible")
+            if section.section_id not in resolved_sections:
+                resolved_sections.append(section.section_id)
+        if tuple(resolved_sections) != revision_request.section_scope:
+            revision_request = revision_request.model_copy(
+                update={"section_scope": tuple(resolved_sections)}
+            )
+        return review_plan_revision(
+            ReviewPlanRevisionRequest(
+                review_session_id=_resolve_review_session_id(
+                    operation.review_session, outputs
+                ),
+                request=revision_request,
+                operations=operation.revision_operations,
+                revision_plan_id=operation.revision_plan_id,
+                targeted_findings=tuple(resolved_findings),
+                expected_objectives=operation.expected_objectives,
+                subjective_objectives=operation.subjective_objectives,
+                manual_actions=operation.manual_actions,
+            )
+        )
+    if isinstance(operation, ApplyCreationRevisionOperation):
+        from .creation_review.mcp import (
+            ReviewApplyRevisionRequest,
+            review_apply_revision,
+        )
+
+        review_session_id = _resolve_review_session_id(
+            operation.review_session, outputs
+        )
+        if isinstance(operation.plan, RevisionPlan):
+            revision_plan = operation.plan
+        else:
+            resolved_plan = _resolve_output_reference(operation.plan, outputs)
+            if not isinstance(resolved_plan, RevisionPlan):
+                raise ValueError("the referenced output is not a RevisionPlan")
+            revision_plan = resolved_plan
+        return review_apply_revision(
+            ReviewApplyRevisionRequest(
+                review_session_id=review_session_id,
+                revision_plan_id=revision_plan.revision_plan_id,
+                request=operation.request,
+                authorized_to_modify=operation.authorized_to_modify,
+                expected_session_fingerprint=operation.expected_session_fingerprint,
+            )
+        )
+    if isinstance(operation, CompareRevisionBouncesOperation):
+        from .creation_review.mcp import ReviewCompareRequest, review_compare
+
+        return review_compare(
+            ReviewCompareRequest(
+                review_session_id=_resolve_review_session_id(
+                    operation.review_session, outputs
+                ),
+                before_asset_id=operation.before_asset_id,
+                after_asset_id=operation.after_asset_id,
+                revision_plan_id=operation.revision_plan_id,
+            )
+        )
+    if isinstance(operation, CreatePlaylistHandoffOperation):
+        from .creation_review.delivery import create_playlist_handoff
+        from .creation_review.mcp import delivery_manifest, review_get
+
+        review_session_id = _resolve_review_session_id(
+            operation.review_session, outputs
+        )
+        lookup = review_get(review_session_id)
+        if lookup.session is None:
+            raise ValueError(lookup.message)
+        current_delivery = delivery_manifest(review_session_id)
+        if current_delivery.playlist_handoff is not None:
+            return current_delivery.playlist_handoff
+        return create_playlist_handoff(
+            lookup.session.source_pattern_plan,
+            delta_only=False,
+            handoff_id=f"playlist-{review_session_id}",
+        )
+    if isinstance(operation, CreateDeliveryManifestOperation):
+        from .creation_review.mcp import delivery_manifest
+
+        return delivery_manifest(
+            _resolve_review_session_id(operation.review_session, outputs)
+        )
 
     if isinstance(operation, GenerateDrumsOperation):
         return compose_drums(
@@ -4020,9 +4703,18 @@ def _dispatch_operation(
         )
     if isinstance(operation, WriteNoteSequenceOperation):
         sequence = _resolve_sequence(operation, outputs)
-        channel_index, target_fingerprint = _resolve_channel_target(
+        channel_index, referenced_fingerprint = _resolve_channel_target(
             operation.channel_index, outputs
         )
+        if (
+            operation.target_fingerprint is not None
+            and referenced_fingerprint is not None
+            and operation.target_fingerprint != referenced_fingerprint
+        ):
+            raise ValueError(
+                "the Piano Roll target fingerprint conflicts with its referenced target"
+            )
+        target_fingerprint = operation.target_fingerprint or referenced_fingerprint
         if target_fingerprint is None:
             return write_piano_roll_notes(
                 sequence.notes,
@@ -4479,6 +5171,24 @@ def _classify_mutation_result(
         )
     if isinstance(result, SoundFeedbackReceipt):
         return True, True, ""
+    if isinstance(result, ReviewSession):
+        return True, True, ""
+    if isinstance(result, RevisionPass):
+        if result.status in {"completed", "awaiting_rebounce"} and not result.blockers:
+            return True, True, ""
+        if any(item.status == "error_unknown" for item in result.operation_receipts):
+            return (
+                False,
+                False,
+                "The revision stopped after an unknown mutation outcome; no operation was replayed.",
+            )
+        return (
+            True,
+            False,
+            result.blockers[0]
+            if result.blockers
+            else "The revision pass did not verify every required operation.",
+        )
     if isinstance(result, (PatternPreparation, TrackBVerifiedMutation)):
         if result.verified:
             return True, True, ""
@@ -4618,6 +5328,29 @@ class ProductionRunRegistry:
             state=state,
         )
 
+    def snapshot(self, run_id: str) -> ProductionRunSnapshot:
+        """Return isolated state and plan for a linked Review Session."""
+
+        with self._lock:
+            record = self._runs.get(run_id)
+            if record is None:
+                return ProductionRunSnapshot(
+                    found=False,
+                    message=self._missing_message(run_id),
+                )
+            state = ProductionRunState.model_validate(
+                record.state.model_dump(mode="python")
+            )
+            plan = ProductionRunPlan.model_validate(
+                record.plan.model_dump(mode="python")
+            )
+        return ProductionRunSnapshot(
+            found=True,
+            message=f"Production run {run_id} is {state.status}.",
+            state=state,
+            plan=plan,
+        )
+
     @staticmethod
     def _result(state: ProductionRunState) -> ProductionRunResult:
         summary = state.final_summary or f"Production run is {state.status}."
@@ -4638,6 +5371,11 @@ class ProductionRunRegistry:
             phase_plan=state.phase_plan,
             timing_report=state.timing_report,
             creation_outcome=state.creation_outcome,
+            receipts=state.receipts,
+            generated_outputs=state.generated_outputs,
+            session_fingerprint=state.session_fingerprint,
+            project_state_digest=state.project_state_digest,
+            run_context=state.run_context,
         )
 
     def _update_phase(
@@ -5169,6 +5907,33 @@ class ProductionRunRegistry:
                             start_index=0,
                         )
                     )
+                    revision_precondition_blockers: list[ProductionBlocker] = []
+                    if (
+                        record.state.request.expected_session_fingerprint
+                        is not None
+                        and session
+                        != record.state.request.expected_session_fingerprint
+                    ):
+                        revision_precondition_blockers.append(
+                            _blocker(
+                                "setup_or_session",
+                                "expected_session_changed",
+                                "The open FL Studio session no longer matches the session captured for this run.",
+                            )
+                        )
+                    if (
+                        record.state.request.expected_project_state_digest
+                        is not None
+                        and project_digest
+                        != record.state.request.expected_project_state_digest
+                    ):
+                        revision_precondition_blockers.append(
+                            _blocker(
+                                "setup_or_session",
+                                "expected_project_changed",
+                                "The open project state no longer matches the checkpoint captured for this run.",
+                            )
+                        )
                     readiness_blockers = _bounded_blockers(
                         [
                             *(
@@ -5176,6 +5941,7 @@ class ProductionRunRegistry:
                                 for item in readiness_report.blockers
                             ),
                             *cached_blockers,
+                            *revision_precondition_blockers,
                         ],
                         limit=MAX_VALIDATION_BLOCKERS,
                     )
@@ -5760,7 +6526,7 @@ class ProductionRunRegistry:
                             _output_key(
                                 output.operation_id,
                                 output.output,
-                                output.role_id,
+                                output.selector_id,
                             )
                         ] = output
                     state = record.state.model_copy(
@@ -5899,7 +6665,7 @@ class ProductionRunRegistry:
                         _output_key(
                             output.operation_id,
                             output.output,
-                            output.role_id,
+                            output.selector_id,
                         )
                     ] = output
                 update: dict[str, Any] = {

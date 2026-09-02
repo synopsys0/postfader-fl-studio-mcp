@@ -378,6 +378,10 @@ with mock.patch.object(
             "fl_studio_mcp.sound_selection.data",
             declared["tool"]["setuptools"]["packages"],
         )
+        self.assertIn(
+            "fl_studio_mcp.creation_review",
+            declared["tool"]["setuptools"]["packages"],
+        )
 
         atlas_data = files("fl_studio_mcp.plugin_atlas_data")
         source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
@@ -408,6 +412,8 @@ with mock.patch.object(
         modules.extend((package / "plugin_atlas").rglob("*.py"))
         modules.extend((package / "plugin_atlas_data").rglob("*.py"))
         modules.extend((package / "sound_selection").rglob("*.py"))
+        modules.extend((package / "creation_pipeline").rglob("*.py"))
+        modules.extend((package / "creation_review").rglob("*.py"))
         for module in modules:
             tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
             imports = []
@@ -455,6 +461,7 @@ with mock.patch.object(
                 "fl_studio_mcp",
                 "fl_studio_mcp._bridge",
                 "fl_studio_mcp.creation_pipeline",
+                "fl_studio_mcp.creation_review",
                 "fl_studio_mcp.plugin_atlas",
                 "fl_studio_mcp.plugin_atlas_data",
                 "fl_studio_mcp.sound_selection",
@@ -609,9 +616,22 @@ with mock.patch.object(
             verifier.SDIST_REQUIRED_SUFFIXES,
         )
 
+    def test_distribution_verifier_pins_creation_review_modules_and_docs(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.CREATION_REVIEW_RUNTIME_MODULES)
+        self.assertLessEqual(
+            verifier.CREATION_REVIEW_RUNTIME_MODULES,
+            verifier.RUNTIME_MODULES,
+        )
+        self.assertIn("/docs/creation-review.md", verifier.SDIST_REQUIRED_SUFFIXES)
+        self.assertIn(
+            "/scripts/generate_creation_review_fixtures.py",
+            verifier.SDIST_REQUIRED_SUFFIXES,
+        )
+
     def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
         verifier = load_distribution_verifier()
-        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 114)
+        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 127)
         self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
 
 

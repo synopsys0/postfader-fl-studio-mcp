@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current development surface contains 114 tools and 8 resources.
+controller script. The current development surface contains 127 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -17,6 +17,7 @@ fl_studio_mcp/mcp_server.py
         ├── production_runs.py ────┤
         ├── sound_selection/ ───────┤
         ├── creation_pipeline/ ──────┤
+        ├── creation_review/ ───────┤
         ├── mixing.py ─────────────┤
         ├── plugin_atlas_mcp.py ───┤
         ├── creative.py ───────────┤
@@ -50,7 +51,7 @@ separate.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 114 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 127 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
@@ -145,6 +146,33 @@ processing requires a loaded effect, Atlas capability, compatible adapter, and
 runtime control evidence, then uses the existing verified display/option or
 normalized setter. These layers never hear live audio and never turn metadata
 into an audible-quality verdict.
+
+### Creation Review, Revision, and Delivery
+
+`fl_studio_mcp/creation_review/` owns the workflow that starts after a
+Production Run has produced a draft. It keeps caller-selected audio assets,
+section mapping, decoded-audio measurements, explicit producer feedback,
+accepted-element locks, closed revision plans, before/after comparisons, and
+delivery handoffs in separate modules. Review Sessions are bounded and
+process-local by default; a caller may opt into an atomic, schema-versioned
+local store without persisting audio bytes. The store uses a private per-path
+advisory writer lock across MCP processes and deterministic referenced-finding
+pruning. Its serializer removes credentials, prompts, transcripts, encoded or
+raw audio, cloud identifiers, and arbitrary private paths; asset paths are
+retained only for canonical attached assets when explicitly opted in.
+
+Evaluation is host-side and read-only. It reuses the existing audio analyzers,
+decodes each file identity once per policy and section map, and keeps measured
+facts distinct from arrangement proxies and producer judgment. Revision
+execution adapts the closed review operations to the existing Production Run
+engine, so one pass retains the same session checks, verified writers,
+unknown-outcome rule, and single task-scoped write authorization. A revision
+plan is request-digest bound except for authorization, which is asserted
+afresh for the mutating task. If a verified mutation is followed by a local
+store failure, the receipt remains process-local and the result is blocked
+without replay. Playlist placement, rendering, project saving, and artistic
+approval remain outside the bridge's claimed capabilities. See [Creation
+Review](creation-review.md).
 
 ### Sound Selection
 

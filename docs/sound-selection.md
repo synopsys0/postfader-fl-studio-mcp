@@ -61,6 +61,14 @@ tied. A substantially better match still wins. `consistent`, `balanced`,
 `exploratory`, and bounded `custom` policies adjust ranking; none bypasses a
 hard constraint.
 
+Creation Review retains the palette and its evidence from the source
+Production Run. Producer feedback may lock sound assignment independently from
+notes, rhythm, register, level, or processing. A revision that asks to keep the
+melody but change the sound can therefore use a verified palette alternative
+without discarding the generated sequence; keeping the sound while rewriting
+the melody does the converse. Review history never turns silence into an
+accepted assignment.
+
 ## Anchors and section variations
 
 Core identity roles are anchors by default. Typical anchors are the main chords,

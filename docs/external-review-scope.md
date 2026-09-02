@@ -41,7 +41,7 @@ The components in scope are:
   typed results. The client and any model provider it uses are outside
   PostFader's trust boundary; a client may send tool arguments and results to a
   remote provider according to its own policy.
-- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers the 114 MCP
+- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers the 127 MCP
   tools and 8 live resources. It routes reads, bounded audio analysis,
   creative/file workflows, verified mutations, and session write-mode control
   through typed contracts. It must not become a generic bridge-command or
@@ -69,6 +69,12 @@ The components in scope are:
   selected by the caller; `advisory.py` applies typed path/root policy and
   exposes measurements, comparisons, masking analysis, and bounded recent
   bounce discovery. The FL API is not used to read live audio.
+- **Creation Review.** `fl_studio_mcp/creation_review/` keeps an immutable
+  source-run snapshot, explicit asset metadata, measured findings, producer
+  feedback/locks, bounded revision receipts, comparisons, and delivery
+  handoffs. Persistence is opt-in local, atomic, schema-versioned, and
+  path-redacted by default; it never stores audio bytes or enables a second
+  mutation engine.
 - **Piano Roll script workflow.** `creative.py` prepares an atomic generated
   `.pyscript` beneath the FL Studio user-data scripts directory, verifies the
   channel/pattern/visibility preconditions through the controller bridge, and

@@ -102,7 +102,30 @@ class MCPBPackagingTests(unittest.TestCase):
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 75)
-        self.assertEqual(len(names), 114)
+        self.assertEqual(len(names), 127)
+        self.assertEqual(
+            {
+                name
+                for name in names
+                if name.startswith("postfader_review_")
+                or name.startswith("postfader_delivery_")
+            },
+            {
+                "postfader_review_start",
+                "postfader_review_attach_assets",
+                "postfader_review_evaluate",
+                "postfader_review_get",
+                "postfader_review_compare",
+                "postfader_review_plan_revision",
+                "postfader_review_export_handoff",
+                "postfader_review_apply_revision",
+                "postfader_review_record_feedback",
+                "postfader_review_stop",
+                "postfader_review_delete",
+                "postfader_delivery_manifest",
+                "postfader_delivery_export_manifest",
+            },
+        )
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"
@@ -163,6 +186,17 @@ class MCPBPackagingTests(unittest.TestCase):
                 "fl_studio_mcp/sound_selection/models.py",
                 "fl_studio_mcp/sound_selection/data/__init__.py",
                 "fl_studio_mcp/sound_selection/data/descriptors-v1.json",
+            }
+            <= MCPB_REQUIRED
+        )
+
+    def test_bundle_checker_requires_the_complete_creation_review_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/creation_review/__init__.py",
+                "fl_studio_mcp/creation_review/models.py",
+                "fl_studio_mcp/creation_review/mcp.py",
+                "fl_studio_mcp/creation_review/persistence.py",
             }
             <= MCPB_REQUIRED
         )

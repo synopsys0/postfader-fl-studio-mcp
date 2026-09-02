@@ -99,6 +99,13 @@ Use lower-level tools for a precise one-off change. Use a Production Run when
 the requested outcome spans several supported creative, arrangement, Piano
 Roll, automation, or project-state steps.
 
+After a completed run, [Creation Review](creation-review.md) can link a
+caller-exported bounce to the run's stored palette, generated notes,
+processing receipts, section plan, and creation outcome. A revision pass is
+compiled from explicit feedback and measured evidence, then adapted back to
+the same Production Run executor. It does not create a second write engine or
+rewrite the completed source run.
+
 ## Supported MVP operations
 
 The first Production Runs foundation adapts existing PostFader workflows; it
@@ -140,7 +147,9 @@ reference type is compatible. `write_note_sequence.channel_index` accepts a
 `generate_drums.drum_map` accepts a `drum_map` reference. Drum-map and target
 references can also feed the drum inspection/selection operations. References
 must point backward to an earlier operation, and the complete plan is
-validated before any project mutation.
+validated before any project mutation. Creation Review start operations also
+publish bounded `section_definition` items; revision planning may reference
+those items to add the exact source section ID to its validated scope.
 
 ## Execution and receipts
 

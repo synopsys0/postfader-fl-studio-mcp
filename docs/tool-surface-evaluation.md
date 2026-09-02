@@ -1,5 +1,8 @@
 # Tool-surface evaluation
 
+> Historical snapshot: this playbook records the v0.20 surface. For the
+> current `dev` contract and counts, use [Tool and command reference](tool-contracts.md).
+
 PostFader v0.20 exposes 111 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,

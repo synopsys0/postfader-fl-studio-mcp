@@ -195,6 +195,37 @@ For live evidence, provide `--confirm-user-present`,
 Production Run and labels its timing/acceptance targets as unclaimed until a
 real run records them; it never saves the project or claims audible quality.
 
+### Creation Review setup and persistence
+
+Creation Review needs no second bridge, plug-in, or client installation. First
+complete a Production Run in the same connected MCP process, export a bounce
+from FL Studio, and give the connected AI the explicit absolute path. The AI
+can then call `postfader_review_start`, `postfader_review_attach_assets`, and
+`postfader_review_evaluate`; attach a reference or synchronized stem only when
+the requested finding needs that evidence. Review never captures FL's live
+audio and never renders or saves the project.
+
+Review Sessions are process-local by default. Set `persist_session=true` when
+the review must survive a process restart. The default local store is:
+
+```text
+<FL Studio user-data>/Settings/PostFader/creation-review-sessions-v1.json
+```
+
+`POSTFADER_CREATION_REVIEW_PATH` (or its compatibility alias
+`POSTFADER_CREATION_REVIEW_SESSIONS_PATH`) may point to another absolute JSON
+path. Persistence is atomic, bounded, and schema-versioned. Asset paths are
+omitted by default; hashes, labels, findings, feedback, revision receipts, and
+delivery metadata may remain. Audio bytes, prompts, transcripts, credentials,
+and cloud identifiers are never stored. Keep the store on a local, user-only
+directory and back it up yourself if the review record matters.
+
+After a revision, export the new bounce with the same range, sample rate,
+channels, normalization, and tail policy before calling
+`postfader_review_compare`. Use `postfader_delivery_manifest` to inspect the
+final handoff and `postfader_delivery_export_manifest` to create new JSON or
+Markdown files. These manifests are create-only and do not save FL Studio.
+
 ## 4. Generate client configuration
 
 Guided setup generates the selected format from the exact interpreter,
@@ -426,6 +457,41 @@ adapter, and exposes the observed control. Missing effects and unresolved
 controls are honest readiness limitations, not silent substitutions or
 audible-quality failures.
 
+**A Review Session cannot be found.** Review state is process-local unless it
+was started with `persist_session=true`; reconnect the client to the process
+that owns the session or use the configured local store. A persisted review
+does not make a completed Production Run itself permanent, so keep the source
+run and its matching package process available for a revision.
+
+**A review asset is rejected.** Supply an absolute path to a regular supported
+audio file selected by the user. Check that it is not a directory or unsafe
+symlink, is below the size/duration limits, and has not changed since its
+digest was captured. Use the exact asset IDs returned by
+`postfader_review_attach_assets` for later evaluation and comparison.
+
+**Evaluation has weak or missing evidence.** Provide authoritative section
+ranges when the source run has no usable section map. A full mix cannot prove
+which channel caused a problem; attach synchronized vocal/instrumental or
+role-specific stems only for that attribution. A reference is directional
+evidence, not a copy target.
+
+**A revision plan is blocked or stale.** Read the Review Session and the plan
+blockers. Re-evaluate the current asset set, preserve accepted-element locks,
+and build a fresh plan when a session fingerprint, note digest, palette target,
+effect control, section, or finding has changed. Never replay an unverified or
+unknown mutation.
+
+**Before/after comparison reports no deltas.** Confirm that the two asset IDs
+are distinct, their files have distinct digests, and both exports use matching
+start range, channels, sample rate, normalization, tail, and declared offset.
+Duration similarity alone is not synchronization proof; fix the export or
+provide an explicit offset before comparing.
+
+**Delivery export refuses an existing file or directory.** Delivery artifacts
+are create-only. Choose a new output directory or filename and inspect the
+read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
+manifest and will not save the FL Studio project.
+
 ## Environment variables
 
 | Variable | Meaning |
@@ -439,6 +505,7 @@ audible-quality failures.
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
 | `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` | Optional absolute override for the generated Piano Roll script directory. Otherwise it follows `FL_STUDIO_USER_DATA_DIR`. |
+| `POSTFADER_CREATION_REVIEW_PATH` | Optional absolute override for the schema-versioned Creation Review session store. Persistence is opt-in. |
 
 ## 8. Hermetic tests
 

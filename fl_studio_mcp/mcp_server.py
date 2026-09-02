@@ -87,6 +87,41 @@ from .contracts import (
     VerifiedPluginParameterWrite,
     WriteModeChange,
 )
+from .creation_review.mcp import (
+    ReviewApplyRevisionRequest,
+    ReviewAttachAssetsRequest,
+    ReviewCompareRequest,
+    ReviewDeleteResult,
+    ReviewDeliveryExportRequest,
+    ReviewDeliveryExportResult,
+    ReviewEvaluateRequest,
+    ReviewPlanRevisionRequest,
+    ReviewSessionLookup,
+    delivery_export_manifest as export_review_delivery_manifest,
+    delivery_manifest as build_review_delivery_manifest,
+    review_apply_revision as apply_creation_revision,
+    review_attach_assets as attach_creation_review_assets,
+    review_compare as compare_creation_revision,
+    review_delete as delete_creation_review,
+    review_evaluate as evaluate_creation_review,
+    review_export_handoff as build_review_export_handoff,
+    review_get as get_creation_review,
+    review_plan_revision as plan_creation_revision,
+    review_record_feedback as record_creation_review_feedback,
+    review_start as start_creation_review,
+    review_stop as stop_creation_review,
+)
+from .creation_review.models import (
+    CreationEvaluationReport,
+    CreationFeedback,
+    DeliveryManifest,
+    ExportHandoff,
+    ReviewSession,
+    ReviewSessionRequest,
+    RevisionComparison,
+    RevisionPass,
+    RevisionPlan,
+)
 from .creative import (
     PIANO_ROLL,
     ArrangementMarkerReceipt,
@@ -319,7 +354,7 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 114 supported
+PostFader 0.20 is a local FL Studio 2026 production copilot with 127 supported
 tools and 8 live resources. It observes project, transport, mixer, Channel
 Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
 cells. Prefer the fl:// resources for initial context, then use focused reads
@@ -367,6 +402,21 @@ conversational follow-up and postfader_stop_run to prevent future operations;
 neither rewrites completed receipts or undoes earlier changes. Runs are
 bounded and process-local. Never claim a requested result completed when FL
 cannot expose or verify a required operation.
+
+Creation Review is a task-scoped continuation of a completed Production Run,
+not a persistent autonomous mode. When the user supplies an exported bounce,
+start or continue one Review Session, attach only the explicit selected files,
+and evaluate them globally and by the run's known sections. Measurements and
+arrangement proxies are evidence, not artistic approval. Preserve structured
+producer feedback as the highest taste authority and use independent locks for
+sound, notes, rhythm, register, processing, level, placement, and role identity.
+For a clear request to improve the open project, the AI may evaluate, construct
+one closed revision plan, and call postfader_review_apply_revision in the same
+turn. That call delegates to the existing Production Run engine for one
+readiness preflight and one task-scoped authorization. Analyze-only requests
+must not apply a revision. A revised bounce must use matching export settings
+before comparison; technical movement never grants user approval. Rendering,
+project saving, Playlist clip CRUD, and live audio capture remain unavailable.
 
 Mix Doctor, gain staging, reference matching, masking recommendations,
 processing intents, plug-in profiles, and finish assessment use actual decoded
@@ -3677,6 +3727,232 @@ async def postfader_stop_run(
 ) -> ProductionRunResult:
     """Stop future run operations without undoing completed project changes."""
     return await _mix(PRODUCTION_RUNS.stop, run_id)
+
+
+# ---------------------------------------------------------------------------
+# Creation Review, Revision, and Delivery
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="postfader_review_start",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Start a Creation Review"}),
+)
+async def postfader_review_start(
+    request: Annotated[
+        ReviewSessionRequest,
+        Field(description="Task-scoped review policy linked to a completed Production Run."),
+    ],
+) -> ReviewSession:
+    """Start a bounded Review Session from one completed Production Run."""
+    return await _mix(start_creation_review, request)
+
+
+@mcp.tool(
+    name="postfader_review_attach_assets",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Attach Creation Review audio"}),
+)
+async def postfader_review_attach_assets(
+    request: Annotated[
+        ReviewAttachAssetsRequest,
+        Field(description="Explicit caller-selected full mix, reference, stem, or section paths."),
+    ],
+) -> ReviewSession:
+    """Validate and attach explicit audio assets without changing FL Studio."""
+    return await _mix(attach_creation_review_assets, request)
+
+
+@mcp.tool(
+    name="postfader_review_evaluate",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Evaluate a Creation Review bounce"}),
+)
+async def postfader_review_evaluate(
+    request: Annotated[
+        ReviewEvaluateRequest,
+        Field(description="Attached asset set and optional authoritative section ranges."),
+    ],
+) -> CreationEvaluationReport:
+    """Measure one bounce globally and by known section; apply zero FL mutations."""
+    return await _mix(evaluate_creation_review, request)
+
+
+@mcp.tool(
+    name="postfader_review_get",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get a Creation Review"}),
+)
+async def postfader_review_get(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Process-local or persisted Review Session identifier.",
+        ),
+    ],
+) -> ReviewSessionLookup:
+    """Read a Review Session, retained evidence, status, and exact next action."""
+    return await _mix(get_creation_review, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_compare",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compare revision bounces"}),
+)
+async def postfader_review_compare(
+    request: Annotated[
+        ReviewCompareRequest,
+        Field(description="Distinct aligned before/after assets and their revision objective."),
+    ],
+) -> RevisionComparison:
+    """Compare before and after bounces without implying producer approval."""
+    return await _mix(compare_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_review_plan_revision",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Plan a Creation Review revision"}),
+)
+async def postfader_review_plan_revision(
+    request: Annotated[
+        ReviewPlanRevisionRequest,
+        Field(description="Strict revision request plus a closed traceable operation list."),
+    ],
+) -> RevisionPlan:
+    """Compile and validate one bounded RevisionPlan before any project mutation."""
+    return await _mix(plan_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_delivery_manifest",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Build a delivery manifest"}),
+)
+async def postfader_delivery_manifest(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session whose current delivery view should be built.",
+        ),
+    ],
+) -> DeliveryManifest:
+    """Build the final multi-dimensional delivery view without writing a file."""
+    return await _mix(build_review_delivery_manifest, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_export_handoff",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Build a review export handoff"}),
+)
+async def postfader_review_export_handoff(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session awaiting its next caller-exported bounce.",
+        ),
+    ],
+) -> ExportHandoff:
+    """Return one precise full-mix export request and only necessary stems."""
+    return await _mix(build_review_export_handoff, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_apply_revision",
+    annotations=MUTATING.model_copy(update={"title": "Apply one Creation Review revision"}),
+)
+async def postfader_review_apply_revision(
+    request: Annotated[
+        ReviewApplyRevisionRequest,
+        Field(description="Recorded RevisionPlan and present task-scoped authorization."),
+    ],
+) -> RevisionPass:
+    """Apply one bounded revision with one preflight and one write authorization."""
+    return await _mix(apply_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_review_record_feedback",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={"title": "Record Creation Review feedback", "open_world_hint": False}
+    ),
+)
+async def postfader_review_record_feedback(
+    feedback: Annotated[
+        CreationFeedback,
+        Field(description="Explicit structured producer feedback and independent locks."),
+    ],
+) -> ReviewSession:
+    """Record explicit feedback; silence and measurements never grant approval."""
+    return await _mix(record_creation_review_feedback, feedback)
+
+
+@mcp.tool(
+    name="postfader_review_stop",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={"title": "Stop a Creation Review", "open_world_hint": False}
+    ),
+)
+async def postfader_review_stop(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session whose future work should stop.",
+        ),
+    ],
+) -> ReviewSession:
+    """Stop future review work without undoing completed project changes."""
+    return await _mix(stop_creation_review, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_delete",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Delete Creation Review metadata",
+            "destructive_hint": True,
+            "open_world_hint": False,
+        }
+    ),
+)
+async def postfader_review_delete(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session metadata to delete.",
+        ),
+    ],
+    confirm: Annotated[
+        bool,
+        Field(description="Must be true after an explicit request to delete review metadata."),
+    ],
+) -> ReviewDeleteResult:
+    """Delete one Review Session record without touching audio or the FL project."""
+    return await _mix(delete_creation_review, review_session_id, confirm=confirm)
+
+
+@mcp.tool(
+    name="postfader_delivery_export_manifest",
+    annotations=FILE_MUTATING.model_copy(update={"title": "Export a delivery manifest"}),
+)
+async def postfader_delivery_export_manifest(
+    request: Annotated[
+        ReviewDeliveryExportRequest,
+        Field(description="Create-only JSON/Markdown delivery export options."),
+    ],
+) -> ReviewDeliveryExportResult:
+    """Create local delivery files without overwriting or saving the FL project."""
+    return await _mix(export_review_delivery_manifest, request)
 
 
 # ---------------------------------------------------------------------------

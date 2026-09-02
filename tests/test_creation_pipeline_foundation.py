@@ -9,6 +9,9 @@ from fl_studio_mcp.contracts import ConnectionInfo
 from fl_studio_mcp.creation_pipeline.context import (
     ContextTargetIdentity,
     CreationRunContextSnapshot,
+    ProjectCheckpoint,
+    TempoCheckpoint,
+    TransportCheckpoint,
     build_context_snapshot,
 )
 from fl_studio_mcp.creation_pipeline.models import (
@@ -235,6 +238,32 @@ class CreationPipelineFoundationTests(unittest.TestCase):
         self.assertEqual(snapshot.target_fingerprint_for("lead"), TARGET)
         self.assertNotEqual(refreshed.context_digest, original_digest)
         self.assertEqual(snapshot.target_fingerprint_for("lead"), TARGET)
+
+    def test_context_checkpoint_retains_bounded_musical_transport(self) -> None:
+        checkpoint = ProjectCheckpoint(
+            digest="d" * 64,
+            transport=TransportCheckpoint(
+                tempo_bpm=150.0,
+                time_signature_numerator=3,
+                time_signature_denominator=8,
+                tempo_changes=(
+                    TempoCheckpoint(start_bar=8.5, tempo_bpm=160.0),
+                ),
+            ),
+        )
+        snapshot = build_context_snapshot(
+            session_fingerprint=SESSION,
+            project_checkpoint=checkpoint,
+            captured_at=WHEN,
+        )
+
+        transport = snapshot.project_checkpoint.transport
+        self.assertEqual(transport, checkpoint.transport)
+        assert transport is not None
+        self.assertEqual(
+            transport.tempo_changes[0].start_bar,
+            8.5,
+        )
 
     def test_timing_collector_tracks_phases_and_soft_warnings(self) -> None:
         ticks = iter(

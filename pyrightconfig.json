@@ -10,8 +10,11 @@
     "fl_studio_mcp/plugin_atlas_mcp.py",
     "fl_studio_mcp/sound_selection",
     "fl_studio_mcp/creation_pipeline",
+    "fl_studio_mcp/creation_review",
     "fl_studio_mcp/production_runs.py",
-    "scripts/build_release_bundles.py"
+    "scripts/build_release_bundles.py",
+    "scripts/generate_creation_review_fixtures.py",
+    "scripts/live_creation_review_acceptance.py"
   ],
   "exclude": [
     "fl_studio_mcp/_bridge",

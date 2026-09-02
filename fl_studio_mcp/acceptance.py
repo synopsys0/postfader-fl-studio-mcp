@@ -104,15 +104,28 @@ async def authoritative_tool_surface() -> ToolSurface:
     # A read that needs an opaque process-local registry ID cannot run in the
     # isolated one-tool acceptance worker: that worker intentionally starts
     # with fresh process state. Its creating workflow has dedicated tests.
+    review_workflow_reads = {
+        "postfader_review_start",
+        "postfader_review_attach_assets",
+        "postfader_review_evaluate",
+        "postfader_review_get",
+        "postfader_review_compare",
+        "postfader_review_plan_revision",
+        "postfader_delivery_manifest",
+        "postfader_review_export_handoff",
+    }
     workflow_reads = tuple(
         name
         for name in all_reads
-        if set(
-            next(tool for tool in tools if tool.name == name).input_schema.get(
-                "required", ()
+        if name in review_workflow_reads
+        or (
+            set(
+                next(tool for tool in tools if tool.name == name).input_schema.get(
+                    "required", ()
+                )
             )
+            & {"watch_id", "plan_id", "palette_id", "review_session_id"}
         )
-        & {"watch_id", "plan_id", "palette_id"}
     )
     reads = tuple(name for name in all_reads if name not in set(workflow_reads))
 

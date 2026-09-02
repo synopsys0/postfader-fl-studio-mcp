@@ -29,10 +29,36 @@ from .models import (
 MAX_CONTEXT_TARGETS = 256
 MAX_CONTEXT_TEXT = 256
 MAX_CONTEXT_RECEIPTS = 128
+MAX_TEMPO_CHANGES = 64
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class TempoCheckpoint(CreationPipelineModel):
+    """One documented one-based tempo change retained by a run snapshot."""
+
+    start_bar: float = Field(ge=1.0, le=1_000_000.0)
+    tempo_bpm: float = Field(gt=0.0, le=522.0)
+
+
+class TransportCheckpoint(CreationPipelineModel):
+    """Bounded musical transport facts needed for later section mapping."""
+
+    tempo_bpm: float | None = Field(default=None, gt=0.0, le=522.0)
+    time_signature_numerator: int | None = Field(default=None, ge=1, le=32)
+    time_signature_denominator: Literal[1, 2, 4, 8, 16, 32] | None = None
+    tempo_changes: tuple[TempoCheckpoint, ...] = Field(
+        default=(), max_length=MAX_TEMPO_CHANGES
+    )
+
+    @model_validator(mode="after")
+    def validate_tempo_changes(self) -> "TransportCheckpoint":
+        starts = [item.start_bar for item in self.tempo_changes]
+        if starts != sorted(starts) or len(starts) != len(set(starts)):
+            raise ValueError("transport tempo changes must have unique ordered start bars")
+        return self
 
 
 class ProjectCheckpoint(CreationPipelineModel):
@@ -42,6 +68,7 @@ class ProjectCheckpoint(CreationPipelineModel):
     dirty_state: Literal["clean", "dirty", "autosave_dirty", "unknown"] = "unknown"
     undo_history_position: int | None = Field(default=None, ge=0)
     undo_history_count: int | None = Field(default=None, ge=0)
+    transport: TransportCheckpoint | None = None
 
 
 class ContextTargetIdentity(CreationPipelineModel):
@@ -301,6 +328,16 @@ def build_context_snapshot(
                 None if project is None else project.undo_history_position
             ),
             undo_history_count=None if project is None else project.undo_history_count,
+            transport=(
+                None
+                if project is None
+                else TransportCheckpoint(
+                    tempo_bpm=project.transport.tempo_bpm or project.tempo_bpm,
+                    time_signature_numerator=(
+                        project.transport.time_signature_numerator
+                    ),
+                )
+            ),
         )
     return CreationRunContextSnapshot(
         captured_at=_now() if captured_at is None else captured_at,
@@ -365,6 +402,8 @@ __all__ = [
     "CreationRunContextSnapshot",
     "PianoRollArmingReceipt",
     "ProjectCheckpoint",
+    "TempoCheckpoint",
+    "TransportCheckpoint",
     "RunContextSnapshot",
     "build_context_snapshot",
     "context_snapshot_digest",
