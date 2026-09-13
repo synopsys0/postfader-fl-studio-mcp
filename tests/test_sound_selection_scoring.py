@@ -14,12 +14,49 @@ from fl_studio_mcp.sound_selection import (
     SoundRoleRequest,
     SoundSelectionRequest,
     rank_candidates,
+    score_candidate,
 )
 from fl_studio_mcp.track_b_contracts import ChannelGeneratorTarget
 
 
 class SoundSelectionScoringTests(unittest.TestCase):
     now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+
+    def test_missing_numeric_evidence_does_not_improve_match(self) -> None:
+        role = SoundRoleRequest(role_id="texture", brightness=0.0, width=1.0)
+        request = SoundSelectionRequest(brief="texture", roles=(role,))
+        complete = self._candidate("complete", channel=1, brightness=0.0, width=1.0)
+        partial = complete.model_copy(update={"width": None})
+        mismatch = complete.model_copy(update={"width": 0.0})
+        full_score = score_candidate(complete, role, request).breakdown.user_direction
+        self.assertGreater(full_score, score_candidate(partial, role, request).breakdown.user_direction)
+        self.assertGreater(full_score, score_candidate(mismatch, role, request).breakdown.user_direction)
+
+    def test_unmatched_dimensions_contribute_zero_instead_of_disappearing(self) -> None:
+        role = SoundRoleRequest(role_id="lead", desired_descriptors=("warm",), register="low", articulation="plucked")
+        request = SoundSelectionRequest(brief="lead", roles=(role,))
+        complete = self._candidate("complete", channel=1, descriptors=("warm",), role_ids=("lead",), registers=("low",), articulations=("plucked",))
+        absent = complete.model_copy(update={"registers": (), "articulations": ()})
+        wrong = complete.model_copy(update={"registers": ("high",), "articulations": ("sustained",)})
+        complete_score = score_candidate(complete, role, request).breakdown.role_fit
+        self.assertGreater(complete_score, score_candidate(absent, role, request).breakdown.role_fit)
+        self.assertGreater(complete_score, score_candidate(wrong, role, request).breakdown.role_fit)
+
+    def test_no_semantic_evidence_has_no_direction_or_role_fit_bonus(self) -> None:
+        role = SoundRoleRequest(role_id="lead", desired_descriptors=("warm",))
+        request = SoundSelectionRequest(brief="warm lead", roles=(role,))
+        candidate = self._candidate("unknown", channel=1)
+        result = score_candidate(candidate, role, request)
+        self.assertEqual(result.breakdown.user_direction, 0.0)
+        self.assertEqual(result.breakdown.role_fit, 0.0)
+
+    def test_keyboard_role_knowledge_matches_harmonic_function(self) -> None:
+        role = SoundRoleRequest(role_id="main_chords", role_type="chords")
+        request = SoundSelectionRequest(brief="choose harmony", roles=(role,))
+        keys = self._candidate("keys", channel=1, role_ids=("keys",))
+        bass = self._candidate("bass", channel=2, role_ids=("bass",))
+        self.assertGreater(score_candidate(keys, role, request).breakdown.role_fit, score_candidate(bass, role, request).breakdown.role_fit)
+        self.assertEqual(rank_candidates((bass, keys), role, request)[0].candidate_id, "keys")
 
     @staticmethod
     def _candidate(

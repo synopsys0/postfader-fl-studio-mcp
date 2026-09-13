@@ -52,7 +52,7 @@ authentication.
 
 The current confirm_user_present argument is deliberately limited: it is a
 literal client-supplied assertion after an explicit present-user request, and
-it is checked with provenance and the current session fingerprint. It is not
+it is checked with live capabilities and the current session fingerprint. It is not
 proof that a human is present or that the client displayed the request.
 
 An out-of-band design could use a local OS dialog, a short-lived local

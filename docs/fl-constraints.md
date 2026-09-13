@@ -19,8 +19,8 @@ save or render a project, or read FL Studio's live audio output.
 Creation Review consequently works from explicit audio exports selected by the
 caller. It can measure those files, map known Production Run sections, compare
 matching before/after bounces, and request only the stems needed for an
-unresolved finding. It cannot capture FL's live output, render the revised
-project, save the project, separate stems, verify manual Playlist placement, or
+unresolved finding. It cannot capture FL's live output, render unsaved revisions,
+save the project, separate stems, verify manual Playlist placement, or
 establish artistic approval from measurements.
 
 Sound Selection follows the same boundary: it chooses only from generators and
@@ -33,7 +33,7 @@ selected-loop identity.
 ## Creation readiness is observational
 
 The creation-readiness scorecard aggregates what this bridge can detect before
-the first write: connection/provenance, Piano Roll arming, loaded generators,
+the first write: connection/capabilities, Piano Roll arming, loaded generators,
 semantic drum coverage, empty patterns and arrangement limits, loaded-effect
 coverage, and manual handoff requirements. It performs no mutation and cannot
 make an unloaded instrument/effect, missing pad, or unavailable Playlist
@@ -88,7 +88,9 @@ environment variable.
 still read only when the script loads. Changing that variable after FL Studio
 starts has no effect. A script reload resets the in-memory gate to the startup
 default; a normal FL Studio process with no startup opt-in therefore returns to
-read-only mode.
+read-only mode. Project-load callbacks also disable writes and rotate the
+session fingerprint, including a failed load. Pending commands are abandoned
+with unknown outcomes rather than resumed against newly loaded indices.
 
 ## The bridge source must be ASCII-only
 
@@ -201,6 +203,10 @@ shows the updated setting. The verified setters use both observations:
 Use `fl_set_plugin_param_display` when the target must land in the units the
 plug-in shows. A name such as `Attack` and a target such as `20` can be
 resolved without the caller knowing the plug-in's normalized curve.
+For a unit-specific request, supply `target_unit`, for example `ms` with
+`target_value=20`. The solver normalizes each display read, including a change
+between Hz and kHz or ms and seconds. This path requires a bridge advertising
+`plugin_display_units`; older numeric calls remain available without it.
 
 ## Parameter writes require pickup mode to be disabled
 
@@ -225,7 +231,7 @@ and should not be run during recording or on an irreplaceable project. If the
 requested option is not found, the bridge attempts to restore the starting
 value and reports the result.
 
-## The public API does not insert or render
+## The MIDI scripting API does not insert plug-ins or render audio
 
 The supported MIDI scripting modules provide no operation for:
 
@@ -238,13 +244,18 @@ The supported MIDI scripting modules provide no operation for:
 FL Studio contains undocumented internal operations, but they are not a stable
 third-party integration surface and this project does not depend on them.
 
-Plug-ins can be inserted manually through FL Studio's UI and then inspected
-immediately through `plugins.isValid`, `plugins.getPluginName`, and the
-parameter tools. The division is explicit: insertion stays outside this MCP
-server; verification and parameter configuration remain inside it.
+The macOS host adapter supplies insertion through FL's named native Add menu:
+`plugins_list_available` enumerates menu entries and `plugins_load` adds one
+instrument or a mixer effect. Bridge inventory verifies the new instance.
+This is a desktop capability separate from the MIDI API. It requires
+Accessibility access, supports the observed English menu structure, and does
+not implement Windows insertion, removal, replacement or reordering.
 
-Audio must likewise be exported or recorded through FL Studio before the
-audio-analysis tools can measure it.
+Audio must be exported or recorded through FL Studio before the audio-analysis
+tools can measure it. Separately from the MIDI bridge,
+`postfader_render_saved_project` invokes FL's documented command-line WAV
+exporter on an existing `.flp` in another process. That export includes saved
+state only; it does not save the open project or capture unsaved changes.
 
 ## Piano Roll scripts are a separate runtime
 
@@ -252,13 +263,19 @@ FL's controller scripting API can select a global channel and pattern and show
 the Piano Roll, but it cannot enumerate or edit the score. FL exposes those
 notes to a separate `.pyscript` runtime instead. PostFader therefore installs a
 small user-run bootstrap and atomically replaces one generated **Postfader
-Apply** script for each requested write or transform.
+Apply** script for each requested inspection, write, or transform.
 
 The controller bridge verifies the intended channel, pattern, and Piano Roll
-visibility before the host sends the platform shortcut. A successful shortcut
-dispatch proves focus/key delivery only. Because the controller side has no
-note getter, `application_verified` is always false and no second Piano Roll
-mutation should be inferred safe merely from dispatch.
+visibility before the host sends the platform shortcut. Editor navigation is
+available while musical writes are disabled. `piano_roll_read_notes` obtains
+bounded note pages from the separate runtime and rechecks the target afterward;
+a missing receipt or changed target exposes no attributed notes.
+
+A successful shortcut proves dispatch only. Note writes set
+`application_verified=true` only after matching application and persistence
+receipts arrive from the script runtime. Transforms remain dispatch-only and
+unverified; a later inspection provides a fresh score observation without
+retroactively verifying a transform.
 
 ## Markers and automation have asymmetric getters
 

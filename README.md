@@ -1,6 +1,6 @@
 <div align="center">
 
-# PostFader
+# PostFader — FL Studio MCP server
 
 **The AI copilot for FL Studio**
 
@@ -28,12 +28,17 @@ supported changes from natural language.
 · [Setup guide](docs/setup.md)
 · [Explore what PostFader can do](#not-just-another-note-sender)
 
-**127 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+**Current development source: 134 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
+
+The linked v0.20.0 downloads contain **90 tools and 8 resources**. This page
+describes the development source; the [release notes](docs/releases/v0.20.0.md)
+describe the shipped packages. See [what is new on dev](docs/releases/dev-v10.md)
+for the feature and live-acceptance boundaries before installing from source.
 
 Starts read-only and never saves your project automatically.
 
 [What it can do](#not-just-another-note-sender) ·
-[Workflows](#four-ways-to-work-with-postfader) ·
+[Workflows](#workflows-with-postfader) ·
 [Feature depth](#feature-depth) ·
 [Install](#quick-installation) ·
 [AI clients](#supported-ai-clients) ·
@@ -57,7 +62,7 @@ into the session.
 | **🎛️ Control the session** | **🎹 Create and transform music** |
 | Rename and color tracks, adjust levels and panning, manage sends and routing, control transport, organize channels and patterns, edit steps, and change supported loaded plug-in parameters. | Generate chords, melody, bass, and drums; export multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio; and prepare or transform Piano Roll material. |
 
-## Four ways to work with PostFader
+## Workflows with PostFader
 
 ### 🔎 Understand the project already open
 
@@ -121,9 +126,10 @@ harshness,” “control dynamics,” “limit peaks,” “shorten the reverb,�
 a rhythmic echo” into matching parameter roles. Intent resolution is read-only;
 choosing values and applying a change remain separate steps.
 
-PostFader works with the chain already in the session. It does not currently
-insert, remove, or reorder plug-ins, and FL Studio does not expose reliable
-effect-slot bypass or wet/dry control here.
+On macOS, `plugins_list_available` reads FL's native Add menu and `plugins_load`
+adds an instrument or an effect on a specified mixer track, then identifies
+the new instance through FL's bridge. Removal and reordering remain unavailable,
+as does reliable effect-slot bypass or wet/dry control.
 
 Plugin Atlas adds offline product knowledge for plug-ins whether or not an
 instance is currently loaded. Its bundled Image-Line catalog and selected
@@ -172,7 +178,7 @@ can be reviewed and exported in a separate step.
 
 PostFader can also find and prepare a pattern FL Studio reports as empty, add
 section markers, organize Playlist tracks, record a supported automation value,
-and prepare Piano Roll append, replace, quantize, transpose, humanize,
+and inspect existing Piano Roll notes or prepare append, replace, quantize, transpose, humanize,
 duplicate, delete, or clear operations. Piano Roll application uses FL Studio's
 separate script workflow, so PostFader reports the evidence it actually has
 instead of claiming controller-side note readback.
@@ -191,9 +197,10 @@ instead of claiming controller-side note readback.
    findings.
 4. Your AI prioritizes the reported evidence and builds a reviewable plan from
    supported operations.
-5. Keeps the plan separate until you choose to proceed with the apply call.
-6. After you explicitly confirm that you are present and enable session writes,
-   sends the separate apply request.
+5. Returns the proposed changes for a plan-only request, or uses the existing
+   authorization when you asked it to fix the problem.
+6. Enables session writes once and applies the supported changes within that
+   request's scope.
 7. Reports the observed result and any evidence limitation.
 
 <p align="center">
@@ -234,8 +241,22 @@ never means PostFader heard or approved the song. See [Creation pipeline](docs/c
 [Production Runs](docs/production-runs.md), and [Sound Selection](docs/sound-selection.md).
 
 See the [Production Runs guide](docs/production-runs.md) for chat examples,
-the supported MVP operation set, continuation and stop behavior, process-local
+the supported MVP operation set, continuation and stop behavior, durable
 run lifetime, and FL Studio limitations.
+
+Production Runs now survive MCP restarts: `postfader_list_runs` finds retained
+plans and receipts, and `postfader_continue_run` resumes remaining work. An
+interrupted operation with an unknown outcome is never replayed.
+
+`piano_roll_read_notes` inspects existing note timing, pitch and expression
+through the Piano Roll script bridge without enabling musical edits.
+`postfader_render_saved_project` starts a separate WAV render from a saved
+`.flp`; inspect or cancel it through the render job tools. Unsaved live edits
+are not included. These new paths have synthetic coverage; live acceptance on
+FL Studio remains pending.
+
+Genre requests now supply editable instrument-role defaults, with ten style
+profiles and eighteen instrument families. Explicit preferences stay in control.
 
 ## Creation Review, Revision, and Delivery
 
@@ -252,7 +273,7 @@ two versions, report improvements and regressions separately, and prepare an
 exact Playlist, export, and delivery handoff. Technical measurements and
 section-energy proxies never substitute for your artistic approval. Sessions
 can persist locally without storing audio bytes or paths you chose not to
-retain. PostFader still does not render, save, create Playlist clips, insert
+retain. The review workflow does not save, create Playlist clips, insert
 plug-ins, or hear FL Studio's live output. See the
 [Creation Review guide](docs/creation-review.md), which documents its 13 MCP
 tools and 9 corresponding Production Run operations.
@@ -413,7 +434,7 @@ does not expose its live audio buffer.
 
 ## Built for real projects without pretending FL Studio exposes more than it does
 
-- PostFader starts read-only; write access lasts only for the current session.
+- PostFader starts read-only; opening or reloading a project resets write access.
 - It never saves the project automatically.
 - Supported direct changes are read back from FL Studio after they are made.
 - Workflows with narrower evidence say so instead of reporting full
@@ -438,6 +459,35 @@ Writes affect the open project immediately. Ask the AI client to enable write
 mode only when you want changes, use a blank or disposable project for the
 first write test, and disable write mode when you are done.
 
+## FL Studio MCP questions
+
+### What is PostFader?
+
+PostFader is an open-source FL Studio MCP server. It connects a local AI client
+to FL Studio through the Universal Bridge and virtual MIDI, with additional
+file-based audio analysis and composition workflows.
+
+### Does it work on Windows and macOS?
+
+Yes. The release includes standard and Codex setup ZIPs for both platforms,
+an optional Claude Desktop MCPB, and Python packages. FL Studio, matching bridge
+installation, and a bidirectional virtual MIDI endpoint are required.
+
+### Which features are released?
+
+Version 0.20.0 ships 90 tools and 8 resources. The development branch has 134
+tools and 8 resources, adding sound selection, recoverable production runs,
+creation review, note inspection, macOS plug-in loading, and saved-project
+rendering. See the [development notes](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/dev/docs/releases/dev-v10.md)
+for qualification status. Installing the stable package does not install dev.
+
+### Does it upload my music or save my project?
+
+PostFader has no hosted service or telemetry and never saves your project
+automatically. Audio analysis runs on files you select. Your AI client may send
+tool arguments and results to its model provider under that client's settings.
+Keep private project data and local run journals out of public reports.
+
 ## Documentation
 
 | Guide | What it covers |
@@ -445,12 +495,16 @@ first write test, and disable write mode when you are done.
 | [Setup and troubleshooting](docs/setup.md) | Full installation, virtual MIDI, bridge, client configuration, upgrades, and diagnostics |
 | [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
 | [Sound Selection](docs/sound-selection.md) | Producer direction, coherent palettes, exact preset verification, drum maps, local history, and Production Run references |
+| [Production Runs](docs/production-runs.md) | Bounded execution, durable checkpoints, explicit resume, and recovery without replaying unknown writes |
+| [Creation Pipeline](docs/creation-pipeline.md) | Readiness, sound-aware composition, phase timing, and semantic processing |
 | [Creation Review](docs/creation-review.md) | Bounce evaluation, explicit feedback and locks, one bounded revision, before/after comparison, persistence, and delivery handoffs |
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
+| [Development release notes](docs/releases/dev-v10.md) | New features, stable-versus-dev differences, and pending live acceptance |
+| [Distribution and listings](docs/distribution.md) | Verified releases, canonical descriptions, and MCP directory status |
 | [Security](SECURITY.md) | Threat model, local trust boundaries, privacy, and vulnerability reporting |
 | [Early-user activation](docs/early-access-testing.md) | A privacy-safe first-session and return-session checklist |
 | [Contributing](CONTRIBUTING.md) | Development workflow and contribution guidelines |
@@ -461,12 +515,11 @@ first write test, and disable write mode when you are done.
 PostFader does not currently:
 
 - guarantee rollback or an FL Studio undo point;
-- save, render, or export an FL Studio project;
+- save an FL Studio project or render unsaved live state;
 - hear or capture FL Studio's live audio output;
-- insert, remove, or reorder plug-ins;
+- insert plug-ins on Windows, or remove or reorder them on either platform;
 - reliably control an effect slot's bypass or wet/dry mix;
 - create, move, or delete Playlist clips through the public scripting API;
-- read Piano Roll notes back after the focus-sensitive script workflow;
 - read section-marker times or recorded automation points back from FL Studio;
 - infer named competing project tracks from a full-mix masking measurement; or
 - turn technical measurements into objective artistic truth.

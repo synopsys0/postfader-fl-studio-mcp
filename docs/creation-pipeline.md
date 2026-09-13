@@ -151,6 +151,31 @@ workflow; complete creation should use `plan_processing` and
 The default first-pass policy is conservative and Master-protected. It does
 not treat metadata reasoning as audible proof.
 
+Goals no longer require callers to spell out every control value. With an
+observed bundled adapter, `ProcessingGoal.strength` (zero to one, default 0.5)
+scales a starting recipe. EQ 2 supports mud reduction, low-end tightening,
+harshness reduction, presence, and air; Compressor supports dynamics, vocal
+leveling, and punch; Limiter sets a peak ceiling; Reeverb 2 supports depth and
+shorter space; Delay 3 sets wet output and echo feedback. All parameter names must resolve
+in the captured runtime observation. No parameter indices or normalized
+curves are invented.
+
+For example, an `add_depth` goal at strength 0.5 produces a 1.5-second decay
+and 15-percent wet setting on a loaded Reeverb 2. These are first-pass settings
+to evaluate against the source, rather than measured optimal settings.
+Delay 3's ambiguous Time unit is left unchanged unless the caller supplies an
+explicit value. Goals without an implemented adapter recipe report a missing
+capability instead of silently producing an empty successful plan.
+`shorten_space` reduces the currently observed decay and wet amount, including
+when decay is displayed in milliseconds. Automatic recipes that would reuse
+an EQ band with conflicting settings try another compatible loaded effect;
+if none exists, the conflict is reported instead of overwriting an earlier
+goal. Display units travel with each action to the verified setter.
+
+Explicit `controls` take precedence over the recipe. Zero strength emits no
+automatic controls, while explicit controls still apply. Global or role-level
+`dry_by_design` suppresses processing actions.
+
 ## Armed-ready acceptance templates
 
 Maintainers can run the documented live acceptance workflow against disposable

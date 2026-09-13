@@ -25,6 +25,7 @@ from .descriptors import (
     normalize_descriptor_term,
     normalize_descriptors,
 )
+from .direction import resolve_musical_direction, supported_musical_profiles
 from .history import (
     DEFAULT_HISTORY_FILENAME,
     DEFAULT_MAX_FEEDBACK,
@@ -234,6 +235,8 @@ __all__ = [
     "rank_sound_candidates",
     "resolve_history_path",
     "resolve_preset_name",
+    "resolve_musical_direction",
+    "supported_musical_profiles",
     "score_candidate",
     "score_candidates",
     "score_sound_candidate",

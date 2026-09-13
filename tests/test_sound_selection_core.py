@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from fl_studio_mcp.sound_selection import (
     PaletteApplyReceipt,
     SoundCandidate,
+    SoundCreativeDirection,
     SoundInventory,
     SoundPaletteAssignment,
     SoundPaletteState,
@@ -20,6 +21,8 @@ from fl_studio_mcp.sound_selection import (
     load_descriptor_vocabulary,
     plan_palette,
     rank_candidates,
+    resolve_musical_direction,
+    supported_musical_profiles,
 )
 from fl_studio_mcp.track_b_contracts import ChannelGeneratorTarget
 
@@ -28,6 +31,93 @@ class SoundSelectionCoreTests(unittest.TestCase):
     def setUp(self) -> None:
         self.vital = ChannelGeneratorTarget(channel_index=1)
         self.stock = ChannelGeneratorTarget(channel_index=2)
+
+    def test_brief_genre_supplies_explainable_roles_without_empty_role_blocker(self) -> None:
+        request = SoundSelectionRequest(brief="make a deep house track")
+        plan = plan_palette(request, ())
+        assert plan.musical_direction is not None
+        self.assertEqual(plan.musical_direction.profile_id, "deep_house")
+        self.assertTrue(plan.musical_direction.roles_inferred)
+        self.assertEqual({role.role_id for role in plan.musical_direction.roles}, {"drums", "primary_bass", "main_chords", "texture"})
+        self.assertNotIn("request contains no sound roles", plan.blockers)
+        self.assertTrue(any("no loaded candidate" in row for row in plan.blockers))
+        self.assertTrue(plan.musical_direction.groove_notes)
+
+    def test_genres_change_bass_direction_and_ranking(self) -> None:
+        candidates = tuple(SoundCandidate(
+            candidate_id=name, target=ChannelGeneratorTarget(channel_index=index),
+            product_name=name, candidate_preset="Bass", current_preset="Bass",
+            role_ids=("bass",), descriptors=descriptors,
+            preset_identity_stable=True, preset_navigation_available=True,
+        ) for index, (name, descriptors) in enumerate((
+            ("Sub", ("sub-heavy", "mono")), ("Pulse", ("retro", "plucked")),
+        )))
+        for genre, winner in (("trap", "Sub"), ("synthwave", "Pulse")):
+            with self.subTest(genre=genre):
+                request = SoundSelectionRequest(brief=genre)
+                direction = resolve_musical_direction(request)
+                role = next(role for role in direction.roles if role.role_id == "primary_bass")
+                ranked = rank_candidates(candidates, role, request)
+                self.assertEqual(ranked[0].product_name, winner)
+
+    def test_explicit_roles_and_preferences_override_genre_defaults(self) -> None:
+        role = SoundRoleRequest(role_id="solo", role_type="lead", desired_descriptors=("acoustic",), preferred_products=("FL Keys",), brightness=0.0)
+        request = SoundSelectionRequest(brief="trap", roles=(role,), preset_exclusions=("Bright Lead",))
+        direction = resolve_musical_direction(request)
+        self.assertEqual(direction.roles, (role,))
+        self.assertFalse(direction.roles_inferred)
+        plan = plan_palette(request, ())
+        assert plan.musical_direction is not None
+        self.assertEqual(plan.musical_direction.roles, (role,))
+        self.assertEqual(request.preset_exclusions, ("Bright Lead",))
+
+    def test_structured_genre_wins_over_brief_and_unknown_is_honest(self) -> None:
+        request = SoundSelectionRequest(brief="a house foundation", creative_direction=SoundCreativeDirection(genre="ambient"))
+        direction = resolve_musical_direction(request)
+        self.assertEqual(direction.profile_id, "ambient")
+        self.assertEqual(direction.matched_from, "structured_genre")
+        self.assertNotIn("drums", {role.role_id for role in direction.roles})
+        unknown = resolve_musical_direction(request.model_copy(update={"creative_direction": SoundCreativeDirection(genre="unclassified hybrid")}))
+        self.assertEqual(unknown.profile_id, "generic")
+        self.assertTrue(unknown.warnings)
+
+    def test_supported_profile_aliases_and_blends_are_explicit(self) -> None:
+        self.assertIn("rnb", supported_musical_profiles())
+        for brief, expected in (("R&B", "rnb"), ("lo-fi hip hop", "lofi_hip_hop"), ("drum & bass", "drum_and_bass")):
+            with self.subTest(brief=brief):
+                self.assertEqual(resolve_musical_direction(SoundSelectionRequest(brief=brief)).profile_id, expected)
+        blend = resolve_musical_direction(SoundSelectionRequest(brief="trap and synthwave"))
+        self.assertTrue(any("Multiple supported genres" in warning for warning in blend.warnings))
+
+    def test_simple_brief_role_omissions_override_inferred_arrangement(self) -> None:
+        no_drums = resolve_musical_direction(SoundSelectionRequest(brief="house without drums"))
+        self.assertNotIn("drums", {role.role_id for role in no_drums.roles})
+        bass_only = resolve_musical_direction(SoundSelectionRequest(brief="just bass for trap"))
+        self.assertEqual([role.role_id for role in bass_only.roles], ["primary_bass"])
+        texture_only = resolve_musical_direction(SoundSelectionRequest(brief="only texture for pop"))
+        self.assertEqual([role.role_id for role in texture_only.roles], ["texture"])
+        self.assertTrue(texture_only.roles[0].required)
+        negated = resolve_musical_direction(SoundSelectionRequest(brief="not trap"))
+        self.assertEqual(negated.profile_id, "generic")
+
+    def test_followup_without_roles_preserves_existing_palette_scope(self) -> None:
+        existing = SoundPaletteAssignment(role_id="custom_lead", target=self.vital, product_name="Synth", selected_preset="Lead")
+        request = SoundSelectionRequest(brief="house", preserve_existing_roles=True)
+        plan = plan_palette(request, (), existing=(existing,))
+        assert plan.musical_direction is not None
+        self.assertEqual([role.role_id for role in plan.musical_direction.roles], ["custom_lead"])
+
+    def test_ambient_defaults_form_a_loaded_palette(self) -> None:
+        roles = (("chords", ("sustained", "wide")), ("texture", ("evolving", "airy")), ("bass", ("soft", "sustained")))
+        candidates = tuple(SoundCandidate(
+            candidate_id=name, target=ChannelGeneratorTarget(channel_index=index),
+            product_id=name, product_name=name, candidate_preset=name, current_preset=name,
+            role_ids=(name,), descriptors=descriptors, preset_identity_stable=True,
+            preset_navigation_available=True,
+        ) for index, (name, descriptors) in enumerate(roles))
+        plan = plan_palette(SoundSelectionRequest(brief="ambient"), candidates)
+        self.assertEqual(plan.blockers, ())
+        self.assertEqual({item.role_id for item in plan.assignments}, {"main_chords", "texture", "primary_bass"})
 
     def test_descriptor_data_is_versioned_and_name_evidence_is_weak(self) -> None:
         catalog = load_descriptor_vocabulary()

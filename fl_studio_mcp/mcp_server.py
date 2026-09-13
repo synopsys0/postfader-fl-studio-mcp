@@ -1,36 +1,10 @@
-"""The MCP server for FL Studio 2026.  This is the default agent entry point.
+"""MCP entry point for FL Studio project control and production workflows.
 
-Six surfaces, and nothing else is reachable from here:
-
-* **Reads** over the live project, through the fail-closed inspector allowlist.
-* **Measurements** of rendered audio files, because the FL API exposes no
-  audio. Those tools read files the caller names, plus a bounded lookup over
-  FL Studio's usual output and project folders; the discovery roots are fixed
-  in code and cannot be chosen by an agent.
-* **Verified state mutations** for transport, mixer tracks, global Channel Rack
-  targets, the current pattern's step cells, and mixer-effect or generator
-  parameters. Each reads FL back on a *later* idle tick and reports
-  ``verified`` from that readback alone.
-* **Session write-mode control**, which can expose or lock those exact
-  mutations without restarting FL Studio. Enabling requires an explicit
-  user-present confirmation and is independently verified by a new handshake.
-* **Bounded live-note audition**, which reports note dispatch and release but
-  never fabricates state verification.
-* **Task-scoped Production Runs**, which validate a closed multi-stage plan,
-  reuse the existing writers, and retain process-local receipts until the plan
-  completes, blocks, or is stopped.
-
-There is still no undo command, render, project save, caller-directed
-filesystem search, playback-speed setter without a getter, or reflective FL
-API escape hatch.
-
-The project write tools apply and report; there is no confirmation round-trip
-and no rollback ceremony. Where an FL undo request applies, whether a point actually
-appeared is reported as ``undo_point_created`` rather than assumed; transient
-transport and note actions truthfully report null. They are dispatchable only
-while the bridge reports verified write mode; when it does not, they refuse locally with
-:class:`~fl_studio_mcp.verified_writer.VerifiedWritesUnavailable`, which names
-the user-confirmed mode tool, rather than surfacing a raw bridge rejection.
+Named tools expose live inspection, verified state edits, composition, offline
+analysis, sound selection, production runs and creation review.
+Blocking bridge and audio work runs off the MCP event loop. Task authorization
+flows through the workflow; typed receipts report applied, partial and unknown
+outcomes. The bridge owns live capabilities and session/target checks.
 """
 
 from __future__ import annotations
@@ -152,6 +126,17 @@ from .music_analysis import (
     analyze_tempo_and_key,
     transcribe_monophonic,
 )
+from .piano_roll import PianoRollNoteSnapshot, read_piano_roll_notes
+from .plugin_loading import (
+    PluginLoadRequest, PluginLoadResult, PluginMenuInventory,
+    list_available_plugins, load_plugin,
+)
+from .saved_project_render import (
+    SavedProjectRenderJob,
+    SavedProjectRenderRequest,
+    get_saved_project_render_jobs,
+    shutdown_saved_project_render_jobs,
+)
 from .readonly_inspector import ReadOnlyInspector
 from .mixing import (
     MIX_PLANS,
@@ -203,9 +188,11 @@ from .production_runs import (
     ProductionRunPlan,
     ProductionRunRequest,
     ProductionRunResult,
+    ProductionRunSummary,
     ProductionRunValidation,
     ProductionScope,
     creation_readiness,
+    list_production_runs,
     plan_live_processing,
     validate_production_run,
 )
@@ -328,9 +315,9 @@ SessionFingerprintArg = Annotated[
         default=None,
         pattern=r"^[0-9a-f]{32}$",
         description=(
-            "Optional bridge-lifetime fingerprint from a recent read. The write "
-            "refuses if FL reloaded the bridge before mutation. This is a "
-            "concurrency guard, not authentication or project identity."
+            "Optional bridge/project-session fingerprint from a recent read. The write "
+            "refuses after bridge reload or a reported project load. This is a "
+            "concurrency guard, not authentication or a durable project identity."
         ),
     ),
 ]
@@ -345,161 +332,109 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
     Field(
         pattern=r"^[0-9a-f]{32}$",
         description=(
-            "Required bridge-lifetime fingerprint from a recent live read. The "
-            "palette application refuses if FL reloaded the bridge before mutation. "
-            "This is a concurrency guard, not authentication or project identity."
+            "Required bridge/project-session fingerprint from a recent live read. The "
+            "palette application refuses after bridge reload or a reported project load. "
+            "This is a concurrency guard, not authentication or a durable project identity."
         ),
     ),
 ]
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 127 supported
-tools and 8 live resources. It observes project, transport, mixer, Channel
-Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
-cells. Prefer the fl:// resources for initial context, then use focused reads
-before deciding on a mutation.
+PostFader is an FL Studio production connector with 149 tools and 8 live
+resources. Use focused project, channel, mixer, pattern and plug-in reads to
+understand the user's task, then carry it through with the relevant workflow.
+The connected AI makes creative decisions; PostFader executes and reports FL
+state. Prefer fl:// resources for initial context when the client exposes them.
 
-The bridge starts read-only. Only call fl_set_write_mode(enabled=true,
-confirm_user_present=true) after the present user explicitly asks to change the
-open project. The authorization is session-only. Direct setters are bounded,
-Master-protected, never automatically replayed after an ambiguous outcome, and
-read FL back on a later idle tick. Treat verified=false as the headline: the
-requested state was not proven. False or null undo evidence means Ctrl+Z may
-not recover the change. PostFader never saves the project.
+A request to create, edit, continue, finish, arrange, remix or mix authorizes
+supported changes within that task. Preserve the user's stated constraints and
+accepted material. Use postfader_execute_run for multi-stage work: it performs
+readiness checks and enables writes internally once. Do not ask separately to
+enable write mode, repeat authorization inside the run, or call validation and
+readiness tools again before execution. Use postfader_creation_readiness or
+postfader_validate_run when the user actually wants a diagnostic or a plan.
+For individual setters, enable fl_set_write_mode(enabled=true,
+confirm_user_present=true) once when needed; the user's request to edit is the
+confirmation. Analysis and ideas alone do not authorize project changes.
 
-fl_apply_verified_batch performs one preflight and ordered direct operations
-with per-item receipts. It is non-atomic: successful earlier items are not
-rolled back. mix_create_plan and mix_apply_plan keep recommendation and action
-separate and apply a stored plan at most once. Peak watches and mix plans live
-only in this MCP process.
+Proceed through warnings and supported alternatives within scope. Stop for a
+missing capability, changed target, unmet setup dependency or unknown mutation
+outcome. Report the concrete blocked operation and usable next step. Use
+postfader_continue_run to resume after the user's follow-up; keep completed
+receipts. postfader_stop_run prevents future operations. Runs and plans are
+saved locally across MCP restarts. Use postfader_list_runs to rediscover them
+and postfader_continue_run with delta.mode="resume" to continue a saved plan.
+Interrupted writes with unknown outcomes are never replayed. A run releases
+write mode it enabled when finished.
 
-Autonomy is task-scoped, not a persistent PostFader mode. The user does not
-need a special command. When the user asks to create, continue, finish,
-transform, arrange, remix, produce, mix, or otherwise change the project, the
-connected AI may translate that request into one bounded Production Run. Keep
-the user's scope and preservation constraints in the run request. For a clear
-request to make changes, postfader_execute_run enables the existing write
-boundary once internally; do not ask for a separate mode transition between
-run operations. Use lower-level tools for precise one-off changes and a
-Production Run for multi-stage, outcome-oriented work.
+Use fl_apply_verified_batch for ordered direct edits with one preflight and
+per-item receipts. Earlier successful edits remain if a later item fails.
+Never replay an ambiguous write automatically. Check verified/application_verified
+and describe partial results accurately. Undo availability is reported per
+operation. fl_undo and fl_redo are available; PostFader does not save projects.
+Protocol, live capabilities and session/target checks govern execution. Source
+SHA differences are installation diagnostics, not a reason to refuse a
+compatible operation or ask the user to verify hashes. Do not repeat whole
+project inspections between edits when a focused target read suffices.
 
-For a complete creation request, postfader_execute_run performs one creation
-readiness preflight internally; call postfader_creation_readiness separately
-only when a read-only scorecard is useful. The scorecard aggregates connection,
-Piano Roll, instrument, drum, pattern, effect, scope, and manual-handoff needs.
-A ready run reuses one bounded context through palette, composition, note,
-processing, and finalization phases, then shuts write mode down automatically.
-Warnings and alternatives do not require confirmation. Final outcomes keep
-technical execution, arrangement delivery, processing, manual handoff, and
-audible quality separate.
+For instrument and preset decisions, use sound_selection_plan and
+sound_selection_apply, or keep palette planning/application inside the same
+Production Run. Apply takes the session_fingerprint from a live read. Keep user
+preferences, excluded sounds, locked roles and continuity in the request.
+Select the palette before writing notes; adapt register, articulation, density
+and polyphony to its evidence. Use sound_selection_create_variation for later
+sections. Atlas supplies offline product knowledge; only a live inventory
+establishes a loaded instrument or effect. Inspect presets and non-GM drum pad
+maps before addressing them. Loop Starter is a separate loop-based source.
 
-When the user asks only for ideas, options, analysis, or a plan, use read-only
-inspection, postfader_validate_run, or a plan_only run and do not submit
-project mutations. Production Runs stop on a real capability, setup, session,
-scope, or verification blocker. Use postfader_continue_run only after a
-conversational follow-up and postfader_stop_run to prevent future operations;
-neither rewrites completed receipts or undoes earlier changes. Runs are
-bounded and process-local. Never claim a requested result completed when FL
-cannot expose or verify a required operation.
+Musical direction supplies editable genre defaults when roles are omitted;
+explicit roles and preferences win. Read musical_direction and score reasons,
+then express the user's specific style through descriptors and role requests.
+On macOS, use plugins_list_available and plugins_load to add missing instruments
+or effects from FL's native Add menu. Match exact observed menu names, then use
+the verified new channel/slot for preset selection or processing. Menu presence
+does not prove licensing. Loading is a separate host tool, outside Run operations.
 
-Creation Review is a task-scoped continuation of a completed Production Run,
-not a persistent autonomous mode. When the user supplies an exported bounce,
-start or continue one Review Session, attach only the explicit selected files,
-and evaluate them globally and by the run's known sections. Measurements and
-arrangement proxies are evidence, not artistic approval. Preserve structured
-producer feedback as the highest taste authority and use independent locks for
-sound, notes, rhythm, register, processing, level, placement, and role identity.
-For a clear request to improve the open project, the AI may evaluate, construct
-one closed revision plan, and call postfader_review_apply_revision in the same
-turn. That call delegates to the existing Production Run engine for one
-readiness preflight and one task-scoped authorization. Analyze-only requests
-must not apply a revision. A revised bounce must use matching export settings
-before comparison; technical movement never grants user approval. Rendering,
-project saving, Playlist clip CRUD, and live audio capture remain unavailable.
+Use piano_roll_read_notes to inspect existing notes, timing, velocity and
+expression before composing around them. It opens the requested editor without
+enabling musical edits; pages use raw note offsets, including selected-only reads.
+Composition tools create chords, melody, bass and drums; midi_export_type1
+writes and checks a local Type-1 MIDI file. Piano Roll writing needs one setup:
+prepare piano_roll_bridge, have the user run Postfader Apply once in FL and
+confirm its receipt. Reuse that setup. Note writes check the selected target,
+script application and persistence. Missing receipts mean unknown outcome,
+not permission to retry. Step edits use the latest grid digest. Section marker
+names can be checked; their times and automation-point existence cannot.
 
-Mix Doctor, gain staging, reference matching, masking recommendations,
-processing intents, plug-in profiles, and finish assessment use actual decoded
-bounces where audio evidence is required. Recommendations are bounded policy,
-not proof of artistic quality. The server cannot hear FL's live output; the
-user must export candidate audio before bounce analysis.
+Use processing_plan/processing_apply_plan for focused loaded-effect work, or
+plan_processing/apply_processing_plan inside a complete Production Run.
+Prefer displayed values and exact options when the control's meaning is known.
+Goals and strength generate supported first-pass controls when none are supplied;
+explicit controls override those defaults. Review the bounce to refine settings.
+Unprofiled controls require runtime evidence; Atlas name matches alone do not
+establish parameter semantics. Explicitly target Master when requested.
 
-Composition tools generate deterministic chords, melody, bass, and drums.
-midi_export_type1 writes a local MIDI file, reopens it, and verifies its event
-content. Tempo/key estimation and monophonic transcription read caller-selected
-audio files and do not mutate FL.
+Use postfader_render_saved_project to render a saved .flp into a new WAV job
+directory, then postfader_render_get_job to retrieve the output and status.
+Only saved project state is included. output_ready means decoded audio is
+available; completed also means FL exited. Cancellation on macOS may leave
+the separate renderer running. Render jobs are process-local.
+Audio tools measure caller-selected exported files; FL's live output is not
+available. Review a draft with postfader_review_start, attach its bounce,
+evaluate, plan a revision and apply it in the same authorized task. Preserve
+producer feedback and locks for sound, notes, rhythm, register, processing,
+level, placement and role identity. Compare matching export settings after
+revision. Measurements support decisions; they do not establish artistic
+approval. Delivery manifests describe remaining export/import work.
 
-Sound Selection is task-scoped and needs no persistent mode. When the user
-delegates instrument, preset, drum-kit, or palette decisions, translate their
-direction, preferences, exclusions, locked roles, continuity, and novelty
-policy into a SoundSelectionRequest. Use sound_selection_plan for read-only
-ideas and sound_selection_apply only after a clear request authorizes project
-changes and includes the current 32-character lowercase session_fingerprint
-from a recent live read.
-That fingerprint is required by the apply tool's public schema. User direction
-is the strongest input; balanced planning preserves
-core sounds within a song and uses bounded local recency only to distinguish
-similarly suitable choices. Plan and apply a palette before complete-song
-Production Runs write notes, then reference its generator roles and drum map.
-Preset discovery uses bounded complete or stratified catalog coverage. Keep
-preference provenance, confidence, alternatives, and score margins in
-structured state: model suggestions are soft, while only explicit user,
-profile, or feedback directives may be hard. lock_existing preserves the
-pre-run sound; anchor_after_selection preserves the verified selected identity
-across related sections. Adapt composition to selected-sound articulation,
-register, polyphony, envelope, and density evidence when available.
-Use sound_selection_create_variation for later sections rather than replacing
-anchors without a request. Do not ask for confirmation between role changes in
-one authorized run. Atlas-only products are recommendations, never executable
-assignments, and no preset choice is claimed as heard audio.
-
-Use processing_plan for focused read-only semantic effect planning and
-processing_apply_plan for a separately authorized focused application. For a
-complete creation request, keep plan_processing and apply_processing_plan in
-the same Production Run. Only loaded effects with Atlas capability evidence,
-a compatible adapter, and runtime control evidence are candidates. Prefer
-displayed-value and exact-option writes; Atlas-only products are not loaded.
-
-plugins_list_presets and plugins_get_current_preset expose bounded exact
-identity; fl_select_plugin_preset navigates only within a bounded search and
-requires later-idle-tick readback. Duplicate names require an index. Use
-plugins_inspect_pad_map before non-General-MIDI drum writing. Loop Starter is
-an explicit, separate loop-based source and its reroll remains dispatch-only;
-never substitute it for an instrument-based request.
-
-Piano Roll mutations use FL's separate .pyscript runtime. First prepare the
-bridge, manually run Postfader Apply once, and confirm that step; confirmation
-requires a request-scoped receipt from the script runtime. Automatic note calls
-verify the target, require an authenticated exact apply receipt, retarget the
-same Piano Roll, and run a second read-only persistence check. Only matching
-bounded receipts set application_verified=true. A shortcut without those
-receipts remains ambiguous and must not be retried. This is script-runtime
-readback, not controller-API note access. Section-marker names are read back,
-but marker times are not. Automation helpers verify the controlled value while
-explicitly leaving automation-point existence unknown.
-
-Plug-in insertion/removal/reordering, per-slot bypass/wet control, Playlist
-clip CRUD, live audio buffers, rendering, project save, playback speed, and a
-generic raw FL API escape hatch are unavailable. A send must exist before its
-level can be set. Unprofiled plug-in parameters remain unsafe by default;
-prefer displayed-value or exact-option tools when their meaning is known.
-
-Plugin Atlas is a bundled, offline knowledge layer. Use
-plugins_atlas_search, plugins_atlas_get_product, and plugins_atlas_recommend
-for static product, technique, limitation, adapter, and stock-alternative
-knowledge; these tools do not contact FL Studio and do not claim ownership,
-installation, or loaded state. Use plugins_atlas_inspect_loaded when a live
-inventory match is needed. It reads the same target-aware Track B inventory as
-plugins_scan_loaded_plugins, keeps mixer-effect and global Channel Rack
-generator identities separate, and reports a product-name match as name_only:
-name-only matching is never control proof. Atlas records and adapters do not
-authorize plug-in insertion or parameter writes.
-
-fl_get_selected_range intentionally leaves selection semantics and render
-inclusivity unknown. Step writes require the latest grid digest and preserve
-the published bounded call budget. This server requires FL Studio 26.1.3 build
-5336 or newer and MIDI scripting API 44 or newer.
+Current bridge limits: plug-in removal/reordering, per-slot bypass
+and wet control, Playlist clip CRUD, live audio capture, live-project rendering, project
+save and playback speed are unavailable. Explain these at the relevant step
+and use supported handoffs. Requires FL Studio 26.1.3 build 5336 or newer and
+MIDI scripting API 44 or newer.
 """
+
 
 READ_ONLY = ToolAnnotations(
     title="Read FL Studio state",
@@ -571,7 +506,7 @@ EPHEMERAL_MUTATING = ToolAnnotations(
 )
 
 WORKFLOW_STATE = ToolAnnotations(
-    title="Manage a process-local workflow",
+    title="Manage a workflow",
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=False,
@@ -1190,8 +1125,8 @@ async def fl_set_write_mode(
         bool,
         Field(
             description=(
-                "Must be true to enable writes, after the present user explicitly "
-                "requested the capability change. Not required to disable writes."
+                "True asserts that the user requested project changes or write access "
+                "in this task. No separate mode request is needed. Not required to disable."
             )
         ),
     ] = False,
@@ -1785,10 +1720,14 @@ async def fl_set_plugin_param_display(
         Field(
             description=(
                 "The number the plug-in displays: 20 for '20 ms', -18 for "
-                "'-18.0 dB', 4000 for '4.0kHz'."
+                "'-18.0 dB'. With target_unit='Hz', use 4000 for '4.0kHz'."
             )
         ),
     ],
+    target_unit: Annotated[
+        str | None,
+        Field(default=None, description="Optional Hz, kHz, ms, seconds, dB, percent or ratio. Converts each display readback across unit prefixes. Omit for legacy first-number matching."),
+    ] = None,
     track_index: Annotated[
         int | None,
         Field(
@@ -1867,6 +1806,7 @@ async def fl_set_plugin_param_display(
             slot_index=slot_index,
             parameter=parameter,
             target_value=target_value,
+            **({"target_unit": target_unit} if target_unit is not None else {}),
             tolerance=tolerance,
             allow_master=allow_master,
             session_fingerprint=session_fingerprint,
@@ -1882,6 +1822,7 @@ async def fl_set_plugin_param_display(
         slot_index=slot_index,
         parameter=parameter,
         target_value=target_value,
+        **({"target_unit": target_unit} if target_unit is not None else {}),
         tolerance=tolerance,
         allow_master=allow_master,
         session_fingerprint=session_fingerprint,
@@ -3670,6 +3611,17 @@ async def postfader_execute_run(
 
 
 @mcp.tool(
+    name="postfader_list_runs",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "List retained Production Runs"}),
+)
+async def postfader_list_runs(
+    limit: Annotated[int, Field(ge=1, le=64, description="Maximum recent run summaries.")] = 64,
+) -> tuple[ProductionRunSummary, ...]:
+    """Find recent runs after an MCP restart without executing any operations."""
+    return await _mix(list_production_runs, limit=limit)
+
+
+@mcp.tool(
     name="postfader_get_run",
     annotations=READ_ONLY.model_copy(update={"title": "Get a Production Run"}),
 )
@@ -3678,11 +3630,11 @@ async def postfader_get_run(
         str,
         Field(
             pattern=r"^[0-9a-f]{32}$",
-            description="Process-local Production Run identifier.",
+            description="Production Run identifier retained in the local journal.",
         ),
     ],
 ) -> ProductionRunLookup:
-    """Read current process-local run state and its truthful operation receipts."""
+    """Read a current or journaled run, its generated outputs and operation receipts."""
     return await _mix(PRODUCTION_RUNS.get, run_id)
 
 
@@ -3695,14 +3647,15 @@ async def postfader_continue_run(
         str,
         Field(
             pattern=r"^[0-9a-f]{32}$",
-            description="Process-local Production Run identifier.",
+            description="Production Run identifier retained in the local journal.",
         ),
     ],
     delta: Annotated[
         ProductionRunDelta,
         Field(
             description=(
-                "Append operations or replace only the unexecuted remainder; an optional "
+                "Use mode=resume with no operations to continue the saved plan, append "
+                "operations, or replace only the unexecuted remainder; an optional "
                 "updated request may narrow scope or change task policy."
             )
         ),
@@ -3721,7 +3674,7 @@ async def postfader_stop_run(
         str,
         Field(
             pattern=r"^[0-9a-f]{32}$",
-            description="Process-local Production Run identifier.",
+            description="Production Run identifier retained in the local journal.",
         ),
     ],
 ) -> ProductionRunResult:
@@ -3961,6 +3914,36 @@ async def postfader_delivery_export_manifest(
 
 
 @mcp.tool(
+    name="plugins_list_available",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "List FL's available plugin menu entries"}),
+)
+async def plugins_list_available() -> PluginMenuInventory:
+    """Read the native Add menu on macOS; opens/closes the menu and changes focus.
+
+    Reports exact loadable favorite names and instrument/effect kinds. This is
+    menu availability, not proof of licensing or an exhaustive installed scan.
+    """
+    return await _mix(list_available_plugins)
+
+
+@mcp.tool(
+    name="plugins_load",
+    annotations=MUTATING.model_copy(update={"title": "Load a named instrument or mixer effect"}),
+)
+async def plugins_load(
+    request: Annotated[PluginLoadRequest, Field(description="Exact Add-menu name, kind and mixer destination for effects.")],
+) -> PluginLoadResult:
+    """Load one macOS Add-menu plugin, then identify its new channel or effect slot.
+
+    Use plugins_list_available first. The task request authorizes the addition;
+    effect loading temporarily enables bridge writes only to select its track.
+    Unknown outcomes must be inspected before any new load attempt. Does not
+    save the project; Windows insertion is not implemented by this adapter.
+    """
+    return await _mix(load_plugin, request)
+
+
+@mcp.tool(
     name="piano_roll_bridge",
     annotations=WORKFLOW_STATE.model_copy(update={"title": "Prepare or inspect the Piano Roll bridge"}),
 )
@@ -3980,6 +3963,65 @@ async def piano_roll_bridge(
         action,
         confirm_user_ran_script=confirm_user_ran_script,
     )
+
+
+@mcp.tool(
+    name="piano_roll_read_notes",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Inspect existing Piano Roll notes"}),
+)
+async def piano_roll_read_notes(
+    channel_index: Annotated[int, Field(ge=0, description="Global Channel Rack target index.")],
+    pattern_number: Annotated[int, Field(ge=1, le=999, description="Pattern to inspect.")],
+    offset: Annotated[int, Field(ge=0, le=1_000_000, description="Raw score note offset.")] = 0,
+    limit: Annotated[int, Field(ge=1, le=2048, description="Raw note indices per page.")] = 512,
+    selected_only: Annotated[bool, Field(description="Filter selected notes within this raw page.")] = False,
+    session_fingerprint: Annotated[
+        str | None, Field(pattern=r"^[0-9a-f]{32}$", description="Optional expected bridge session.")
+    ] = None,
+) -> PianoRollNoteSnapshot:
+    """Open a score and read notes without changing notes or enabling musical writes.
+
+    Requires the existing one-time piano_roll_bridge setup. Follow next_offset
+    to page; selected_only may return an empty page with a non-null next_offset.
+    """
+    return await _mix(
+        read_piano_roll_notes, channel_index=channel_index, pattern_number=pattern_number,
+        offset=offset, limit=limit, selected_only=selected_only,
+        session_fingerprint=session_fingerprint,
+    )
+
+
+@mcp.tool(
+    name="postfader_render_saved_project",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Render a saved FL Studio project"}),
+)
+async def postfader_render_saved_project(
+    request: Annotated[SavedProjectRenderRequest, Field(description="Saved .flp and parent output directory for a new WAV job.")],
+) -> SavedProjectRenderJob:
+    """Start FL's command-line WAV exporter in a separate process; saved state only."""
+    return await _mix(get_saved_project_render_jobs().start, request)
+
+
+@mcp.tool(
+    name="postfader_render_get_job",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Inspect a saved-project render job"}),
+)
+async def postfader_render_get_job(
+    job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", description="Render job ID from this MCP process.")],
+) -> SavedProjectRenderJob:
+    """Get render progress and decoded WAV evidence; completed also requires FL exit."""
+    return await _mix(get_saved_project_render_jobs().status, job_id)
+
+
+@mcp.tool(
+    name="postfader_render_cancel",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Cancel a saved-project render job"}),
+)
+async def postfader_render_cancel(
+    job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", description="Render job ID from this MCP process.")],
+) -> SavedProjectRenderJob:
+    """Cancel monitoring and its owned process; on macOS the renderer may remain open."""
+    return await _mix(get_saved_project_render_jobs().cancel, job_id)
 
 
 @mcp.tool(
@@ -4294,9 +4336,9 @@ The generator keeps automatic local-file mode read-only by default. Select
 --transport midi and provide --midi-port only after configuring the same exact
 virtual endpoint in FL Studio. PostFader never installs a virtual MIDI driver.
 
-Writes start off. Ask the connected AI client to enable write mode for the
-current session; explicit user-present confirmation is required and FL Studio
-does not need to restart.
+Writes start off. Ask the connected AI to make your changes; a Production Run
+enables writes once for that task. Individual setters can use the session
+write-mode tool. FL Studio does not need to restart.
 
 Use postfader-doctor (or scripts/doctor.py from a checkout) for setup evidence.
 The supervised acceptance harnesses and native Windows bootstrap live in the
@@ -4315,7 +4357,10 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        mcp.run(transport="stdio")
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            shutdown_saved_project_render_jobs()
         return 0
     if len(args) == 1 and args[0] in {"-h", "--help", "help"}:
         print(USAGE, end="")

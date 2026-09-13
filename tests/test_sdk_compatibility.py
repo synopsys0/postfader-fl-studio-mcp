@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import unittest
+from unittest import mock
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 
+from fl_studio_mcp import mcp_server as server_module
 from fl_studio_mcp.mcp_server import mcp
 
 
@@ -24,7 +26,7 @@ class MCPCompatibilityTests(unittest.TestCase):
 
     def test_all_tools_register_with_strict_top_level_input_schemas(self) -> None:
         tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 127)
+        self.assertEqual(len(tools), 134)
         non_strict = [
             tool.name
             for tool in tools
@@ -114,6 +116,65 @@ class MCPCompatibilityTests(unittest.TestCase):
 
                 with self.assertRaisesRegex(Exception, "Extra inputs are not permitted"):
                     asyncio.run(invoke())
+
+    def test_note_pagination_rejects_invalid_bounds_before_adapter(self) -> None:
+        with mock.patch.object(
+            server_module, "read_piano_roll_notes",
+            side_effect=AssertionError("invalid SDK input must never reach FL inspection"),
+        ) as adapter:
+            for invalid_page in (
+                {"offset": -1}, {"offset": 1_000_001},
+                {"limit": 0}, {"limit": 2049},
+            ):
+                with self.subTest(page=invalid_page), self.assertRaises(Exception):
+                    asyncio.run(mcp.call_tool("piano_roll_read_notes", {
+                        "channel_index": 0, "pattern_number": 1, **invalid_page,
+                    }))
+                adapter.assert_not_called()
+
+    def test_render_request_rejects_unknown_nested_options_before_adapter(self) -> None:
+        with mock.patch.object(
+            server_module, "get_saved_project_render_jobs",
+            side_effect=AssertionError("invalid SDK input must never create a render manager"),
+        ) as manager:
+            for extra in (
+                {"sample_rate_hz": 48_000},
+                {"options": {"bit_depth": 24, "stems": True}},
+            ):
+                with self.subTest(extra=extra), self.assertRaisesRegex(
+                    Exception, "Extra inputs are not permitted"
+                ):
+                    asyncio.run(mcp.call_tool("postfader_render_saved_project", {
+                        "request": {
+                            "project_path": "/unused/project.flp",
+                            "output_directory": "/unused/renders",
+                            **extra,
+                        },
+                    }))
+                manager.assert_not_called()
+
+    def test_render_job_ids_are_validated_before_registry_lookup(self) -> None:
+        with mock.patch.object(
+            server_module, "get_saved_project_render_jobs",
+            side_effect=AssertionError("invalid job IDs must never reach the render registry"),
+        ) as manager:
+            for tool_name in ("postfader_render_get_job", "postfader_render_cancel"):
+                for job_id in ("", "a" * 31, "A" * 32, "../project.flp"):
+                    with self.subTest(tool=tool_name, job_id=job_id), self.assertRaises(Exception):
+                        asyncio.run(mcp.call_tool(tool_name, {"job_id": job_id}))
+                    manager.assert_not_called()
+
+    def test_plugin_destination_is_checked_before_desktop_dispatch(self) -> None:
+        with mock.patch.object(server_module, "load_plugin") as adapter:
+            for request in (
+                {"name": "FLEX", "kind": "instrument", "track_index": 1},
+                {"name": "Fruity Reeverb 2", "kind": "effect"},
+                {"name": "Fruity Reeverb 2", "kind": "effect", "track_index": True},
+                {"name": "FLEX", "kind": "instrument", "menu_script": "unexpected"},
+            ):
+                with self.subTest(request=request), self.assertRaises(Exception):
+                    asyncio.run(mcp.call_tool("plugins_load", {"request": request}))
+                adapter.assert_not_called()
 
 
 if __name__ == "__main__":

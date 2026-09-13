@@ -7,6 +7,15 @@ builds and inspects the Python distributions, validates the MCPB and platform
 bundles, publishes to PyPI and the MCP Registry, and attaches the verified
 assets and SHA-256 checksums to GitHub.
 
+## Current publication boundary
+
+As of 2026-09-13, GitHub, PyPI, and the official MCP Registry publish v0.20.0
+with 90 tools and 8 resources. Dev has 134 tools and 8 resources; its new Piano
+Roll inspection and saved-project renderer still need live acceptance. Do not
+retag v0.20.0 or advertise these additions as shipped. Use the [development
+notes](docs/releases/dev-v10.md) and [directory ledger](docs/distribution.md)
+to distinguish source availability from package publication.
+
 ## Before preparing a version
 
 - Confirm the change is on the intended `main` commit and the worktree is
@@ -14,6 +23,8 @@ assets and SHA-256 checksums to GitHub.
 - Review the current [setup guide](docs/setup.md), [security policy](SECURITY.md),
   tool contracts, plug-in evidence, and the previous release page. Keep the
   public claims aligned with observed evidence.
+- Run `python scripts/sync_mcpb_manifest.py` after tool changes, verify SDK tool
+  and resource counts, and update current guides and directory copy together.
 - Prepare `docs/releases/vX.Y.Z.md` with user-facing notes. Explain package
   selection, upgrade steps, qualified environments, limitations, and checksums;
   do not rely on GitHub's generated pull-request list as the final page.

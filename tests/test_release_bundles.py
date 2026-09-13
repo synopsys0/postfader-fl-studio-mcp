@@ -172,6 +172,7 @@ class ReleaseBundleTests(unittest.TestCase):
                 f"{root}/scripts/live_creation_review_acceptance.py",
                 names,
             )
+            self.assertIn(f"{root}/fl_studio_mcp/file_fingerprints.py", names)
             self.assertIn("starts read-only", guide)
             self.assertIn("postfader-doctor", guide)
             self.assertIn("postfader", guide)

@@ -60,7 +60,7 @@ RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
 } | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES | CREATION_REVIEW_RUNTIME_MODULES
-EXPECTED_TOOL_COUNT = 127
+EXPECTED_TOOL_COUNT = 134
 EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
@@ -208,12 +208,9 @@ def inspect_sdist(sdist: Path) -> list[str]:
                 if not any(name.endswith(suffix) for name in names):
                     failures.append("sdist is missing %s" % suffix.lstrip("/"))
             for required in sorted(
-                ATLAS_RUNTIME_MODULES
+                RUNTIME_MODULES
                 | ATLAS_DATA_FILES
-                | SOUND_SELECTION_RUNTIME_MODULES
                 | SOUND_SELECTION_DATA_FILES
-                | CREATION_PIPELINE_RUNTIME_MODULES
-                | CREATION_REVIEW_RUNTIME_MODULES
             ):
                 suffix = "/" + required
                 if not any(name.endswith(suffix) for name in names):

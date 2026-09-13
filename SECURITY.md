@@ -119,10 +119,12 @@ Read-only mode is the default. The narrowly allowlisted mutation commands can
 be added to the current bridge session by the single
 `session.set_write_mode` control. Its public MCP tool is
 `fl_set_write_mode`; enabling requires literal `confirm_user_present=true`
-after an explicit request from the present user.
+after the user requests project changes or session write access. The task
+request supplies authorization; a separate capability-change request is not
+needed.
 
-The mode transition requires matching bridge-source provenance and the current
-bridge-lifetime session fingerprint. The host performs a second handshake and
+The mode transition requires a compatible protocol, live runtime-control
+support and the current bridge-lifetime session fingerprint. The host performs a second handshake and
 does not report success unless the bridge independently confirms the requested
 state. The setting is in memory only, never stored in the project or client
 configuration. Disabling needs no positive confirmation and refuses while an
@@ -146,10 +148,12 @@ Mixer track 0 is refused unless explicitly authorized with `allow_master`.
 The bridge never calls `saveProject`, but FL Studio or the user can later save
 the changed project.
 
-Mutation also requires source provenance: the SHA-256 stamped into the running
-FL script must match the bridge packaged with the MCP server. Missing,
-malformed, stale, or mismatched provenance fails closed before dispatch. Reads
-remain available and carry a warning so a stale installation can be repaired.
+The source SHA-256 stamped into the running FL script is an installation
+diagnostic. Missing or different stamps produce an advisory without blocking
+a compatible operation. A source hash is neither authentication nor a protocol
+contract. Runtime protocol, capability, session and target checks remain in
+force. Packaged-source and audio-file hashes are cached by file revision;
+normal edits and replacements invalidate those caches.
 
 Callers may supply a bridge-lifetime session fingerprint and a typed expected
 before-state. The server compares the session before dispatch, and the bridge
@@ -210,7 +214,7 @@ The safe test suite checks important boundaries, including:
 - read-only and write-command allowlists;
 - explicit, session-only, post-handshake-verified write-mode control;
 - explicit Master targeting;
-- fail-closed bridge-source provenance for mutations while reads warn;
+- protocol/capability checks with advisory bridge-source diagnostics;
 - bridge-side session, before-state, channel-identity, and step-digest guards;
 - per-field proof whose aggregate verdict is a logical AND;
 - no bridge call to `saveProject`;

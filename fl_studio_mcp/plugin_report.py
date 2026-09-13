@@ -452,11 +452,6 @@ def validate_representative_write(
         )
     if not connection.verified_writes_enabled:
         raise ValueError("the running FL bridge has verified writes disabled")
-    if not connection.bridge_provenance_verified:
-        raise ValueError(
-            "representative write validation refuses an unverified bridge "
-            f"({connection.bridge_provenance}); reinstall and reload it first"
-        )
     if connection.session_fingerprint is None:
         raise ValueError(
             "representative write validation requires a valid bridge session fingerprint"

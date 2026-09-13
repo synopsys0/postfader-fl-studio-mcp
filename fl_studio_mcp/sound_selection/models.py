@@ -565,6 +565,20 @@ class SoundSelectionRequest(SoundSelectionModel):
         return self.preference_directives
 
 
+class SoundMusicalDirection(SoundSelectionModel):
+    """Explainable starting points, distinct from observed instrument sounds."""
+
+    profile_id: str = Field(min_length=1, max_length=64)
+    profile_name: str = Field(min_length=1, max_length=128)
+    matched_from: Literal["structured_genre", "brief", "generic"]
+    roles: tuple[SoundRoleRequest, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
+    roles_inferred: bool = False
+    groove_notes: tuple[str, ...] = Field(default=(), max_length=16)
+    timbre_notes: tuple[str, ...] = Field(default=(), max_length=16)
+    rationale: str = Field(min_length=1, max_length=1024)
+    warnings: tuple[str, ...] = Field(default=(), max_length=16)
+
+
 class DescriptorEvidence(SoundSelectionModel):
     """One descriptor with source and confidence, never an audio claim."""
 
@@ -1238,6 +1252,7 @@ class SoundPalettePlan(SoundSelectionModel):
     inventory_session_fingerprint: str | None = Field(default=None, max_length=128)
     project_key: str | None = Field(default=None, max_length=256)
     policy: SoundSelectionPolicy
+    musical_direction: SoundMusicalDirection | None = None
     assignments: tuple[SoundPaletteAssignment, ...] = Field(default=(), max_length=MAX_ROLE_COUNT)
     preset_discovery_coverage: tuple[SoundPresetDiscoveryCoverage, ...] = Field(
         default=(), max_length=MAX_CANDIDATES
@@ -1525,7 +1540,6 @@ DEFAULT_ROLE_IDS: tuple[str, ...] = (
     "main_lead",
     "primary_bass",
     "sub_bass",
-    "vocal_chop",
     "drums",
     "texture",
     "countermelody",
@@ -1592,6 +1606,7 @@ __all__ = [
     "SoundFeedbackRequest",
     "SoundInventory",
     "SoundInventoryItem",
+    "SoundMusicalDirection",
     "SoundPaletteAssignment",
     "SoundPalettePlan",
     "SoundPaletteState",

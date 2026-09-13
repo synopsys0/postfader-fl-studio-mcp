@@ -203,7 +203,9 @@ from FL Studio, and give the connected AI the explicit absolute path. The AI
 can then call `postfader_review_start`, `postfader_review_attach_assets`, and
 `postfader_review_evaluate`; attach a reference or synchronized stem only when
 the requested finding needs that evidence. Review never captures FL's live
-audio and never renders or saves the project.
+audio and never renders or saves the live project. For an already-saved FLP,
+use the separate development saved-project rendering tools described below;
+that export excludes unsaved changes.
 
 Review Sessions are process-local by default. Set `persist_session=true` when
 the review must survive a process restart. The default local store is:
@@ -360,16 +362,19 @@ success.
 ## 6. Read-only and write-mode operation
 
 The normal FL launch is read-only. Start FL Studio normally, connect the AI
-client, and ask it:
+client, and ask for the work you want:
 
 ```text
-Enable write mode for this session.
+Build a bassline and drums, keeping my existing lead.
 ```
 
+A Production Run enables writes once for that task. You can also explicitly
+ask to enable write mode when working through individual controls.
+
 The client calls `fl_set_write_mode(enabled=true,
-confirm_user_present=true)`. Enabling requires that explicit present-user
-request, matching bridge provenance, runtime-control support, and the current
-session fingerprint. A second handshake must then confirm all of:
+confirm_user_present=true)` under the user's edit request. Enabling requires
+compatible protocol, runtime-control support, and the current session
+fingerprint. A second handshake must then confirm all of:
 
 - `bridge_mode="write_test"`;
 - `verified_writes_enabled=true`; and
@@ -436,8 +441,9 @@ by the doctor. PostFader refuses ambiguity before lock/open.
 reported PID is local ownership evidence, not authentication.
 
 **Writes are refused.** Check the live handshake. It must report
-`runtime_write_mode_control=true` and matching bridge provenance. Ask the
-connected client to enable write mode and approve its capability-change prompt.
+`runtime_write_mode_control=true` and a compatible protocol. The connected
+client can enable write mode under your edit request. A different source stamp
+is diagnostic and does not prevent a compatible write.
 Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
 `write_mode_origin=runtime_request`.
 
@@ -492,6 +498,38 @@ are create-only. Choose a new output directory or filename and inspect the
 read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
 manifest and will not save the FL Studio project.
 
+## Development host workflows
+
+These tools are available on dev, not in the v0.20.0 downloads. Upgrade the
+server and bridge together before using them.
+
+- **Read existing notes:** prepare and arm the Piano Roll script once per MCP
+  process, then call `piano_roll_read_notes` with the channel, pattern, offset,
+  and limit. It selects the target and opens the editor; it does not alter note
+  content. Each page is a fresh observation. A missing or stale target receipt
+  returns no attributed notes.
+- **Load a plug-in on macOS:** grant macOS Accessibility access to the launching
+  host when using the native-menu adapter. `plugins_list_available` reads the
+  current English Add-menu favorites; `plugins_load` adds one exact named
+  instrument or effect. Effects need a mixer destination; Master requires
+  explicit permission. Windows loading and plug-in removal/reordering are not
+  implemented. Stop after an unknown outcome and inspect the session.
+- **Recover a run:** `postfader_list_runs` and `postfader_get_run` read the local
+  journal. Explicit continuation revalidates the saved plan, current targets,
+  and authorization. Unknown in-flight operations remain blocked. Keep the
+  SQLite journal and its companion files private; they retain production data.
+- **Render saved state:** select an existing absolute `.flp` path and a parent
+  output directory with `postfader_render_saved_project`. Optionally set
+  `POSTFADER_FL_STUDIO_PATH`. Poll `postfader_render_get_job`; `output_ready`
+  proves decoded WAV availability, while `completed` also requires successful
+  FL process exit. Cancellation may leave the separate macOS FL instance
+  running, as reported in the response. Unsaved edits are excluded. Do not
+  infer stem, sample-rate, bit-depth, or Playlist-selection control from this tool.
+
+The new note-read and render paths have deterministic coverage; live FL Studio
+acceptance remains pending. See the [contracts](tool-contracts.md) and
+[development notes](releases/dev-v10.md) before relying on them.
+
 ## Environment variables
 
 | Variable | Meaning |
@@ -504,6 +542,8 @@ manifest and will not save the FL Studio project.
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
+| `POSTFADER_PRODUCTION_RUN_PATH` | Optional local SQLite journal path; defaults to `Settings/PostFader/production-runs-v1.sqlite3` under FL user data. |
+| `POSTFADER_FL_STUDIO_PATH` | Optional absolute FL `.app` bundle (macOS) or `.exe` (Windows) for saved-project rendering. |
 | `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` | Optional absolute override for the generated Piano Roll script directory. Otherwise it follows `FL_STUDIO_USER_DATA_DIR`. |
 | `POSTFADER_CREATION_REVIEW_PATH` | Optional absolute override for the schema-versioned Creation Review session store. Persistence is opt-in. |
 

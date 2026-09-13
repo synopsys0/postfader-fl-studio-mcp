@@ -146,48 +146,31 @@ the caller to pass an integer index.
 ## Three bounds that can hide controls
 
 These are cost ceilings. FL runs script code on the thread driving its UI and
-audio, so an unbounded walk stalls the program. Each bound is an engineering
-compromise measured on a narrow sample, and each can under-report on a plug-in
-outside that sample.
+audio, so an unbounded walk stalls the program. Each bound limits the time spent inside a scan and can under-report on a
+plug-in whose controls fall outside the sampled range.
 
 ### Enumerated options: `OPTION_SWEEP_STEPS = 64`
 
 FL has no API to list a control's options, so they are found by moving the
-control and reading what it displays. 64 steps was sized against a 12-option
-musical key selector.
+control and reading what it displays. The default is 64 steps; callers may
+request up to 256 steps.
 
 **Where it breaks:** a control with more distinct options than there are steps
 returns a partial list — and a partial list looks exactly like a complete one.
 An impulse-response picker on a convolution reverb, or a preset or wavetable
 selector on a generator, is where this bites.
 
-**How many steps a control actually needs.** Measured against a live VST3: a
-29-option Scale control resolved *completely* at the default 64 steps, and
-re-sweeping the same control at 256 found the identical 29 options and nothing
-more. Options partition the normalised range into roughly equal contiguous
-bands, so the sweep does not need fine sampling -- it needs to land in each
-band at least once. About two samples per option is the working rule.
-
-That gives a usable guide:
-
-| Options on the control | Steps needed | At the default 64 |
-|---|---|---|
-| up to 32 | up to 64 | fine |
-| 33 - 128 | 66 - 256 | raise `sweep_steps` |
-| over 128 | over 256 | cannot be fully enumerated |
-
-**What to do:** raise `sweep_steps` toward its maximum of 256. The MCP argument
-is spelled `sweep_steps`, and arguments are validated strictly, so a
-misspelling is rejected rather than quietly ignored. Past 256 options, sweeping
-cannot see the whole list at all; address the control with
-`fl_set_plugin_param` on the normalised range instead.
+**What to do:** raise `sweep_steps` toward its maximum of 256 when a list
+appears incomplete. More samples improve coverage, but a control may map its
+options unevenly across the normalized range. Neither the default nor a higher
+step count proves that every option was discovered. Address a known normalized
+value with `fl_set_plugin_param` when an option cannot be located by its label.
 
 **Sweeping is not free.** It moves the control to look. Asking for the option a
 control is *already* showing keeps the displayed setting, but the control lands
 on the nearest sweep step rather than its exact previous value, and each sweep
-creates undo points and marks the project dirty. Two sweeps on one control took
-a clean project to `dirty_flag: 1` with four undo entries. Do this in a
-disposable project, and undo or close without saving afterwards.
+can create undo points and mark the project dirty. Use a disposable project
+when exploring an unfamiliar enumerated control.
 
 ### Parameter search: `PARAM_SEARCH_RUN = 256`
 
@@ -207,8 +190,8 @@ control by the index it returns.
 ### Padding detection
 
 A slot counts as padding when it has no name *and* its display is blank or a
-bare zero. This is structural rather than plug-in-specific and has held up
-across everything measured so far.
+bare zero. This rule depends on the reported control structure rather than a
+plug-in name.
 
 **Where it breaks:** a real, nameless control sitting at exactly zero with a
 bare-zero display is classified as padding. In practice nameless controls

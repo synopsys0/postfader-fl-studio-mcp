@@ -17,6 +17,7 @@ available in the current project.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 from collections.abc import Iterable, Mapping, Sequence
@@ -32,6 +33,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..contracts import display_value_in_unit
 from ..plugin_atlas import (
     AdapterControl,
     AtlasRegistry,
@@ -1206,9 +1208,9 @@ def _select_candidates(
                     adapter=adapter,
                     runtime_parameters=capability.runtime_parameters,
                 )
-                for control in goal.controls
+                for control in (goal.controls or _starting_controls(goal, adapter, capability.runtime_parameters))
             )
-        unresolved = any(item.status != "resolved" for item in resolutions)
+        unresolved = any(item.status != "resolved" for item in resolutions) or (goal.strength > 0.0 and not goal.controls and not resolutions)
         valid = bool(product and adapter and category_match and intent_match and not unresolved)
         score = 0.0
         reasons: list[str] = []
@@ -1229,6 +1231,10 @@ def _select_candidates(
             score += 0.10
         if unresolved:
             reasons.append("one or more requested controls are unresolved")
+        if not goal.controls and resolutions:
+            reasons.append("documented adapter starting controls were scaled by goal strength")
+            if adapter is not None and adapter.product_id == "image-line.fruity-delay-3":
+                reasons.append("existing delay timing and tempo-sync mode are preserved; wet and feedback levels are set")
         candidates.append(
             ProcessingCandidate(
                 candidate_id=_candidate_id(goal.goal_id, capability.target),
@@ -1250,6 +1256,76 @@ def _select_candidates(
         )
     candidates.sort(key=lambda item: (-item.score, item.candidate_id))
     return tuple(candidates)
+
+
+def _starting_controls(
+    goal: ProcessingGoal,
+    adapter: ControlAdapter,
+    runtime_parameters: Sequence[RuntimeParameterObservation] = (),
+) -> tuple[SemanticControlValue, ...]:
+    """Turn a supported goal into display-unit controls for known stock adapters.
+
+    These are audible starting settings, not source-analysis or mastering
+    claims. The normal resolver must still match every named control to the
+    captured runtime parameter list. No parameter index or normalized curve
+    is inferred. Explicit caller controls always take precedence.
+    """
+
+    strength = goal.strength
+    if strength <= 0.0:
+        return ()
+    intent = _canonical(goal.goal)
+    product = adapter.product_id
+
+    def control(role: str, value: float, unit: str, parameter: str | None = None) -> SemanticControlValue:
+        return SemanticControlValue(control_role=role, display_value=round(value, 4), display_unit=unit, parameter=parameter)
+
+    def observed_value(name: str, unit: str) -> float | None:
+        controls = [row for row in adapter.controls if _canonical(row.role or row.control_id) == _canonical(name)]
+        observations = [row for row in runtime_parameters if len(controls) == 1 and _parameter_matches_control(row, controls[0])]
+        if len(observations) != 1 or observations[0].display is None:
+            return None
+        try:
+            return display_value_in_unit(observations[0].display, unit)
+        except ValueError:
+            return None
+
+    if product == "image-line.fruity-parametric-eq2":
+        settings = {
+            "reduce_mud": (2, 280.0, -3.0 * strength),
+            "tighten_low_end": (1, 90.0, -2.0 * strength),
+            "tame_harshness": (3, 3500.0, -3.0 * strength),
+            "add_presence": (3, 3000.0, 2.5 * strength),
+            "add_air": (3, 10000.0, 2.0 * strength),
+        }
+        setting = settings.get(intent)
+        if setting is not None:
+            band, frequency, gain = setting
+            return (
+                control("band_frequency", frequency, "Hz", f"Band {band} freq"),
+                control("band_gain", gain, "dB", f"Band {band} level"),
+            )
+    if product == "image-line.fruity-compressor" and intent in {"control_dynamics", "level_vocal", "add_punch", "tighten_low_end"}:
+        return (
+            control("threshold", -12.0 - 12.0 * strength, "dB"),
+            control("ratio", 1.0 + 3.0 * strength, "ratio"),
+            control("attack", 25.0 if intent == "add_punch" else 10.0, "ms"),
+            control("release", 80.0 + 60.0 * strength, "ms"),
+        )
+    if product == "image-line.fruity-limiter" and intent == "limit_peaks":
+        return (control("ceiling", -0.3 - 1.4 * strength, "dB"),)
+    if product == "image-line.fruity-reeverb-2":
+        if intent == "add_depth":
+            return (control("decay", 0.6 + 1.8 * strength, "seconds"), control("wet", 5.0 + 20.0 * strength, "percent"))
+        if intent == "shorten_space":
+            decay, wet = observed_value("Decay", "seconds"), observed_value("Wet", "percent")
+            if decay is not None and wet is not None:
+                return (control("decay", max(0.0, decay * (1.0 - 0.7 * strength)), "seconds"), control("wet", max(0.0, wet * (1.0 - 0.6 * strength)), "percent"))
+    if product == "image-line.fruity-delay-3" and intent == "rhythmic_echo":
+        # The adapter's Time unit is ambiguous (beats_or_ms), so leave its
+        # current timing intact until an explicit display-unit value is supplied.
+        return (control("wet", 5.0 + 20.0 * strength, "percent"), control("feedback", 10.0 + 25.0 * strength, "percent"))
+    return ()
 
 
 def _missing_for_goal(
@@ -1777,16 +1853,41 @@ def plan_processing(
     actions: list[SemanticPluginAction] = []
     missing: list[MissingProcessingCapability] = []
     previous_by_candidate: dict[str, str] = {}
+    planned_values: dict[tuple[str, int], str] = {}
+
+    def setting(control: ResolvedSemanticControl) -> str:
+        return json.dumps((control.setter, control.display_value, control.display_unit, control.option, control.normalized_value))
+
+    def conflicts(candidate: ProcessingCandidate) -> bool:
+        for resolution in candidate.control_resolutions:
+            control = resolution.control
+            if control is not None:
+                prior = planned_values.get((_target_key(candidate.target), control.parameter_index))
+                if prior is not None and prior != setting(control):
+                    return True
+        return False
+
+    dry_roles = {role.role for role in request.roles if role.dry_by_design}
     for goal in goals:
+        if request.dry_by_design or goal.role in dry_roles:
+            continue
         goal_candidates = _select_candidates(goal, capabilities, registry)
         candidates.extend(goal_candidates)
-        selected = next((candidate for candidate in goal_candidates if candidate.valid), None)
+        selected = next((candidate for candidate in goal_candidates if candidate.valid and (goal.controls or not conflicts(candidate))), None)
         if selected is None:
             # Keep optional gaps visible in the plan as well as in the
             # coverage report.  ``required`` controls whether readiness must
             # stop; it must not hide a requested category from the final
             # structured result.
-            missing.append(_missing_for_goal(goal, capabilities))
+            conflicting = next((candidate for candidate in goal_candidates if candidate.valid and conflicts(candidate)), None)
+            if conflicting is not None:
+                missing.append(MissingProcessingCapability(
+                    role=goal.role, category=_goal_categories(goal)[0], requested_techniques=(goal.technique or goal.goal,),
+                    required=goal.required, target=conflicting.target,
+                    reason="automatic recipe conflicts with earlier settings on the same effect control; use another loaded effect or explicit controls",
+                ))
+            else:
+                missing.append(_missing_for_goal(goal, capabilities))
             continue
         # A read-only inventory may carry ``allow_master=true`` so its target
         # can be represented safely.  That observation is not authorization to
@@ -1807,7 +1908,16 @@ def plan_processing(
                 )
             )
             continue
-        for index, control in enumerate(goal.controls, start=1):
+        controls = tuple(item.request for item in selected.control_resolutions)
+        if not controls:
+            if goal.strength > 0.0:
+                missing.append(MissingProcessingCapability(
+                    role=goal.role, category=_goal_categories(goal)[0],
+                    requested_techniques=(goal.technique or goal.goal,), required=goal.required,
+                    target=selected.target, reason="this goal has no documented starting recipe for the loaded adapter; supply explicit controls",
+                ))
+            continue
+        for index, control in enumerate(controls, start=1):
             resolution = (
                 selected.control_resolutions[index - 1]
                 if index - 1 < len(selected.control_resolutions)
@@ -1821,6 +1931,8 @@ def plan_processing(
             # mutation action with an unknown control.
             if resolution.status != "resolved":
                 continue
+            if resolution.control is not None:
+                planned_values[(_target_key(selected.target), resolution.control.parameter_index)] = setting(resolution.control)
             action_id = f"{goal.goal_id}-{index}"
             dependencies = () if selected.candidate_id not in previous_by_candidate else (
                 previous_by_candidate[selected.candidate_id],
@@ -1849,7 +1961,8 @@ def plan_processing(
                     ),
                     rationale=(
                         goal.rationale
-                        or "Restrained first-pass semantic processing; audible quality is not evaluated."
+                        or (f"Adapter starting recipe for {goal.goal}, strength {goal.strength:g}; evaluate against the source."
+                            if not goal.controls else "Explicit semantic processing controls.")
                     ),
                 )
             )
@@ -1857,7 +1970,10 @@ def plan_processing(
     # supplied a larger request.  The plan is still useful as a report.
     if len(actions) > MAX_PROCESSING_ACTIONS:
         actions = actions[:MAX_PROCESSING_ACTIONS]
-    plan_material = "|".join((request.request_id, *(item.action_id for item in actions)))
+    plan_material = json.dumps(
+        {"request": request.model_dump(mode="json"), "actions": [item.model_dump(mode="json") for item in actions]},
+        sort_keys=True, separators=(",", ":"),
+    )
     plan_id = f"plan-{hashlib.sha256(plan_material.encode('utf-8')).hexdigest()[:24]}"
     warnings = [
         "Processing actions use existing verified setters supplied by the caller; no FL API is invoked while planning.",

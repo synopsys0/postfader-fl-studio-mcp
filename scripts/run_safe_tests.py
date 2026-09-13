@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -67,6 +68,9 @@ SAFE_TESTS = (
     "tests/test_workflows.py",
     "tests/test_mixing.py",
     "tests/test_creative.py",
+    "tests/test_piano_roll.py",
+    "tests/test_saved_project_render.py",
+    "tests/test_plugin_loading.py",
     "tests/test_creation_pipeline_foundation.py",
     "tests/test_creation_composition.py",
     "tests/test_creation_pipeline_integration.py",
@@ -84,6 +88,7 @@ SAFE_TESTS = (
     "tests/test_creation_review_production_runs.py",
     "tests/test_live_creation_review_acceptance.py",
     "tests/test_production_runs.py",
+    "tests/test_production_run_persistence.py",
     "tests/test_preset_bridge.py",
     "tests/test_preset_contracts.py",
     "tests/test_preset_performance.py",
@@ -136,15 +141,19 @@ def run_safe_test(path: Path) -> subprocess.CompletedProcess[str]:
     else:
         command = [sys.executable, "-B", str(path)]
 
-    return subprocess.run(
-        command,
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-        timeout=SAFE_TEST_TIMEOUT_SECONDS,
-    )
+    with tempfile.TemporaryDirectory(prefix="postfader-safe-test-") as isolated:
+        environment["POSTFADER_PRODUCTION_RUN_PATH"] = os.fspath(
+            Path(isolated) / "production-runs.sqlite3"
+        )
+        return subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=SAFE_TEST_TIMEOUT_SECONDS,
+        )
 
 
 def _timeout_output(error: subprocess.TimeoutExpired) -> str:

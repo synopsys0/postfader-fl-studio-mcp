@@ -182,6 +182,21 @@ def _invoke_with_supported_kwargs(callback: SetterCallback, arguments: dict[str,
     return callback(**accepted)
 
 
+def _accepts_display_unit(callback: SetterCallback) -> bool:
+    """Whether an injected callback can receive the requested physical unit."""
+
+    try:
+        parameters = inspect.signature(callback).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        return True
+    keyword_kinds = {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+    if any(name in {"target_unit", "display_unit"} and parameter.kind in keyword_kinds for name, parameter in parameters.items()):
+        return True
+    return len(parameters) == 1 and any(name in {"action", "request", "semantic_action"} and parameter.kind in keyword_kinds for name, parameter in parameters.items())
+
+
 def _invoke_setter(
     callback: SetterCallback,
     action: SemanticPluginAction,
@@ -196,6 +211,8 @@ def _invoke_setter(
             "parameter_index": control.parameter_index,
             "target_value": control.display_value,
             "display_value": control.display_value,
+            "display_unit": control.display_unit,
+            "target_unit": control.display_unit,
             "option": control.option,
             "normalized_value": control.normalized_value,
             "session_fingerprint": action.session_fingerprint,
@@ -410,6 +427,15 @@ class SemanticActionExecutor:
                         f"no injected verified setter is available for "
                         f"{action.resolution.control.setter}"
                     ),
+                )
+                results.append(result)
+                by_id[action.action_id] = result
+                stopped_on = stopped_on or action.action_id
+                continue
+            if action.resolution.control.setter == "fl_set_plugin_param_display" and action.resolution.control.display_unit is not None and not _accepts_display_unit(callback):
+                result = ProcessingActionReceipt(
+                    action_id=action.action_id, status="missing_setter", outcome_known=True, verified=False,
+                    warning="the injected display setter cannot accept the requested unit; use a unit-aware setter",
                 )
                 results.append(result)
                 by_id[action.action_id] = result

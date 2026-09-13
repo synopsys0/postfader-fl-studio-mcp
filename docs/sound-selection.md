@@ -14,6 +14,19 @@ or a bounded custom role. It can also carry product or preset preferences,
 exclusions, stock-only direction, section scope, register, articulation,
 descriptor, layering, continuity, and novelty instructions.
 
+When roles are omitted, the planner now supplies editable starting roles from
+the genre or brief. It recognizes deep house, house, trap, lo-fi hip-hop, drum
+and bass, ambient, synthwave, techno, R&B and pop. Unknown styles receive generic
+roles with an explicit limitation; mixed styles report which profile supplies
+the starting point. Explicit roles stay intact. Simple directions such as
+“no drums” or “only bass” constrain inferred roles.
+
+`SoundPalettePlan.musical_direction` explains the chosen profile, inferred roles,
+timbre and groove suggestions. These are composition guidance, not rhythm
+edits or preset facts. The bundled metadata covers 18 instrument families;
+exact preset availability still comes from FL. Requested dimensions that fail
+to match count as zero in the score instead of disappearing from its average.
+
 ## Direction comes first
 
 Explicit direction is stronger than recency, novelty, or a tie-breaking seed.
@@ -72,7 +85,7 @@ accepted assignment.
 ## Anchors and section variations
 
 Core identity roles are anchors by default. Typical anchors are the main chords,
-main lead, primary bass, sub-bass, vocal chop, and primary drum kit. Locked
+main lead, primary bass, sub-bass, and primary drum kit. Locked
 roles and preserved existing assignments cannot be replaced accidentally.
 
 `lock_existing` protects an assignment that was already present before
@@ -267,12 +280,15 @@ are reported separately from palette selection and arrangement delivery.
 ## What FL Studio cannot prove
 
 Sound Selection chooses from instruments and effects already loaded in the
-current project. PostFader cannot insert, remove, replace, or reorder plug-ins
-through the supported backend, and Atlas cannot make an unloaded product
-available. Load the desired pool manually in FL Studio before planning.
+current project. On macOS, `plugins_list_available` reads the native Add menu
+and `plugins_load` adds one exact named instrument or an effect on a specified
+mixer track. The agent can load a missing choice, then refresh Sound Selection
+inventory and plan against its verified channel/slot. These host tools require
+macOS Accessibility access and currently support the English Add-menu structure.
+Windows loading, removal, replacement and reordering remain unimplemented.
 
-PostFader also cannot hear FL Studio's live output, audition a preset, render,
-or save the project. Descriptor and cohesion decisions are metadata-level
+PostFader cannot hear FL Studio's live output or save the project. The separate
+saved-project renderer exports only saved state. Descriptor and cohesion decisions are metadata-level
 reasoning. Save manually in FL Studio after reviewing the plan, receipts, and
 warnings. Supported preset mutations use later-tick readback and report when
 FL exposes weaker evidence; they do not claim artistic quality, guaranteed

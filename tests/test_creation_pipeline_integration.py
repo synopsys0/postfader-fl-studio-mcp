@@ -209,6 +209,49 @@ def ready_collection() -> tuple[CreationReadinessReport, CollectedCreationReadin
 
 
 class CreationPipelineIntegrationTests(unittest.TestCase):
+    def test_initial_setup_changes_refresh_the_blocked_run_before_execution(self) -> None:
+        base, collected = ready_collection()
+        blocked = base.model_copy(update={
+            "overall_state": "blocked",
+            "blockers": (ReadinessBlocker(
+                code="required_processing_missing",
+                dimension="mixer_effects",
+                message="Load the required effect.",
+            ),),
+        })
+        operation = runs.PlanProcessingOperation(
+            operation_id="processing-plan",
+            request=ProcessingRequest(request_id="setup-recovery"),
+        )
+        plan = runs.ProductionRunPlan(plan_id="setup-recovery", operations=(operation,))
+        registry = runs.ProductionRunRegistry()
+        changed = "e" * 64
+        with (
+            mock.patch.object(runs, "_collect_run_readiness", side_effect=[
+                (blocked, collected), (base, collected),
+            ]) as collect,
+            mock.patch.object(runs, "_cached_live_validation", side_effect=[
+                ([], [], SESSION, PROJECT), ([], [], SESSION, changed),
+            ]),
+            mock.patch.object(runs, "_capture_project_state", return_value=(changed, "")),
+            mock.patch.object(runs, "_dispatch_operation", return_value=ProcessingPlan(
+                plan_id="processing-result", request_id="setup-recovery",
+                completion_target="restrained_first_pass",
+            )) as dispatch,
+        ):
+            first = registry.execute(request(), plan)
+            self.assertEqual(first.status, "blocked")
+            self.assertEqual(first.attempted_count, 0)
+            continued = registry.continue_run(first.run_id, runs.ProductionRunDelta(
+                mode="replace_remaining", operations=(operation,),
+            ))
+
+        self.assertEqual(continued.status, "completed")
+        self.assertEqual(collect.call_count, 2)
+        dispatch.assert_called_once()
+        self.assertEqual(continued.timing_report.operation_summary.full_inventory_scan_count, 2)
+        self.assertEqual(registry.get(first.run_id).state.readiness_preflight_count, 2)
+
     def test_instrument_readiness_requires_distinct_targets_for_required_roles(
         self,
     ) -> None:

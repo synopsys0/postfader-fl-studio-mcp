@@ -89,9 +89,12 @@ PRODUCTION_READ_TOOLS = {
     "postfader_creation_readiness",
     "postfader_validate_run",
     "postfader_get_run",
+    "postfader_list_runs",
+    "postfader_render_get_job",
     "processing_plan",
 }
 PRODUCTION_MUTATING_TOOLS = {
+    "plugins_load",
     "postfader_execute_run",
     "postfader_continue_run",
     "processing_apply_plan",
@@ -130,11 +133,15 @@ SOUND_SELECTION_WORKFLOW_TOOLS = {
     "sound_selection_history_reset",
 }
 WORKFLOW_STATE_TOOLS = {
+    "plugins_list_available",
     "mix_start_peak_watch",
     "mix_stop_peak_watch",
     "mix_create_gain_stage_plan",
     "mix_create_plan",
     "piano_roll_bridge",
+    "piano_roll_read_notes",
+    "postfader_render_saved_project",
+    "postfader_render_cancel",
     "postfader_review_record_feedback",
     "postfader_review_stop",
 }
@@ -518,14 +525,14 @@ async def run():
                 patterns_resource,
             )
             check(
-                "no render, project-save or generic API tools exposed",
+                "only the documented saved-project render tools expose export",
                 not [
                     name
                     for name in names
-                    if any(
-                        token in name
-                        for token in ("render", "api_call", "save")
-                    )
+                    if name not in {
+                        "postfader_render_saved_project",
+                        "postfader_render_get_job", "postfader_render_cancel",
+                    } and any(token in name for token in ("render", "api_call", "save"))
                 ],
                 sorted(names),
             )

@@ -47,6 +47,11 @@ REQUIRED = {
     "mcpb_entry.py",
     "pyproject.toml",
     "fl_studio_mcp/mcp_server.py",
+    "fl_studio_mcp/file_fingerprints.py",
+    "fl_studio_mcp/piano_roll.py",
+    "fl_studio_mcp/production_run_persistence.py",
+    "fl_studio_mcp/saved_project_render.py",
+    "fl_studio_mcp/plugin_loading.py",
     "fl_studio_mcp/_bridge/device_UniversalBridge.py",
 } | ATLAS_REQUIRED | SOUND_SELECTION_REQUIRED | CREATION_PIPELINE_REQUIRED | CREATION_REVIEW_REQUIRED
 FORBIDDEN_PARTS = {

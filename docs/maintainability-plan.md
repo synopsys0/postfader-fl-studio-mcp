@@ -1,10 +1,10 @@
 # Maintainability and module-decomposition plan
 
-Status: planning only. This is not a post-release rewrite proposal and does
-not authorize changing the public tool surface. PostFader v0.20 is intentionally
-left as a behaviorally stable release after qualification on Windows and
-macOS. Any extraction should be a focused, separately reviewable change with
-the existing contracts and safety tests passing before and after it.
+Use this register to choose focused improvements to the current development
+branch. Prioritize complete production workflows, fewer bridge round trips and
+recoverable runs before mechanical file splitting. Routine refactoring and
+bug fixes proceed under the task's authorization. Document intentional public
+contract changes and test the affected behavior.
 
 The current code is organized by feature and safety boundary, but several
 modules are large because they keep a complete protocol or workflow together.
@@ -14,12 +14,12 @@ acceptance.py, and _bridge/device_UniversalBridge.py contain policy and
 ordering decisions that should not be separated mechanically without focused
 regression tests.
 
-## Non-negotiable extraction rules
+## Refactoring criteria
 
 - Preserve read-only startup, session-only write authorization, explicit Master
   protection, later-idle-tick readback, no automatic replay after an ambiguous
   mutation, no automatic project save, and honest partial/unverified evidence.
-- Preserve bridge-source provenance, strict argument/result contracts, bounded
+- Keep bridge-source provenance diagnostic. Preserve strict argument/result contracts, bounded
   MIDI/filesystem/decoded-audio behavior, current-pattern and observation
   fingerprints, and all public tool/resource names.
 - Do not add a generic bridge dispatcher, remote/hosted MCP path, telemetry, or
@@ -206,7 +206,7 @@ split even when the hermetic suite passes.
 - Public tool/resource counts, names, annotations, argument schemas, result
   schemas, and refusal types are unchanged unless a separately approved
   compatibility change exists.
-- Read-only startup, provenance failure behavior, session write authorization,
+- Read-only startup, provenance diagnostics, session write authorization,
   Master protection, later-idle-tick readback, no-replay behavior, no-save
   behavior, evidence labels, and resource bounds have explicit regression
   coverage.
@@ -217,6 +217,6 @@ split even when the hermetic suite passes.
 - The diff contains no unrelated formatter rewrite or mass rename that obscures
   the moved boundary.
 
-This plan intentionally leaves architecture changes for a later design review.
-A smaller module is not automatically a safer module; the safety boundary and
-its tests are the deliverable.
+Choose a module extraction when it makes a real feature easier to implement,
+removes duplicated runtime work, or isolates a concrete failure. Measure the
+result with workflow completion, tool/bridge calls and focused regressions.

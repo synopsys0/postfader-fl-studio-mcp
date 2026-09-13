@@ -31,3 +31,8 @@ Regenerate that fixture family with:
 ```bash
 ./.venv/bin/python scripts/generate_creation_review_fixtures.py
 ```
+
+`stock-effect-controls-v1.json` contains only the public parameter names and
+indices needed by semantic-processing regressions. Display examples are
+synthetic test inputs. Targets are constructed by the test; the fixture contains
+no captured mixer layout, project state, or user settings.

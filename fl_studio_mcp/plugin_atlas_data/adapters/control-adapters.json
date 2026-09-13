@@ -55,9 +55,9 @@
       "supported_intents": ["limit_peaks", "control_dynamics"],
       "controls": [
         {"id": "input-gain", "role": "input_gain", "names": ["GAIN", "Gain"], "unit": "dB", "preferred_write_tool": "fl_set_plugin_param_display"},
-        {"id": "ceiling", "role": "ceiling", "names": ["CEIL", "Ceiling"], "unit": "dB", "preferred_write_tool": "fl_set_plugin_param_display"},
-        {"id": "attack", "role": "attack", "names": ["ATT", "Attack"], "unit": "ms", "preferred_write_tool": "fl_set_plugin_param_display"},
-        {"id": "release", "role": "release", "names": ["REL", "Release"], "unit": "ms", "preferred_write_tool": "fl_set_plugin_param_display"}
+        {"id": "ceiling", "role": "ceiling", "names": ["CEIL", "Ceiling", "Limiter ceiling"], "unit": "dB", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "attack", "role": "attack", "names": ["ATT", "Attack", "Limiter attack time"], "unit": "ms", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "release", "role": "release", "names": ["REL", "Release", "Limiter release time"], "unit": "ms", "preferred_write_tool": "fl_set_plugin_param_display"}
       ],
       "recipes": [
         {"id": "limiter-headroom", "intent": "limit_peaks", "parameter_roles": ["ceiling", "input_gain"], "guidance": "Set ceiling from a new true-peak bounce; do not use live sample peaks as proof of codec headroom."}
@@ -75,9 +75,9 @@
       "category": "reverb",
       "supported_intents": ["add_depth", "shorten_space", "darken_reverb"],
       "controls": [
-        {"id": "decay", "role": "decay", "names": ["Decay"], "unit": "seconds", "preferred_write_tool": "fl_set_plugin_param_display"},
-        {"id": "wet", "role": "wet", "names": ["Wet"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
-        {"id": "dry", "role": "dry", "names": ["Dry"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "decay", "role": "decay", "names": ["Decay", "Decay time"], "unit": "seconds", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "wet", "role": "wet", "names": ["Wet", "Wet level"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "dry", "role": "dry", "names": ["Dry", "Dry level"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
         {"id": "high-cut", "role": "high_cut", "names": ["HighCut", "High cut"], "unit": "Hz", "preferred_write_tool": "fl_set_plugin_param_display"}
       ],
       "recipes": [
@@ -96,7 +96,8 @@
       "category": "delay",
       "supported_intents": ["add_depth", "rhythmic_echo"],
       "controls": [
-        {"id": "feedback", "role": "feedback", "names": ["Feedback"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "output-wet", "role": "wet", "names": ["Output wet"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
+        {"id": "feedback", "role": "feedback", "names": ["Feedback", "Feedback level"], "unit": "percent", "preferred_write_tool": "fl_set_plugin_param_display"},
         {"id": "time", "role": "time", "names": ["Time"], "unit": "beats_or_ms", "preferred_write_tool": "fl_set_plugin_param_display"}
       ],
       "recipes": [

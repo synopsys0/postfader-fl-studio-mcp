@@ -287,61 +287,9 @@ class CreationReadinessService:
                         "ConnectionInfo.runtime_write_mode_control",
                     )
                 )
-            expected_source = info.expected_bridge_source_sha256
-            actual_source = info.bridge_source_sha256
-            if expected_source is not None and actual_source != expected_source:
-                local_blockers.append(
-                    self._blocker(
-                        "bridge_source_revision_mismatch",
-                        "connection_bridge",
-                        "The deployed bridge source revision does not match the expected revision.",
-                        "ConnectionInfo.bridge_source_sha256",
-                    )
-                )
-            if info.bridge_provenance == "mismatched":
-                local_blockers.append(
-                    self._blocker(
-                        "bridge_provenance_mismatch",
-                        "connection_bridge",
-                        "Bridge provenance verification reported a revision mismatch.",
-                        "ConnectionInfo.bridge_provenance",
-                    )
-                )
-            if not info.bridge_provenance_verified:
-                local_limits.append(
-                    self._limitation(
-                        "bridge_provenance_unverified",
-                        "connection_bridge",
-                        "Bridge/source provenance was not independently verified in this observation.",
-                        "ConnectionInfo.bridge_provenance",
-                    )
-                )
+            # Source hashes are diagnostics. Runtime compatibility and advertised
+            # capabilities determine whether this bridge can execute the run.
 
-        if self._revisions_comparable(
-            connection.package_source_revision,
-            connection.deployed_bridge_revision,
-        ) and connection.package_source_revision != connection.deployed_bridge_revision:
-            local_blockers.append(
-                self._blocker(
-                    "package_bridge_revision_mismatch",
-                    "connection_bridge",
-                    "The package source revision and deployed bridge revision differ.",
-                    "CreationReadinessInput.connection",
-                )
-            )
-        if (
-            connection.deployed_bridge_revision is not None
-            and connection.running_bridge_revision is not None
-            and connection.deployed_bridge_revision != connection.running_bridge_revision
-        ):
-            local_blockers.append(
-                self._blocker(
-                    "running_bridge_revision_mismatch",
-                    "connection_bridge",
-                    "The running bridge revision differs from the deployed bridge revision.",
-                    "CreationReadinessInput.connection",
-                )
-            )
         if connection.require_process_identity and connection.mcp_process_identity is None:
             local_blockers.append(
                 self._blocker(
@@ -431,28 +379,6 @@ class CreationReadinessService:
                 "Connection and bridge checks are complete.",
             )
         )
-
-    @staticmethod
-    def _revisions_comparable(left: str | None, right: str | None) -> bool:
-        """Avoid comparing package labels with bridge source hashes.
-
-        The live collector records a package revision such as
-        ``postfader-0.13`` alongside the expected/running bridge source
-        SHA-256.  Those are both useful provenance observations, but they are
-        different namespaces and cannot truthfully be declared mismatched.
-        Equal values (or two values from the same namespace) remain directly
-        comparable.
-        """
-
-        if left is None or right is None:
-            return False
-        left_is_sha = len(left) == 64 and all(
-            character in "0123456789abcdef" for character in left
-        )
-        right_is_sha = len(right) == 64 and all(
-            character in "0123456789abcdef" for character in right
-        )
-        return left_is_sha == right_is_sha
 
     def _evaluate_piano_roll(
         self,

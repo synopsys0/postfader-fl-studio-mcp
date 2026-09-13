@@ -255,8 +255,15 @@ def main():
           concurrent_param_worst)
     for reader in readers:
         reader.sock.close()
-    for _ in range(5):
+    # A close can reach the server after several busy ticks. Reap these
+    # clients before starting the next scenario, otherwise the deliberate
+    # four-client limit can reject its new connections on slower CI hosts.
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline and len(bridge._transport.clients) > 1:
         bridge.OnIdle()
+        time.sleep(0.002)
+    check("completed readers disconnected before the next scenario",
+          len(bridge._transport.clients) == 1, len(bridge._transport.clients))
 
     print("\n-- chunked scans stay correct and concurrent --")
     a, b = Client(port), Client(port)

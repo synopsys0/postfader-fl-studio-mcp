@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_TOOL_COUNT = 127
+EXPECTED_TOOL_COUNT = 134
 EXPECTED_RESOURCE_COUNT = 8
 
 
@@ -85,11 +85,8 @@ def main(argv=None) -> int:
 
     try:
         metadata = load_bundled_preset_metadata()
-        if metadata.metadata_version != "1.0":
-            failures.append(
-                "installed preset metadata version is not 1.0: %s"
-                % metadata.metadata_version
-            )
+        # The loader validates the schema. Catalog content revisions advance
+        # independently when reviewed instrument families are added.
         if not metadata.families and not metadata.records:
             failures.append("installed preset metadata catalog is empty")
         # Import representative strict contracts so a wheel that carries only

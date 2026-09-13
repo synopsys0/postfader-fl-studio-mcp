@@ -9,6 +9,7 @@ existing Production Run registry so there is no parallel mutation engine.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Annotated, Any, Literal
 
@@ -63,6 +64,9 @@ ReviewIdentifier = Annotated[
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
     ),
 ]
+
+_REVISION_APPLICATION_LOCK = threading.Lock()
+_REVISION_APPLICATIONS: set[str] = set()
 
 
 class ReviewAssetInput(CreationReviewModel):
@@ -775,15 +779,30 @@ def review_plan_revision(request: ReviewPlanRevisionRequest) -> RevisionPlan:
 def review_apply_revision(request: ReviewApplyRevisionRequest) -> RevisionPass:
     """Apply one validated revision through the existing Production Run engine."""
 
+    # MCP can dispatch concurrent calls in one process. Claim the session
+    # before reading its plan/receipts so two calls cannot execute the same
+    # revision while the first result is still being recorded.
+    session_id = request.review_session_id
+    with _REVISION_APPLICATION_LOCK:
+        if session_id in _REVISION_APPLICATIONS:
+            raise ValueError("a revision is already being applied to this Review Session")
+        _REVISION_APPLICATIONS.add(session_id)
+    try:
+        return _apply_revision(request)
+    finally:
+        with _REVISION_APPLICATION_LOCK:
+            _REVISION_APPLICATIONS.discard(session_id)
+
+
+def _apply_revision(request: ReviewApplyRevisionRequest) -> RevisionPass:
     session = _require_session(request.review_session_id)
     if session.status in {"accepted", "completed", "stopped"}:
         raise ValueError(
             f"Review Session {session.review_session_id} is {session.status}; no further revision is pending"
         )
-    if request.authorized_to_modify != request.request.authorized_to_modify:
-        raise ValueError(
-            "current authorization must match RevisionRequest.authorized_to_modify"
-        )
+    # Planning is read-only, so its retained request may have authorization
+    # unset. This apply call is the current task authorization and is passed
+    # directly to the executor below.
     if not request.authorized_to_modify:
         raise ValueError(
             "this revision call is not authorized to modify the open project"

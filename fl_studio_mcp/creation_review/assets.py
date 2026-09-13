@@ -32,6 +32,7 @@ import soundfile as sf
 
 from .. import audio
 from ..advisory import AUDIO_SUFFIXES, MAX_AUDIO_FILE_BYTES, resolve_audio_path
+from ..file_fingerprints import cached_file_digest
 
 
 ASSET_ANALYZER_VERSION = "creation-review-assets-1"
@@ -111,10 +112,26 @@ def sha256_file(
     max_bytes: int = MAX_AUDIO_FILE_BYTES,
     expected_signature: tuple[int, int] | None = None,
 ) -> str:
-    """Hash one stable file without reading beyond the configured byte cap."""
+    """Return the asset digest, reusing it while the file is unchanged."""
 
     if type(max_bytes) is not int or max_bytes <= 0:
         raise ReviewAssetError("max_bytes must be a positive integer")
+    try:
+        return cached_file_digest(
+            path,
+            max_bytes=max_bytes,
+            expected_signature=expected_signature,
+            read_digest=lambda resolved: _read_file_digest(resolved, max_bytes, expected_signature),
+        )
+    except (OSError, ValueError) as exc:
+        raise ReviewAssetError(str(exc)) from exc
+
+
+def _read_file_digest(
+    path: str | os.PathLike[str],
+    max_bytes: int,
+    expected_signature: tuple[int, int] | None,
+) -> str:
     digest = hashlib.sha256()
     total = 0
     try:
@@ -690,7 +707,7 @@ class DecodedAudioCache:
         if isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float)):
             raise ReviewAssetError("max_seconds must be a number")
         value = float(max_seconds)
-        if value <= 0 or value > MAX_DECODE_SECONDS:
+        if not 0 < value <= MAX_DECODE_SECONDS:
             raise ReviewAssetError(
                 f"max_seconds must be greater than zero and at most {MAX_DECODE_SECONDS:g}"
             )
@@ -739,7 +756,7 @@ class DecodedAudioCache:
                 requested_frames = min(requested_frames, int(seconds * int(info.samplerate)))
             # ``audio.load`` has a larger global safety ceiling; this review
             # cache adds a stricter per-cache bound before allocating samples.
-            estimated = requested_frames * max(1, int(info.channels)) * 8
+            estimated = requested_frames * (max(1, int(info.channels)) + 1) * 8
             if estimated > self.max_bytes:
                 raise ReviewAssetError(
                     f"decoded audio would use about {estimated} bytes, over the {self.max_bytes} byte review cache cap"
@@ -751,6 +768,7 @@ class DecodedAudioCache:
             # Keep timing available to evaluation reports without changing
             # the Loaded contract.
             loaded.meta.setdefault("review_decode_seconds", round(perf_counter() - started, 6))
+            loaded.meta["review_source_digest"] = current
         except ReviewAssetError:
             with self._lock:
                 self._decode_inflight.pop(key, None)
@@ -818,9 +836,11 @@ class DecodedAudioCache:
     @classmethod
     def _source_digest(cls, asset: Any) -> str:
         if isinstance(asset, audio.Loaded):
-            source_path = str(getattr(asset, "path", ""))
-            if source_path and os.path.isfile(source_path):
-                return sha256_file(_canonical_path(source_path, label="loaded.path"))
+            # The in-memory samples belong to the version we decoded, even
+            # if a producer has since overwritten the bounce at its path.
+            retained = asset.meta.get("review_source_digest")
+            if isinstance(retained, str) and len(retained) == 64:
+                return retained
             return cls._loaded_digest(asset)
         path = _value(asset, "path")
         if path:

@@ -53,7 +53,6 @@ _INSTRUMENT_ROLE_TYPES = {
     "sub",
     "sub_bass",
     "vocal",
-    "vocal_chop",
     "instrument",
     "texture",
     "countermelody",
@@ -67,7 +66,6 @@ _ANCHOR_ROLE_IDS = {
     "main_lead",
     "primary_bass",
     "sub_bass",
-    "vocal_chop",
     "drums",
 }
 
@@ -78,6 +76,21 @@ def _tokens(value: str | None) -> frozenset[str]:
 
 def _normalise(value: str | None) -> str:
     return " ".join(_TOKEN_RE.findall((value or "").casefold()))
+
+
+def _musical_role_tokens(*values: str | None) -> frozenset[str]:
+    aliases = {
+        "chord": "harmony", "chords": "harmony", "keys": "harmony", "keyboard": "harmony", "piano": "harmony",
+        "melody": "lead", "countermelody": "lead", "leads": "lead",
+        "pad": "texture", "pads": "texture", "textures": "texture",
+        "drum": "drums", "kit": "drums", "percussion": "drums",
+        "vocals": "vocal", "basses": "bass",
+    }
+    return frozenset(
+        aliases.get(token, token)
+        for value in values for token in _tokens(value)
+        if token not in {"main", "primary", "custom", "sub"}
+    )
 
 
 def _descriptor_key(value: str) -> str:
@@ -555,25 +568,31 @@ def _user_direction_fit(
     ):
         requested = getattr(role, name)
         observed = getattr(candidate, name)
-        if requested is not None and observed is not None:
-            numeric_matches.append(1.0 - abs(requested - observed))
+        if requested is not None:
+            # Unknown evidence cannot improve the average by disappearing.
+            numeric_matches.append(0.0 if observed is None else 1.0 - abs(requested - observed))
     numeric_fit = sum(numeric_matches) / len(numeric_matches) if numeric_matches else 0.0
 
-    components = [descriptor_match, product_match, preset_match, creative_match, numeric_fit]
-    active = sum(value > 0.0 for value in components)
-    base = sum(components) / active if active else 0.45
+    components = [
+        value
+        for active, value in (
+            (bool(wanted), descriptor_match),
+            (bool(preferences), product_match),
+            (bool(preset_preferences), preset_match),
+            (bool(direction_terms), creative_match),
+            (bool(numeric_matches), numeric_fit),
+        )
+        if active
+    ]
+    base = sum(components) / len(components) if components else 0.0
     return max(0.0, min(1.0, base - 0.40 * descriptor_penalty))
 
 
 def _role_fit(candidate: SoundCandidate, role: SoundRoleRequest) -> float:
     descriptors = _descriptor_names(candidate)
     descriptor = _overlap((_descriptor_key(item) for item in role.desired_descriptors), descriptors)
-    role_terms = _tokens(role.role_id) | _tokens(role.role_type) | _tokens(role.display_name)
-    known_roles = frozenset(
-        token
-        for value in (*candidate.role_ids, candidate.product_name)
-        for token in _tokens(value)
-    )
+    role_terms = _musical_role_tokens(role.role_id, role.role_type)
+    known_roles = _musical_role_tokens(*candidate.role_ids, candidate.product_name)
     role_label = _overlap(role_terms, known_roles) if role_terms else 0.0
     register = 0.0
     if role.register is not None:
@@ -599,15 +618,18 @@ def _role_fit(candidate: SoundCandidate, role: SoundRoleRequest) -> float:
             *candidate.atlas_product.use_cases,
         )
     if atlas_values:
-        atlas_terms = frozenset(
-            token for value in atlas_values for token in _tokens(value)
-        )
+        atlas_terms = _musical_role_tokens(*atlas_values)
         atlas_fit = _overlap(role_terms, atlas_terms) if role_terms else 0.0
-    values = [candidate.role_compatibility, descriptor, role_label, register, articulation, atlas_fit]
-    active = [value for value in values if value > 0.0]
-    # A candidate with no semantic metadata remains eligible, but has lower
-    # suitability confidence than a role-tagged/Atlas-described candidate.
-    return max(0.0, min(1.0, sum(active) / len(active) if active else 0.25))
+    # Role identity has three possible sources of evidence. Their maximum
+    # avoids triple-counting the same fact while preserving measured zeros.
+    values = [max(candidate.role_compatibility, role_label, atlas_fit)]
+    if role.desired_descriptors:
+        values.append(descriptor)
+    if role.register is not None:
+        values.append(register)
+    if role.articulation is not None:
+        values.append(articulation)
+    return max(0.0, min(1.0, sum(values) / len(values)))
 
 
 def _assignment_matches(candidate: SoundCandidate, assignment: SoundPaletteAssignment) -> bool:
@@ -972,12 +994,8 @@ def _metadata_confidence(candidate: SoundCandidate) -> ConfidenceLevel:
 def _role_fit_confidence(candidate: SoundCandidate, role: SoundRoleRequest) -> ConfidenceLevel:
     if candidate.role_compatibility >= 0.80:
         return "high"
-    role_terms = _tokens(role.role_id) | _tokens(role.role_type)
-    known = {
-        token
-        for value in (*candidate.role_ids, *candidate.atlas_common_roles)
-        for token in _tokens(value)
-    }
+    role_terms = _musical_role_tokens(role.role_id, role.role_type)
+    known = _musical_role_tokens(*candidate.role_ids, *candidate.atlas_common_roles)
     if role_terms and role_terms.intersection(known):
         return "high"
     if candidate.role_compatibility > 0.0 or candidate.descriptors or candidate.atlas_confidence in {"medium", "high"}:

@@ -158,9 +158,8 @@ class CreationPipelineFoundationTests(unittest.TestCase):
         codes = {item.code for item in report.blockers}
 
         self.assertEqual(report.overall_state, "blocked")
-        self.assertGreaterEqual(len(report.blockers), 8)
+        self.assertGreaterEqual(len(report.blockers), 7)
         for expected in {
-            "bridge_source_revision_mismatch",
             "midi_input_unavailable",
             "midi_output_unavailable",
             "piano_roll_not_armed",
@@ -169,6 +168,27 @@ class CreationPipelineFoundationTests(unittest.TestCase):
             "required_processing_missing",
         }:
             self.assertIn(expected, codes)
+
+    def test_bridge_source_hashes_do_not_block_compatible_readiness(self) -> None:
+        facts = ready_facts(
+            connection=ConnectionReadiness(
+                connection=connection(
+                    bridge_source_sha256="c" * 64,
+                    expected_bridge_source_sha256="d" * 64,
+                    bridge_provenance="mismatched",
+                    bridge_provenance_verified=False,
+                ),
+                mcp_process_identity="process-1",
+                package_source_revision="e" * 64,
+                deployed_bridge_revision="d" * 64,
+                running_bridge_revision="c" * 64,
+            ),
+        )
+
+        report = CreationReadinessService().evaluate(facts)
+
+        self.assertFalse(report.blockers)
+        self.assertEqual(report.context_snapshot.running_bridge_revision, "c" * 64)
 
     def test_missing_optional_effect_is_limitation_for_draft(self) -> None:
         facts = ready_facts(
