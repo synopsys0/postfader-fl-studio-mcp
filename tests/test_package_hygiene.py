@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -94,6 +96,39 @@ class PackageHygieneTests(unittest.TestCase):
                     with mock.patch.object(scanner, "ROOT", root):
                         failures = scanner.check_file(Path("candidate.txt"))
                 self.assertIn("absolute Windows home path", failures)
+
+    def test_local_conversations_and_run_journals_cannot_enter_public_tree(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        candidates = (
+            ".codex/config.toml", "conversation.jsonl", "session.log",
+            "production-runs-v1.sqlite3", "runs.sqlite3-wal", "runs.db-shm",
+        )
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            for name in candidates:
+                with self.subTest(name=name):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("synthetic private record", encoding="utf-8")
+                    with mock.patch.object(scanner, "ROOT", root):
+                        self.assertTrue(scanner.check_file(Path(name)))
+                    ignored = subprocess.run(
+                        ["git", "check-ignore", "--no-index", name],
+                        cwd=ROOT, capture_output=True, check=False,
+                    )
+                    self.assertEqual(ignored.returncode, 0)
+
+    def test_github_credential_families_are_rejected_without_echoing_secrets(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            for family in "pousr":
+                with self.subTest(family=family):
+                    (root / "candidate.txt").write_text(
+                        "gh" + family + "_" + "a" * 24, encoding="utf-8",
+                    )
+                    with mock.patch.object(scanner, "ROOT", root):
+                        self.assertIn("GitHub token", scanner.check_file(Path("candidate.txt")))
 
     def test_internal_working_documents_are_rejected_by_public_tree_scanner(
         self,
@@ -213,6 +248,15 @@ class PackageHygieneTests(unittest.TestCase):
                 os.environ["FL_BRIDGE_MIDI_PORT"], "Must Not Be Enumerated"
             )
 
+    def test_every_offline_test_is_included_in_the_required_suite(self) -> None:
+        runner = load_safe_runner()
+        offline = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests").glob("test_*.py")
+        } - {"tests/test_midi_transport.py"}
+        self.assertEqual(set(runner.SAFE_TESTS), offline)
+        self.assertEqual(len(runner.SAFE_TESTS), len(offline))
+
     def test_safe_runner_passes_isolation_and_timeout_to_every_child(self) -> None:
         runner = load_safe_runner()
         completed = subprocess.CompletedProcess(
@@ -239,6 +283,9 @@ class PackageHygieneTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["FL_BRIDGE_SANDBOXED"], "1")
         self.assertEqual(kwargs["timeout"], runner.SAFE_TEST_TIMEOUT_SECONDS)
         self.assertGreater(kwargs["timeout"], 0)
+        journal = Path(kwargs["env"]["POSTFADER_PRODUCTION_RUN_PATH"])
+        self.assertEqual(journal.name, "production-runs.sqlite3")
+        self.assertFalse(journal.parent.exists(), "test journal directory must be temporary")
 
     def test_safe_runner_can_instrument_children_for_coverage(self) -> None:
         runner = load_safe_runner()
@@ -382,7 +429,6 @@ with mock.patch.object(
             "fl_studio_mcp.creation_review",
             declared["tool"]["setuptools"]["packages"],
         )
-
         atlas_data = files("fl_studio_mcp.plugin_atlas_data")
         source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
         for path in source_data.rglob("*.json"):
@@ -631,8 +677,36 @@ with mock.patch.object(
 
     def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
         verifier = load_distribution_verifier()
-        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 127)
+        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 134)
         self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
+
+    def test_sdist_verification_requires_every_runtime_module(self) -> None:
+        verifier = load_distribution_verifier()
+        required = (
+            verifier.RUNTIME_MODULES
+            | verifier.ATLAS_DATA_FILES
+            | verifier.SOUND_SELECTION_DATA_FILES
+            | {name.lstrip("/") for name in verifier.SDIST_REQUIRED_SUFFIXES}
+        )
+        missing_module = "fl_studio_mcp/plugin_loading.py"
+        self.assertIn(missing_module, required)
+        with tempfile.TemporaryDirectory(prefix="postfader-sdist-check-") as raw:
+            archive_path = Path(raw) / "source.tar.gz"
+            for omit in (None, missing_module):
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    for name in sorted(required - {omit}):
+                        content = (
+                            verifier.MCP_OWNERSHIP_MARKER.encode("utf-8")
+                            if name == "README.md" else b"fixture"
+                        )
+                        member = tarfile.TarInfo("package/" + name)
+                        member.size = len(content)
+                        archive.addfile(member, io.BytesIO(content))
+                failures = verifier.inspect_sdist(archive_path)
+                if omit is None:
+                    self.assertEqual(failures, [])
+                else:
+                    self.assertEqual(failures, ["sdist is missing " + missing_module])
 
 
 if __name__ == "__main__":

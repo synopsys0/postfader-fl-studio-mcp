@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from fl_studio_mcp import production_runs as runs
@@ -27,11 +29,140 @@ from fl_studio_mcp.plugin_atlas import (
     AtlasRegistry,
     ControlAdapter,
     ProductKnowledge,
+    RuntimeParameterObservation,
+    load_bundled_registry,
 )
 from fl_studio_mcp.track_b_contracts import MixerEffectTarget
 
 
 class SemanticProcessingTests(unittest.TestCase):
+    def stock_capability(self, product_id: str, names: tuple[str, ...]) -> LoadedProcessingCapability:
+        registry = load_bundled_registry()
+        product = registry.product(product_id)
+        adapter = next(row for row in registry.adapters if row.product_id == product_id)
+        return LoadedProcessingCapability(
+            target=MixerEffectTarget(track_index=5, slot_index=2), plugin_name=product.name,
+            product_id=product_id, adapter_id=adapter.adapter_id, category=adapter.category,
+            control_evidence=True, adapter_available=True, atlas_match=True,
+            runtime_parameters=tuple(RuntimeParameterObservation(index=index + 37, name=name) for index, name in enumerate(names)),
+        )
+
+    def test_goal_only_stock_reverb_resolves_real_parameter_names_and_strength(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-reeverb-2", ("Decay", "Wet", "Dry", "HighCut"))
+        plans = [plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="add_depth", strength=strength),)), loaded_plugins=(capability,), registry=registry) for strength in (0.25, 0.75)]
+        self.assertEqual(len(plans[0].actions), 2)
+        self.assertEqual({action.resolution.control.parameter_index for action in plans[0].actions}, {37, 38})
+        self.assertGreater(plans[1].actions[0].control.display_value, plans[0].actions[0].control.display_value)
+        self.assertNotEqual(plans[0].plan_id, plans[1].plan_id)
+        self.assertTrue(all(action.resolution.control.setter == "fl_set_plugin_param_display" for action in plans[0].actions))
+
+    def test_goal_only_eq_requires_observed_named_band(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-parametric-eq2", ("Band 2 freq", "Band 2 level", "Band 2 width"))
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="reduce_mud", strength=0.8),))
+        plan = plan_processing(request, loaded_plugins=(capability,), registry=registry)
+        self.assertEqual(len(plan.actions), 2)
+        self.assertEqual(plan.actions[1].control.display_value, -2.4)
+        missing = capability.model_copy(update={"runtime_parameters": ()})
+        blocked = plan_processing(request, loaded_plugins=(missing,), registry=registry)
+        self.assertFalse(blocked.actions)
+        self.assertTrue(blocked.missing_capabilities)
+
+    def test_shortening_space_reduces_current_values_instead_of_lengthening_them(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-reeverb-2", ("Decay", "Wet", "Dry", "HighCut"))
+        observations = list(capability.runtime_parameters)
+        observations[0] = observations[0].model_copy(update={"display": "100 ms"})
+        observations[1] = observations[1].model_copy(update={"display": "4 %"})
+        capability = capability.model_copy(update={"runtime_parameters": tuple(observations)})
+        plan = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="shorten_space", strength=0.5),)), loaded_plugins=(capability,), registry=registry)
+        self.assertEqual(len(plan.actions), 2)
+        self.assertAlmostEqual(plan.actions[0].control.display_value, 0.065)
+        self.assertLess(plan.actions[1].control.display_value, 4.0)
+
+    def test_stock_parameter_contracts_resolve_all_five_recipes(self) -> None:
+        registry = load_bundled_registry()
+        fixture = json.loads((Path(__file__).parent / "fixtures" / "stock-effect-controls-v1.json").read_text())
+        cases = (
+            ("reeverb", "add_depth", (5, 12), (1.5, 15.0)),
+            ("reeverb", "shorten_space", (5, 12), (1.3, 28.0)),
+            ("eq2", "add_presence", (9, 2), (3000.0, 1.25)),
+            ("compressor", "level_vocal", (0, 1, 3, 4), (-18.0, 2.5, 10.0, 110.0)),
+            ("limiter", "limit_peaks", (2,), (-1.0,)),
+            ("delay", "rhythmic_echo", (23, 14), (15.0, 22.5)),
+        )
+        for key, goal, indices, values in cases:
+            with self.subTest(key=key, goal=goal):
+                plan = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal=goal),)), loaded_plugins=({**fixture[key], "track_index": 5, "slot_index": 2},), registry=registry)
+                self.assertFalse(plan.missing_capabilities)
+                self.assertEqual(tuple(action.resolution.control.parameter_index for action in plan.actions), indices)
+                self.assertEqual(tuple(action.control.display_value for action in plan.actions), values)
+                if key == "delay":
+                    self.assertNotIn(4, indices)  # Tempo-synced Time display is 4:0, not milliseconds.
+                    self.assertTrue(any("tempo-sync" in reason for candidate in plan.candidates for reason in candidate.reasons))
+
+    def test_semantic_executor_preserves_requested_display_units(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-parametric-eq2", ("Band 3 freq", "Band 3 level", "Band 3 width"))
+        plan = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="add_presence"),)), loaded_plugins=(capability,), registry=registry)
+        writes = []
+        def setter(**kwargs):
+            writes.append(kwargs)
+            return {"verified": True, "outcome_known": True}
+        receipt = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": setter})
+        self.assertTrue(receipt.completed)
+        self.assertEqual(writes[0]["target_value"], 3000.0)
+        self.assertEqual(writes[0]["display_unit"], "Hz")
+        self.assertEqual(writes[0]["target_unit"], "Hz")
+        self.assertEqual(writes[1]["display_unit"], "dB")
+
+    def test_legacy_callback_cannot_drop_units_and_still_dispatch(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-parametric-eq2", ("Band 3 freq", "Band 3 level", "Band 3 width"))
+        plan = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="add_presence"),)), loaded_plugins=(capability,), registry=registry)
+        writes = []
+        def legacy(parameter, target_value):
+            writes.append((parameter, target_value))
+            return {"verified": True, "outcome_known": True}
+        result = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": legacy})
+        self.assertEqual(writes, [])
+        self.assertEqual(result.attempted_count, 0)
+        self.assertTrue(result.outcome_known)
+        self.assertEqual(result.results[0].status, "missing_setter")
+        def modern(parameter, target_value, target_unit):
+            writes.append(target_unit)
+            return {"verified": True, "outcome_known": True}
+        result = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": modern})
+        self.assertTrue(result.completed)
+        self.assertEqual(writes, ["Hz", "dB"])
+        def with_action(action):
+            return {"verified": bool(action.resolution.control.display_unit), "outcome_known": True}
+        self.assertTrue(apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": with_action}).completed)
+
+    def test_explicit_controls_override_starting_recipe_and_dry_disables_actions(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-reeverb-2", ("Decay", "Wet", "Dry", "HighCut"))
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="add_depth", controls=(SemanticControlValue(control_role="decay", display_value=0.25),)),))
+        plan = plan_processing(request, loaded_plugins=(capability,), registry=registry)
+        self.assertEqual(len(plan.actions), 1)
+        self.assertEqual(plan.actions[0].control.display_value, 0.25)
+        dry = plan_processing(request.model_copy(update={"dry_by_design": True}), loaded_plugins=(capability,), registry=registry)
+        self.assertFalse(dry.actions)
+
+    def test_automatic_eq_goals_do_not_silently_replace_each_others_band(self) -> None:
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-parametric-eq2", ("Band 3 freq", "Band 3 level", "Band 3 width"))
+        request = ProcessingRequest(goals=(ProcessingGoal(goal_id="presence", goal="add_presence"), ProcessingGoal(goal_id="air", goal="add_air")))
+        plan = plan_processing(request, loaded_plugins=(capability,), registry=registry)
+        self.assertEqual(len(plan.actions), 2)
+        self.assertEqual(plan.actions[0].control.display_value, 3000.0)
+        self.assertIn("conflicts", plan.missing_capabilities[0].reason)
+        second = capability.model_copy(update={"target": MixerEffectTarget(track_index=5, slot_index=3)})
+        accommodated = plan_processing(request, loaded_plugins=(capability, second), registry=registry)
+        self.assertEqual(len(accommodated.actions), 4)
+        self.assertFalse(accommodated.missing_capabilities)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.product = ProductKnowledge(

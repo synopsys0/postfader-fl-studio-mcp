@@ -215,10 +215,13 @@ def connection_from_ping(
     version_text = str(ping.get("fl_version") or "") or None
     parsed = _parse_version(version_text)
     build = parsed[3] if parsed else None
-    protocol = _int(ping.get("protocol"))
-    midi_api = _int(
-        ping.get("midi_scripting_api_version", ping.get("fl_version_int"))
-    )
+    # Protocol negotiation must not truncate a future fractional version or
+    # coerce a string/bool into a supported wire contract. Observation fields
+    # elsewhere retain their existing tolerant parsing.
+    protocol_value = ping.get("protocol")
+    protocol = protocol_value if type(protocol_value) is int else None
+    midi_api_value = ping.get("midi_scripting_api_version", ping.get("fl_version_int"))
+    midi_api = midi_api_value if type(midi_api_value) is int else None
     reported_mode = str(ping.get("bridge_mode") or "legacy_unknown")
     bridge_mode = (
         reported_mode
@@ -227,7 +230,11 @@ def connection_from_ping(
     )
     # Only a literal true from the bridge enables the write tools. A missing
     # or non-boolean field means an older bridge that cannot dispatch them.
-    writes_enabled = ping.get("verified_writes_enabled") is True and bridge_mode == "write_test"
+    writes_enabled = (
+        protocol == 2
+        and ping.get("verified_writes_enabled") is True
+        and bridge_mode == "write_test"
+    )
     runtime_write_mode_control = ping.get("runtime_write_mode_control") is True
     startup_value = ping.get("startup_write_mode_enabled")
     startup_write_mode_enabled = (
@@ -271,24 +278,24 @@ def connection_from_ping(
         if reported_digest_value in (None, ""):
             bridge_provenance = "missing"
             warnings.append(
-                "The running bridge did not report its source SHA-256. Reads may "
-                "continue, but every write will refuse until the packaged bridge is "
-                "installed and reloaded."
+                "The running bridge did not report its source SHA-256, so its exact "
+                "build is unknown. Write availability follows the live protocol "
+                "and capability handshake."
             )
         elif not isinstance(reported_digest_value, str) or re.fullmatch(
             r"[0-9a-f]{64}", reported_digest_value
         ) is None:
             bridge_provenance = "malformed"
             warnings.append(
-                "The running bridge reported a malformed source SHA-256. Reads may "
-                "continue, but every write will refuse."
+                "The running bridge reported a malformed source SHA-256. This "
+                "diagnostic does not determine write availability."
             )
         elif reported_digest_value != expected_digest:
             bridge_provenance = "mismatched"
             warnings.append(
-                "The running bridge is stale or belongs to another PostFader build. "
-                "Reads may continue, but every write will refuse until the packaged "
-                "bridge is installed and reloaded."
+                "The running bridge source differs from this package. Compatible "
+                "reads and writes remain available; install and reload the packaged "
+                "bridge when you need features added by this build."
             )
         else:
             bridge_provenance = "matching"
@@ -374,6 +381,7 @@ def connection_from_ping(
         bridge_mode=bridge_mode,
         bridge_read_only_enforced=protocol is not None and protocol >= 2 and bridge_mode == "read_only",
         verified_writes_enabled=writes_enabled,
+        plugin_display_units=ping.get("plugin_display_units") is True,
         runtime_write_mode_control=runtime_write_mode_control,
         write_mode_origin=write_mode_origin,
         startup_write_mode_enabled=startup_write_mode_enabled,
@@ -382,6 +390,7 @@ def connection_from_ping(
         bridge_provenance=bridge_provenance,
         bridge_provenance_verified=bridge_provenance == "matching",
         session_fingerprint=session_fingerprint,
+        project_load_epoch=ping.get("project_load_epoch") is True,
         warnings=warnings,
         error=error,
     )
@@ -744,9 +753,38 @@ class ReadOnlyInspector:
                 ],
             ),
             CapabilityRecord(
+                capability="piano_roll_note_snapshot",
+                status=CapabilityStatus.UNVALIDATED,
+                access_path="piano_roll_read_notes through the Piano Roll script runtime",
+                limitations=[
+                    "Requires one-time script setup and the bridge editor-navigation capability.",
+                    "Opens the requested editor; does not change notes or enable musical writes.",
+                    "Each bounded page must return its own script receipt and matching target observation.",
+                ],
+                evidence=[CapabilityEvidence(
+                    kind=fixture,
+                    detail="Generated note snapshots and page/target handling pass synthetic tests; no live snapshot is claimed here.",
+                )],
+            ),
+            CapabilityRecord(
+                capability="saved_project_wav_render",
+                status=CapabilityStatus.UNVALIDATED,
+                access_path="postfader_render_saved_project host job",
+                limitations=[
+                    "Renders the saved .flp only; unsaved live edits are excluded.",
+                    "Requires installed FL Studio on macOS or Windows; live export acceptance remains pending.",
+                    "Output readiness and renderer exit are reported separately.",
+                ],
+                evidence=[CapabilityEvidence(
+                    kind=official,
+                    detail="Image-Line documents saved-project command-line export.",
+                    source_url=EXPORT_DOC,
+                )],
+            ),
+            CapabilityRecord(
                 capability="render_selected_sections_and_stems",
                 status=CapabilityStatus.UNVALIDATED,
-                access_path="saved-project CLI or narrow named-menu fallback",
+                access_path="no implemented selected-section/stem render adapter",
                 limitations=[
                     "There is no public MIDI scripting render function.",
                     "CLI rendering works from saved FLP files and does not expose every selection/stem option.",
@@ -807,6 +845,12 @@ class ReadOnlyInspector:
     def project_summary(self) -> ProjectSummary:
         connection = self._require_compatible()
         raw = self.gateway.call("project.info")
+        return self._project_summary_from_reply(connection, raw)
+
+    @staticmethod
+    def _project_summary_from_reply(
+        connection: ConnectionInfo, raw: dict[str, Any]
+    ) -> ProjectSummary:
         dirty = _dirty(raw.get("unsaved_changes"))
         warnings = list(connection.warnings)
         if "project_title" not in raw:
@@ -928,6 +972,19 @@ class ReadOnlyInspector:
             arguments["max_tracks"] = max_tracks
         raw = self.gateway.call("mixer.list", **arguments)
         after = self.gateway.call("project.info")
+        return self._mixer_tracks_from_reply(
+            connection, raw, before, after, only_used=only_used
+        )
+
+    @staticmethod
+    def _mixer_tracks_from_reply(
+        connection: ConnectionInfo,
+        raw: dict[str, Any],
+        before: dict[str, Any],
+        after: dict[str, Any],
+        *,
+        only_used: bool,
+    ) -> MixerTrackList:
         warnings = list(connection.warnings) + _observation_warnings(before, after)
         after_dirty = _dirty(after.get("unsaved_changes"))
         if only_used:
@@ -1024,6 +1081,23 @@ class ReadOnlyInspector:
             arguments["filter"] = name_filter
         raw = self.gateway.call("plugin.params", **arguments)
         after = self.gateway.call("project.info")
+        return self._plugin_parameters_from_reply(
+            connection, raw, before, after,
+            track_index=track_index, slot_index=slot_index, limit=limit, offset=offset,
+        )
+
+    @staticmethod
+    def _plugin_parameters_from_reply(
+        connection: ConnectionInfo,
+        raw: dict[str, Any],
+        before: dict[str, Any],
+        after: dict[str, Any],
+        *,
+        track_index: int,
+        slot_index: int,
+        limit: int,
+        offset: int,
+    ) -> PluginParameterPage:
         total = _int(raw.get("param_count"))
         if total is None:
             raise ValueError("FL bridge did not report the plug-in parameter count")
@@ -1164,10 +1238,19 @@ class ReadOnlyInspector:
         parameter_limit: int = 16,
         max_plugins: int = 16,
     ) -> ReadOnlyInspectionReport:
-        project = self.project_summary()
-        mixer = self.list_mixer_tracks(only_used=only_used)
-        previews = []
-        warnings = list(project.warnings) + list(mixer.warnings)
+        """Collect one bounded snapshot with a shared before/after observation.
+
+        The preflight belongs only to this call. Independent inspection tools
+        still obtain their own live handshake and consistency observations.
+        """
+        connection = self._require_compatible()
+        before = self.gateway.call("project.info")
+        raw_mixer = self.gateway.call("mixer.list", only_used=only_used, peaks=False)
+        mixer = self._mixer_tracks_from_reply(
+            connection, raw_mixer, before, before, only_used=only_used
+        )
+        raw_previews: list[tuple[int, int, dict[str, Any]]] = []
+        preview_warnings: list[str] = []
         locations = [
             (track.index, plugin.slot_index)
             for track in mixer.tracks
@@ -1175,17 +1258,43 @@ class ReadOnlyInspector:
         ]
         for track_index, slot_index in locations[:max_plugins]:
             try:
-                previews.append(
-                    self.plugin_parameters(
-                        track_index=track_index,
-                        slot_index=slot_index,
-                        limit=parameter_limit,
-                    )
+                raw = self.gateway.call(
+                    "plugin.params",
+                    track=track_index,
+                    slot=slot_index,
+                    limit=parameter_limit,
+                    offset=0,
+                    skip_padding=False,
                 )
+                raw_previews.append((track_index, slot_index, raw))
             except (BridgeError, ValueError) as exc:
-                warnings.append(
+                preview_warnings.append(
                     f"Could not preview parameters for track {track_index}, slot {slot_index}: {exc}"
                 )
+
+        # These bookends cover the entire snapshot, including changes between
+        # plug-ins that per-plugin checks used to miss. No live state is cached
+        # after this method returns.
+        after = self.gateway.call("project.info")
+        observation_warnings = _observation_warnings(before, after)
+        project = self._project_summary_from_reply(connection, after)
+        mixer = mixer.model_copy(update={
+            "project_dirty_flag": _dirty(after.get("unsaved_changes")),
+            "warnings": list(dict.fromkeys(mixer.warnings + observation_warnings)),
+        })
+        previews = []
+        for track_index, slot_index, raw in raw_previews:
+            try:
+                previews.append(self._plugin_parameters_from_reply(
+                    connection, raw, before, after,
+                    track_index=track_index, slot_index=slot_index,
+                    limit=parameter_limit, offset=0,
+                ))
+            except (BridgeError, ValueError) as exc:
+                preview_warnings.append(
+                    f"Could not preview parameters for track {track_index}, slot {slot_index}: {exc}"
+                )
+        warnings = list(dict.fromkeys(project.warnings + mixer.warnings + preview_warnings))
         if len(locations) > max_plugins:
             warnings.append(
                 f"Parameter previews were capped at {max_plugins} of {len(locations)} loaded plug-ins."

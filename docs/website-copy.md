@@ -27,6 +27,13 @@ documents instead of expanding the homepage.
 
 ---
 
+## Release scope
+
+The current development source has 134 tools and 8 resources. The linked
+v0.20.0 downloads have 90 tools and 8 resources. Label development features
+explicitly wherever this copy is published; see [next-release notes](releases/dev-v10.md).
+Never put the development tool count beside a stable download without this distinction.
+
 ## Hero
 
 **Eyebrow:** PostFader — the AI copilot for FL Studio
@@ -45,7 +52,7 @@ another local MCP client.
 
 **Secondary action:** Explore what PostFader can do
 
-**Proof strip:** 127 tools · 8 live resources · Windows and macOS · Open source ·
+**Development proof strip:** 134 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.
@@ -195,7 +202,10 @@ A cleaner session or an attempted change to a supported exposed plug-in
 parameter after you explicitly confirm that you are present and enable writes
 for the current session. The result says whether FL Studio's readback matched,
 refused the request, or could not confirm it. PostFader works with plug-ins
-already in the project; it does not insert, remove, or reorder them, and FL
+already in the project. Development tools also discover macOS native Add-menu
+favorites and load one named instrument or effect with bridge readback. This
+requires Accessibility access and a supported English menu. Windows insertion,
+removal, and reordering remain unavailable, and FL
 Studio does not expose reliable slot bypass or wet/dry control here.
 
 ---
@@ -265,7 +275,9 @@ Creation Review keeps measured evidence separate from producer judgment. It
 plans and applies one revision through the existing Production Run executor
 when you clearly request a change, then asks for a matching revised bounce.
 Technical improvements and regressions remain separate, and Playlist placement,
-rendering, project saving, and artistic approval stay with you.
+rendering of unsaved edits, project saving, and artistic approval stay with you.
+The separate development renderer exports an explicitly selected saved `.flp`
+to WAV; it does not capture the open project or silently save it.
 
 ### You receive
 
@@ -329,6 +341,21 @@ individual commands. PostFader connects them into a production workflow.
 - Inspect and organize Channel Rack generators, patterns, and Playlist tracks.
 - Read undo/redo history bounds and edit the current step sequence.
 - Discover and control supported parameters on loaded effects and generators.
+
+### Development workflow additions
+
+- Plugin Atlas supplies offline product knowledge independently of runtime availability.
+- Sound Selection infers editable roles from producer direction, chooses coherent
+  palettes, verifies exact presets, and preserves anchors across sections.
+- Production Runs retain local SQLite checkpoints and can explicitly resume a
+  retained plan after fresh validation; unknown writes are never replayed.
+- Piano Roll inspection reads bounded note pages through the armed script runtime.
+- A separate saved-project renderer starts, inspects, and cancels background WAV jobs.
+- Creation Review evaluates bounces, retains producer feedback and locks, applies
+  a bounded revision, compares a rebounce, and prepares delivery manifests.
+
+Live acceptance for the new note-inspection and render paths is pending.
+These additions are not part of the v0.20.0 downloads.
 
 ### Create music
 

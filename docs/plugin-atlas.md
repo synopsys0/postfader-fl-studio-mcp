@@ -40,6 +40,13 @@ exact preset readback.
 
 ## Atlas capability and semantic processing
 
+Recommendations enforce the requested instrument/effect kind before ranking.
+Product use cases, instrument sources and track types contribute to relevance;
+poor-fit descriptions do not increase a match. Stock or loaded status can rank
+relevant candidates but cannot turn an unrelated product into a recommendation.
+These corrections prevent an effect such as Bass Boost from appearing as an
+instrument choice for a house bass request.
+
 Atlas product knowledge and control-adapter knowledge can contribute to
 effect-coverage planning, but neither one creates a live effect target. A
 processing candidate must be a currently loaded mixer effect with a matching

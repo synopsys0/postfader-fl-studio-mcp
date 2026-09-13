@@ -1059,6 +1059,7 @@ class VerifiedTargetedPluginDisplayWrite(TrackBVerifiedMutation):
     matched_on: PluginMatchKind
     matched_text: str | None = Field(default=None, max_length=256)
     requested_value: float
+    requested_unit: str | None = None
     tolerance: float = Field(ge=0.0, le=1e6)
     landed_value: float | None = None
     normalized_value: float | None = None

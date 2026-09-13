@@ -8,6 +8,8 @@ by the read-only inspection surface.
 
 from __future__ import annotations
 
+import math
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Literal
@@ -16,6 +18,57 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 
 
 SCHEMA_VERSION = "1.0"
+
+DisplayUnit = Literal["Hz", "kHz", "ms", "seconds", "dB", "percent", "ratio"]
+_DISPLAY_UNITS: dict[str, tuple[str, str, float]] = {
+    "hz": ("Hz", "frequency", 1.0), "khz": ("kHz", "frequency", 1000.0),
+    "ms": ("ms", "time", 0.001), "s": ("seconds", "time", 1.0),
+    "sec": ("seconds", "time", 1.0), "second": ("seconds", "time", 1.0),
+    "seconds": ("seconds", "time", 1.0), "db": ("dB", "decibels", 1.0),
+    "%": ("percent", "percent", 1.0), "percent": ("percent", "percent", 1.0),
+    "ratio": ("ratio", "ratio", 1.0),
+}
+
+
+def normalize_display_unit(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or value.strip().lower() not in _DISPLAY_UNITS:
+        raise ValueError("target_unit must be Hz, kHz, ms, seconds, dB, percent or ratio")
+    return _DISPLAY_UNITS[value.strip().lower()][0]
+
+
+def display_value_in_unit(text: str | None, target_unit: str) -> float:
+    """Parse one numeric display into requested units, including prefix changes.
+
+    Mirrored in the standalone FL bridge, which cannot import this host module.
+    Unitless numeric displays are accepted only for explicit ratio requests.
+    """
+
+    normalize_display_unit(target_unit)
+    wanted = _DISPLAY_UNITS[target_unit.strip().lower()]
+    match = re.fullmatch(r"\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*(.*?)\s*", text or "")
+    if match is None:
+        raise ValueError("parameter display has no supported numeric unit value")
+    value = float(match.group(1))
+    suffix = match.group(2).strip().lower()
+    if wanted[1] == "ratio" and (not suffix or suffix.startswith(":")):
+        if suffix:
+            try:
+                denominator = float(suffix[1:].strip())
+            except ValueError as exc:
+                raise ValueError("parameter ratio display is malformed") from exc
+            if not math.isfinite(denominator) or denominator <= 0.0:
+                raise ValueError("parameter ratio denominator must be positive")
+            value /= denominator
+    else:
+        observed = _DISPLAY_UNITS.get(suffix)
+        if observed is None or observed[1] != wanted[1]:
+            raise ValueError("parameter display unit does not match target_unit")
+        value *= observed[2] / wanted[2]
+    if not math.isfinite(value):
+        raise ValueError("parameter display value must be finite")
+    return value
 
 
 class ContractModel(BaseModel):
@@ -69,21 +122,25 @@ class ConnectionInfo(ContractModel):
     # verified write commands.  The bridge is the sole authority: this mirrors
     # its ping, and no client-side flag can turn it on.
     verified_writes_enabled: bool = False
+    plugin_display_units: bool = False
     runtime_write_mode_control: bool = False
     write_mode_origin: Literal[
         "disabled", "startup_environment", "runtime_request", "legacy_unknown"
     ] = "legacy_unknown"
     startup_write_mode_enabled: bool | None = None
+    # Build identity is diagnostic. Protocol, capabilities and operation
+    # receipts determine runtime compatibility, not byte-for-byte source equality.
     bridge_source_sha256: str | None = None
     expected_bridge_source_sha256: str | None = None
     bridge_provenance: Literal[
         "matching", "missing", "malformed", "mismatched", "unavailable"
     ] = "unavailable"
     bridge_provenance_verified: bool = False
-    # Generated when FL loads the bridge and stable only for that bridge
-    # lifetime. Callers may pass it back to a write as an optional stale-
-    # session precondition.
+    # Identifies a bridge session, also rotated at project loads when
+    # project_load_epoch is supported. Callers may pass it to writes as
+    # an optional stale-session precondition.
     session_fingerprint: str | None = None
+    project_load_epoch: bool = False
     warnings: list[str] = Field(default_factory=list)
     error: str | None = None
 
@@ -496,6 +553,7 @@ class VerifiedPluginDisplayWrite(VerifiedWrite):
     ]
     matched_text: str | None = None
     requested_value: float
+    requested_unit: str | None = None
     tolerance: float = Field(ge=0.0)
     landed_value: float | None = None
     normalized_value: float | None = Field(default=None, ge=0.0, le=1.0)

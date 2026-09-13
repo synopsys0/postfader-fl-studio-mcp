@@ -11,21 +11,41 @@ PostFader
 
 ## One-line description
 
-The AI copilot for inspecting, mixing, controlling, composing, and arranging
-inside the FL Studio project already open.
+PostFader is a local FL Studio MCP server for AI-assisted mixing, plug-in
+control, MIDI composition, and arrangement on Windows and macOS.
 
-## Short description
+## Release scope and directory copy
+
+As of 2026-09-13, the latest published version on GitHub, PyPI, and the official
+MCP Registry is **0.20.0: 90 tools and 8 resources**. The development branch has
+**134 tools and 8 resources**. Counts are checked against the tagged manifest
+and the development SDK listing. A package version retained in a dev checkout
+is not evidence that those features have shipped.
+
+Use this stable description for listings that point to current downloads:
+
+> PostFader is a local FL Studio MCP server for Windows and macOS. Connect an
+> MCP-compatible AI client to inspect projects, diagnose exported mixes, control
+> supported loaded plug-ins, compose MIDI, and prepare arrangements. Version
+> 0.20.0 provides 90 tools and 8 resources, starts read-only, and never saves
+> projects automatically. Install the matching Universal Bridge and configure
+> virtual MIDI before connecting.
+
+The longer copy below describes **development features**, which must be
+identified as such on any directory or website.
+
+## Development short description
 
 PostFader connects Claude, Codex, Cursor, and other local MCP clients to the
 project open in FL Studio. Inspect mixer routing and loaded plug-ins, diagnose
 exported mixes, choose coherent sound palettes, control the session, generate
-MIDI parts, and prepare patterns and arrangement markers through 127 tools and
+MIDI parts, and prepare patterns and arrangement markers through 134 tools and
 8 live resources. Creation Review can evaluate caller-exported bounces, plan
 one bounded revision, compare before/after evidence, and produce manual
 delivery handoffs. Guided packages support Windows and macOS. PostFader starts
 read-only and never saves automatically.
 
-## Long description
+## Development long description
 
 PostFader is the local Model Context Protocol (MCP) copilot for producers using
 FL Studio. Connect Claude, Codex, Cursor, or another local MCP host to the
@@ -60,7 +80,15 @@ locks, bounded revision receipts, comparisons, and delivery metadata. It does
 not capture live audio, render, save, create Playlist clips, insert plug-ins,
 or infer artistic approval from technical measurements.
 
-The current development surface contains 127 tools and 8 live resources. Guided Windows and
+Separate development tools inspect existing Piano Roll notes, retain Production
+Run journals across restarts, explicitly resume saved plans after revalidation,
+and render an already-saved FLP to WAV in a background job. Native macOS
+Add-menu discovery and loading identify new instruments/effects through bridge
+readback. Loading requires Accessibility access and supported English menus;
+Windows insertion, removal, and reordering are unavailable. Live qualification
+of the new note-read and renderer paths is still pending.
+
+The current development surface contains 134 tools and 8 live resources. Guided Windows and
 macOS packages, dedicated Codex packages, a Claude Desktop MCPB, and Python
 distributions cover different setup needs. PostFader starts read-only, requires
 session-only authorization for writes, never saves automatically, and reads
@@ -77,7 +105,7 @@ service, account, or telemetry.
   Master protection.
 - Supported direct setters use later-update readback; weaker evidence is
   labeled partial or unverified.
-- The current development surface has 127 tools and 8 live resources, including
+- The current development surface has 134 tools and 8 live resources, including
   13 Creation Review tools and 9 corresponding Production Run operations.
 - Creation Review measures explicit bounces, preserves producer feedback and
   locks, applies one bounded revision through the existing run executor, and
@@ -103,8 +131,10 @@ service, account, or telemetry.
 - Every action or every plug-in parameter is verified.
 - Every plug-in is fully supported.
 - PostFader can hear FL Studio's live audio output.
-- PostFader can load every plug-in or insert, remove, and reorder plug-ins
-  through the current backend.
+- PostFader can load every plug-in, insert on Windows, or remove/reorder plug-ins.
+- Development tools are included in v0.20.0 downloads.
+- PostFader is officially ranked first or independently certified as the best
+  FL Studio MCP server without current, attributable evidence.
 - PostFader cannot damage or dirty a project.
 - PostFader is made by, endorsed by, or affiliated with Image-Line.
 - PostFader saves, backs up, or automatically restores a project.
@@ -182,11 +212,42 @@ names remain lowercase where their interfaces require it.
 Record only real submissions and verify each listing against the canonical
 metadata. `—` means no submission has been made; it is not an acceptance.
 
-| Directory name | Submission URL | Listing URL | Claimed / unclaimed | Version shown | Tool count shown | Platform description | Last verified date | Correction needed |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| — | — | — | Unclaimed | — | — | — | — | — |
+| Platform | Verified public source | State on 2026-09-13 | Maintenance boundary |
+| --- | --- | --- | --- |
+| GitHub Releases | [v0.20.0](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v0.20.0) | Published; 90 tools, 8 resources; Windows/macOS ZIPs, Codex ZIPs, MCPB, wheel, sdist, checksums | Release text can be updated; immutable assets do not acquire dev features. |
+| PyPI | [0.20.0](https://pypi.org/project/postfader-fl-studio-mcp/0.20.0/) | Latest package is 0.20.0 | Code and packaged README updates need a newly qualified version. |
+| Official MCP Registry | [Latest server record](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.synopsys0%2Fpostfader-fl-studio-mcp/versions/latest) | Active 0.20.0; points to PyPI 0.20.0 | Published version metadata is immutable; next version goes through the release workflow. |
+| Glama | [Server listing](https://glama.ai/mcp/servers/synopsys0/postfader-fl-studio-mcp) | Claimed and maintainer verified; name and description updated for both platforms, stable 90/dev 134 counts, and current workflow scope | Saved changes were read back from the admin form. Repository refresh is controlled by Glama. |
+| MCP Market | [Postfader](https://mcpmarket.com/server/postfader) | Visible; summary still says macOS and 24 tools, and overstates every-write verification | Needs operator/listing-owner correction to stable copy above. No authenticated editing access verified. |
+| mcpindex.ai | [Registry mirror](https://mcpindex.ai/server/io-github-synopsys0-postfader-fl-studio-mcp) | Live page shows 0.20.0; search snippets can still show 0.13.0 | Registry mirror is current; search recrawl is controlled by the search engine. |
+| mcpbeat | [Server listing](https://mcpbeat.com/mcp-servers/synopsys0/postfader-fl-studio-mcp/) | Indexed page shows 0.12.0 and a bare `uvx` launch | Needs current registry data and the actual `fl-studio-mcp` entry point plus bridge/MIDI prerequisites. |
+
+Glama currently has no container release. Its container release flow enables
+hosted deployment and automated scoring; this local DAW integration must not be
+presented as remote FL Studio access merely to earn a directory score.
+
+No Smithery publication was verified. Do not describe an unverified listing as
+an existing release. This ledger records observations, not successful correction
+submissions or ownership claims.
 
 Before updating a listing, check the product name, one-line description, safe
 claims, package boundary, repository/release links, version, tool count, and
 platform text. Never claim that a directory has accepted PostFader until its
 listing is visible and verified by a maintainer.
+
+## Search visibility and evidence
+
+Use “FL Studio MCP server” naturally in the repository title, opening copy,
+package descriptions, and relevant feature documentation. Keep product name,
+repository URL, release version, operating systems, and installation requirements
+consistent across directories. Link directly to setup, tool contracts, current
+release notes, and development notes. Avoid keyword stuffing, invented reviews,
+unearned “official” badges, or a numerical ranking without a dated source.
+
+Search engines and directory operators control indexing and rankings. Strong
+positioning should rest on reproducible installation, meaningful tests, explicit
+feature boundaries, maintained documentation, and independently reported user
+results. A tool count is useful inventory, not evidence of superior musical output.
+
+Glama documents [ownership and synchronization](https://glama.ai/blog/2025-07-08-what-is-glamajson).
+The MCP Registry documents [immutable version metadata](https://modelcontextprotocol.io/registry/versioning).

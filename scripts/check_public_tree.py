@@ -122,9 +122,12 @@ SYNTHETIC_WAVS = {
 
 FORBIDDEN_DIRECTORY_NAMES = {
     ".claude",
+    ".codex",
     ".fl-studio-mcp-locks",
     ".idea",
     ".private",
+    ".mypy_cache",
+    ".ruff_cache",
     ".pytest_cache",
     ".vscode",
     "__pycache__",
@@ -229,7 +232,7 @@ CONTENT_PATTERNS = (
         "private key material",
         re.compile(_pieces(b"-----BEGIN ", b"PRIVATE KEY-----")),
     ),
-    ("GitHub token", re.compile(rb"\bghp_[A-Za-z0-9]{20,}\b")),
+    ("GitHub token", re.compile(rb"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
     ("GitHub token", re.compile(rb"\bgithub_pat_[A-Za-z0-9_]{20,}\b")),
     ("AWS access key", re.compile(rb"\bAKIA[0-9A-Z]{16}\b")),
 )
@@ -295,6 +298,10 @@ def check_file(relative: Path) -> list[str]:
         failures.append("environment file may contain secrets")
     if relative.suffix.casefold() in {".key", ".p12", ".pem", ".pfx"}:
         failures.append("credential file extension")
+    if relative.suffix.casefold() in {".jsonl", ".log", ".sqlite", ".sqlite3", ".db"} or re.search(
+        r"\.(?:sqlite3?|db)-(?:wal|shm|journal)$", name_folded
+    ):
+        failures.append("local transcript, log, or database file")
 
     expected_wav = SYNTHETIC_WAVS.get(relative_text)
     if relative.suffix.casefold() in PRIVATE_SUFFIXES:

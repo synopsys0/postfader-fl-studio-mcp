@@ -33,6 +33,7 @@ Protocol: JSON request/response.
 import json
 import hashlib
 import math
+import re
 import socket
 import os
 import select
@@ -223,12 +224,15 @@ PROTOCOL_VERSION = 2
 # Do not edit the marker text; scripts/install.sh matches it exactly.
 BRIDGE_SOURCE_SHA256 = ""  # injected-by-install
 
-# Stable for exactly one loaded bridge lifetime and intentionally unrelated to
-# project names or host identity. A caller can pass it back with a write to
-# refuse if FL reloaded the script between observation and mutation.
+# Stable within one project epoch of this loaded bridge. Project-load events
+# rotate it as well as script reloads, so an interrupted host cannot resume
+# against a different FLP whose channel/pattern indices happen to match.
+_SESSION_NONCE = time.time_ns() & 0xFFFFFFFFFFFFFFFF
+_project_epoch = 0
+_project_loading = False
 SESSION_FINGERPRINT = "%016x%016x" % (
     os.getpid() & 0xFFFFFFFFFFFFFFFF,
-    time.time_ns() & 0xFFFFFFFFFFFFFFFF,
+    _SESSION_NONCE,
 )
 
 # The bounded mutation surface: persistent commands read FL back after a later
@@ -264,9 +268,13 @@ READ_ONLY_COMMANDS = frozenset({
     "patterns.list",
     "patterns.find_empty",
     "playlist.list",
+    "creative.piano_roll_target",
 })
 SESSION_CONTROL_COMMANDS = frozenset({
     "session.set_write_mode",
+})
+NAVIGATION_COMMANDS = frozenset({
+    "creative.prepare_piano_roll",
 })
 LEAN_WRITE_COMMANDS = frozenset({
     "mixer.set_volume",
@@ -306,7 +314,6 @@ LEAN_WRITE_COMMANDS = frozenset({
     "pattern.set_length",
     "playlist.set_identity",
     "playlist.set_state",
-    "creative.prepare_piano_roll",
     "arrangement.add_markers",
     "automation.record_value",
     "channel.set_identity",
@@ -703,6 +710,10 @@ def cmd_ping(a):
         MIDI_WIRE_PROTOCOL_FIELD: MIDI_WIRE_PROTOCOL_VERSION,
         "verified_writes_enabled": bool(LEAN_WRITES_ENABLED),
         "runtime_write_mode_control": True,
+        "piano_roll_navigation": True,
+        "plugin_display_units": True,
+        "project_load_epoch": True,
+        "project_loading": bool(_project_loading),
         "write_mode_origin": WRITE_MODE_ORIGIN,
         "startup_write_mode_enabled": bool(STARTUP_WRITES_ENABLED),
         "fl_version": _safe(lambda: ui.getVersion(), ""),
@@ -740,8 +751,8 @@ def cmd_session_set_write_mode(a):
     session = a.get("session_fingerprint")
     if not isinstance(session, str) or session != SESSION_FINGERPRINT:
         raise ValueError(
-            "session precondition failed: the bridge was reloaded or the "
-            "fingerprint is invalid; read the connection state again"
+            "session precondition failed: the project changed, the bridge "
+            "reloaded, or the fingerprint is invalid; read the connection state again"
         )
     if enabled and not confirmed:
         raise ValueError(
@@ -1050,6 +1061,54 @@ def _first_float(s):
         return float(num)
     except ValueError:
         return None
+
+
+_DISPLAY_UNITS = {
+    "hz": ("Hz", "frequency", 1.0), "khz": ("kHz", "frequency", 1000.0),
+    "ms": ("ms", "time", 0.001), "s": ("seconds", "time", 1.0),
+    "sec": ("seconds", "time", 1.0), "second": ("seconds", "time", 1.0),
+    "seconds": ("seconds", "time", 1.0), "db": ("dB", "decibels", 1.0),
+    "%": ("percent", "percent", 1.0), "percent": ("percent", "percent", 1.0),
+    "ratio": ("ratio", "ratio", 1.0),
+}
+
+
+def _normalize_display_unit(value):
+    if value is None:
+        return None
+    if not isinstance(value, str) or value.strip().lower() not in _DISPLAY_UNITS:
+        raise ValueError("target_unit must be Hz, kHz, ms, seconds, dB, percent or ratio")
+    return _DISPLAY_UNITS[value.strip().lower()][0]
+
+
+def _display_value_in_unit(text, target_unit):
+    # Keep conversion identical to the host's contracts.display_value_in_unit.
+    # Every solver observation is normalized, even if FL changes suffixes
+    # between its millisecond/second or Hz/kHz display ranges.
+    _normalize_display_unit(target_unit)
+    wanted = _DISPLAY_UNITS[target_unit.strip().lower()]
+    match = re.fullmatch(r"\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*(.*?)\s*", text or "")
+    if match is None:
+        raise ValueError("parameter display has no supported numeric unit value")
+    value = float(match.group(1))
+    suffix = match.group(2).strip().lower()
+    if wanted[1] == "ratio" and (not suffix or suffix.startswith(":")):
+        if suffix:
+            try:
+                denominator = float(suffix[1:].strip())
+            except ValueError:
+                raise ValueError("parameter ratio display is malformed")
+            if not math.isfinite(denominator) or denominator <= 0.0:
+                raise ValueError("parameter ratio denominator must be positive")
+            value /= denominator
+    else:
+        observed = _DISPLAY_UNITS.get(suffix)
+        if observed is None or observed[1] != wanted[1]:
+            raise ValueError("parameter display unit does not match target_unit")
+        value *= observed[2] / wanted[2]
+    if not math.isfinite(value):
+        raise ValueError("parameter display value must be finite")
+    return value
 
 
 def cmd_mixer_eq_get(a):
@@ -2704,14 +2763,14 @@ def _near(value, target, tol):
 
 
 def _check_session_precondition(a):
-    """Refuse a write observed against a different loaded bridge session."""
+    """Refuse a write observed against a different project or bridge epoch."""
     if "session_fingerprint" not in a or a.get("session_fingerprint") is None:
         return
     expected = a.get("session_fingerprint")
     if not isinstance(expected, str) or expected != SESSION_FINGERPRINT:
         raise ValueError(
-            "session precondition failed: the bridge was reloaded or the "
-            "fingerprint is invalid; re-read the project before writing"
+            "session precondition failed: the project changed, the bridge "
+            "reloaded, or the fingerprint is invalid; re-read the project before writing"
         )
 
 
@@ -3878,7 +3937,7 @@ def cmd_plugin_set_param_display(a):
 
     `plugin.set_param` takes a normalised 0..1 with no published mapping to
     anything a musician would say. This takes the number the plug-in itself
-    shows -- 20 for "20 ms", -18 for "-18.0 dB", 4000 for "4.0kHz" -- and
+    shows -- 20 for "20 ms", -18 for "-18.0 dB" -- and
     searches the control until its own readback says that is where it is.
     The curve is never assumed; FL's readback is the authority.
 
@@ -3891,6 +3950,7 @@ def cmd_plugin_set_param_display(a):
         param         index, or a name/display string
         target        the number to land on, in the plug-in's own units
         tolerance     optional; defaults to 2% of the target, floor 0.01
+        target_unit   optional; normalizes Hz/kHz and ms/seconds displays
 
     Only the numeric part of a display is matched, so this cannot set a
     control whose display is pure text ("Chromatic", "Low Male"). Those are
@@ -3906,6 +3966,7 @@ def cmd_plugin_set_param_display(a):
         )
     parameter = _lean_parameter_selector(a)
     target = _lean_finite_number(a, "target", -1e6, 1e6)
+    target_unit = _normalize_display_unit(a.get("target_unit"))
     tol = a.get("tolerance")
     tol = (
         max(0.01, abs(target) * 0.02)
@@ -3932,7 +3993,7 @@ def cmd_plugin_set_param_display(a):
                 index, track, slot, use_global
             ), ""
         ) or ""
-        number = _first_float(text)
+        number = _display_value_in_unit(text, target_unit) if target_unit is not None else _first_float(text)
         if number is None:
             raise ValueError(
                 "parameter %d displays %r, which has no number to search on; "
@@ -3956,18 +4017,36 @@ def cmd_plugin_set_param_display(a):
             lambda: plugins.getPluginName(track, slot, False, use_global), "plugin"
         ), index)
     )
-    normalised, landed, within = yield from _solve_across_ticks(
-        read,
-        lambda v: plugins.setParamValue(
-            max(0.0, min(1.0, v)), index, track, slot, PICKUP_NONE, use_global
-        ),
-        target,
-        tol,
-    )
-    yield
-    after_display = _safe(
-        lambda: plugins.getParamValueString(index, track, slot, use_global), ""
-    ) or ""
+    try:
+        normalised, landed, within = yield from _solve_across_ticks(
+            read,
+            lambda v: plugins.setParamValue(
+                max(0.0, min(1.0, v)), index, track, slot, PICKUP_NONE, use_global
+            ),
+            target,
+            tol,
+        )
+        yield
+        after_display = _safe(
+            lambda: plugins.getParamValueString(index, track, slot, use_global), ""
+        ) or ""
+        if target_unit is not None:
+            landed = _display_value_in_unit(after_display, target_unit)
+            within = abs(landed - target) <= tol
+    except ValueError as error:
+        if target_unit is None or before_value is None:
+            raise
+        # A control may switch to an unsupported text/unit mode while being
+        # probed. Restore its original normalized value and report that result.
+        unused, restored = yield from _write_and_read_back(
+            lambda: [
+                plugins.setParamValue(before_value, index, track, slot, PICKUP_NONE, use_global),
+                plugins.setParamValue(before_value, index, track, slot, PICKUP_NONE, use_global),
+            ],
+            lambda: plugins.getParamValue(index, track, slot, use_global),
+            lambda got: _near(got, before_value, PARAM_NOOP_TOLERANCE),
+        )
+        raise ValueError("%s; original control value %s after unit search stopped" % (error, "restored" if restored else "could not be restored"))
     return {
         "command": "plugin.set_param_display",
         "undo_point_created": undone,
@@ -3982,6 +4061,7 @@ def cmd_plugin_set_param_display(a):
         "matched_on": matched_on,
         "matched_text": matched_text,
         "requested": target,
+        "requested_unit": target_unit,
         "tolerance": tol,
         "landed_on": landed,
         "normalised": normalised,
@@ -5198,6 +5278,20 @@ def cmd_sequencer_set(a):
 
 def _release_active_note(active):
     """Send one registered note-off, retaining failures for deinit cleanup."""
+    if (
+        active.get("project_invalidated")
+        or active.get("session_fingerprint", SESSION_FINGERPRINT)
+        != SESSION_FINGERPRINT
+    ):
+        # Channel indices may now refer to instruments in another project.
+        # Discard old cleanup debt instead of sending note-offs to that target.
+        try:
+            _active_notes.remove(active)
+        except ValueError:
+            pass
+        active["project_invalidated"] = True
+        active["release_pending"] = False
+        return False
     try:
         channels.midiNoteOn(
             active["channel"], active["note"], 0, active["midi_channel"]
@@ -5263,6 +5357,7 @@ def cmd_channel_trigger_note(a):
             )
 
     active = {
+        "session_fingerprint": SESSION_FINGERPRINT,
         "channel": index,
         "note": note,
         "midi_channel": midi_channel,
@@ -5381,6 +5476,19 @@ def _arrangement_marker_names():
             break
         names.append(name)
     return names
+
+
+def cmd_creative_piano_roll_target(a):
+    """Observe the current editor target without changing selection or notes."""
+    if a:
+        raise ValueError("creative.piano_roll_target accepts no arguments")
+    window_id = getattr(midi, "widPianoRoll", None)
+    return {
+        "channel_indices": _selected_channels(),
+        "pattern_number": _strict_integer(patterns.patternNumber(), "current pattern"),
+        "piano_roll_visible": _safe(lambda: bool(ui.getVisible(window_id)), None),
+        "session_fingerprint": SESSION_FINGERPRINT,
+    }
 
 
 def cmd_creative_prepare_piano_roll(a):
@@ -5770,6 +5878,7 @@ HANDLERS = {
     "channel.trigger_note": cmd_channel_trigger_note,
     "channels.rerollLoopStarterLoop": cmd_channels_reroll_loop_starter_loop,
     "creative.prepare_piano_roll": cmd_creative_prepare_piano_roll,
+    "creative.piano_roll_target": cmd_creative_piano_roll_target,
     "arrangement.add_markers": cmd_arrangement_add_markers,
     "automation.record_value": cmd_automation_record_value,
 }
@@ -5786,6 +5895,7 @@ class _Job:
         self.cmd = cmd
         self.client_session = client_session
         self.request_token = request_token
+        self.session_fingerprint = SESSION_FINGERPRINT
         self.chunks = 0
 
 
@@ -5848,8 +5958,14 @@ def _dispatch(req):
             "ok": False,
             "error": "bridge request args must be a JSON object",
         })
-    allowed = READ_ONLY_COMMANDS | SESSION_CONTROL_COMMANDS
-    lock_reason = "bridge is locked read-only"
+    if _project_loading and cmd != "ping":
+        return response({
+            "id": rid,
+            "ok": False,
+            "error": "FL Studio is loading a project; wait for loading to finish and read the connection again",
+        })
+    allowed = READ_ONLY_COMMANDS | SESSION_CONTROL_COMMANDS | NAVIGATION_COMMANDS
+    lock_reason = "bridge is locked read-only for project edits; editor navigation is available"
     if LEAN_WRITES_ENABLED:
         allowed = allowed | LEAN_WRITE_COMMANDS
         lock_reason = (
@@ -5890,6 +6006,17 @@ def _advance_jobs():
     if not _jobs:
         return
     job = _jobs.pop(0)
+    if _project_loading or job.session_fingerprint != SESSION_FINGERPRINT:
+        try:
+            job.gen.close()
+        except Exception:
+            pass
+        _queue(job.handle, _correlated(
+            {"id": job.rid, "ok": False,
+             "error": "the project changed while this command was pending; its outcome is unknown and it was not resumed"},
+            job.client_session, job.request_token,
+        ))
+        return
     if not _transport.alive(job.handle):
         try:
             job.gen.close()
@@ -6052,6 +6179,12 @@ class _SocketTransport:
             self.clients.remove(c)
             _log("client disconnected (%d left)" % len(self.clients))
 
+    def project_changed(self):
+        # Disconnect buffered requests/replies for the old project while
+        # keeping the listener available for a fresh handshake.
+        for client in list(self.clients):
+            self._drop(client)
+
     def close(self):
         for c in list(self.clients):
             c.close()
@@ -6129,6 +6262,9 @@ class _FileTransport:
 
     def alive(self, handle):
         return True          # a request file has no connection to lose
+
+    def project_changed(self):
+        self._clear_stale()
 
     def poll(self):
         out = []
@@ -6385,6 +6521,14 @@ class _MidiTransport:
         """Drop frames for a requester that no longer owns the MIDI bus."""
         self.outbox = []
 
+    def project_changed(self):
+        # An assembled request, unfinished SysEx request, or old response must
+        # not survive into the new project, even when its wire ID is reused.
+        self.partial = {}
+        self.partial_bytes = 0
+        self.ready = []
+        self.outbox = []
+
     def _send(self, tag, mid, chunks):
         total = len(chunks)
         if (total < 1 or total > MAX_SYSEX_RESPONSE_PARTS
@@ -6513,6 +6657,70 @@ def OnInit():
         ui.setHintMsg("Universal Bridge ready (%s)" % _transport.name)
     except Exception:
         pass
+
+
+def _rotate_project_epoch():
+    global SESSION_FINGERPRINT, _project_epoch
+    _project_epoch += 1
+    SESSION_FINGERPRINT = "%016x%016x" % (
+        os.getpid() & 0xFFFFFFFFFFFFFFFF,
+        (_SESSION_NONCE + _project_epoch) & 0xFFFFFFFFFFFFFFFF,
+    )
+
+
+def OnProjectLoad(status):
+    """Invalidate pending work when FL starts or finishes loading a project.
+
+    Image-Line documents PL_Start=0, PL_LoadOk=100 and PL_LoadError=101:
+    https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/midi_scripting.htm#OnProjectLoadStatus
+    Loading failure also changes the epoch: the surviving project may be
+    partial, so old target observations cannot establish its current state.
+    """
+    global _project_loading, LEAN_WRITES_ENABLED, WRITE_MODE_ORIGIN
+    if type(status) is not int or status not in (0, 100, 101):
+        return
+    try:
+        _project_loading = True
+        LEAN_WRITES_ENABLED = False
+        WRITE_MODE_ORIGIN = "disabled"
+        abandoned = list(_jobs)
+        del _jobs[:]
+        if status != 0:
+            # If FL sends a completion without this script seeing PL_Start,
+            # generator cleanup must not touch indices in the loaded project.
+            _rotate_project_epoch()
+        for job in abandoned:
+            try:
+                job.gen.close()
+            except Exception:
+                pass
+        if status == 0:
+            # Close live auditions while the departing project is still at
+            # the start of its transition. Never carry a failed note-off into
+            # the next project's reused channel indices.
+            _cleanup_active_notes(force_all=True)
+        for active in list(_active_notes):
+            active["project_invalidated"] = True
+        del _active_notes[:]
+        if status == 0:
+            _rotate_project_epoch()
+        reset_transport = getattr(_transport, "project_changed", None)
+        if reset_transport is not None:
+            reset_transport()
+        for job in abandoned:
+            try:
+                _queue(job.handle, _correlated(
+                    {"id": job.rid, "ok": False,
+                     "error": "the project changed while this command was in flight; its outcome is unknown and it was not resumed"},
+                    job.client_session, job.request_token,
+                ))
+            except Exception:
+                pass
+        _project_loading = status == 0
+    except Exception:
+        # Leave loading active if cleanup fails; ping stays available and a
+        # later load completion can establish a fresh usable project epoch.
+        _log(traceback.format_exc(limit=4))
 
 
 def OnDeInit():

@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Iterable, Sequence
 
+from .direction import resolve_musical_direction
 from .models import (
     MAX_ROLE_COUNT,
     SoundCandidate,
@@ -226,7 +227,6 @@ def _anchor_after_selection(role: SoundRoleRequest) -> bool:
         "main_lead",
         "primary_bass",
         "sub_bass",
-        "vocal_chop",
         "drums",
     } or role.continuity_priority >= 0.70
 
@@ -329,8 +329,16 @@ def plan_palette(
     request = _coerce_request(request)
     all_candidates = _coerce_inventory(inventory)
     existing_assignments = _state_assignments(existing)
-    roles = tuple(request.roles)
     request_digest = canonical_digest(request.model_dump(mode="json", exclude_none=False))
+    direction = resolve_musical_direction(request)
+    if not request.roles and existing_assignments and request.preserve_existing_roles:
+        direction = direction.model_copy(update={
+            "roles": tuple(SoundRoleRequest(role_id=item.role_id) for item in existing_assignments),
+            "roles_inferred": False,
+            "rationale": "Existing palette roles were retained because no replacement roles were supplied. Genre notes remain suggestions.",
+        })
+    roles = direction.roles
+    request = request.model_copy(update={"roles": roles})
     inventory_fingerprint = _inventory_fingerprint(inventory, all_candidates)
     inventory_session = (
         inventory.session_fingerprint
@@ -347,6 +355,7 @@ def plan_palette(
             inventory_session_fingerprint=inventory_session,
             project_key=request.project_key,
             policy=request.selection_policy,
+            musical_direction=direction,
             preset_discovery_coverage=(
                 ()
                 if not isinstance(inventory, SoundInventory)
@@ -369,6 +378,7 @@ def plan_palette(
     preserved_context: list[SoundPaletteAssignment] = list(existing_assignments)
     blockers: list[str] = []
     warnings: list[str] = list(inventory.warnings) if isinstance(inventory, SoundInventory) else []
+    warnings.extend(direction.warnings)
     conflicts: list[str] = []
     anchor_roles: list[str] = []
     flexible_roles: list[str] = []
@@ -447,6 +457,7 @@ def plan_palette(
         inventory_session_fingerprint=inventory_session,
         project_key=request.project_key,
         policy=request.selection_policy,
+        musical_direction=direction,
         assignments=tuple(selected_assignments),
         preset_discovery_coverage=(
             ()

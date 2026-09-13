@@ -196,9 +196,10 @@ def main() -> None:
         paths.append(path)
 
     structural_path = OUTPUT / "creation-review-structural-v1.json"
-    structural_path.write_text(
-        json.dumps(_structural_fixture(), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    # JSON fixtures use LF on every host, including Windows. Binary writes
+    # prevent platform newline conversion from changing fixture identity.
+    structural_path.write_bytes(
+        (json.dumps(_structural_fixture(), indent=2, sort_keys=True) + "\n").encode("utf-8")
     )
     manifest = {
         "schema_version": "1.0",
@@ -232,9 +233,8 @@ def main() -> None:
             "duration_mismatch.wav": ["one_second_shorter"],
         },
     }
-    (OUTPUT / "fixture_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    (OUTPUT / "fixture_manifest.json").write_bytes(
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
     )
 
 

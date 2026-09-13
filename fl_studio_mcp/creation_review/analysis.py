@@ -143,7 +143,8 @@ def _onset_transient_features(loaded: audio.Loaded) -> dict[str, Any]:
         window="hann",
         nperseg=nperseg,
         noverlap=nperseg - hop,
-        boundary=None,
+        # SciPy supports None; its bundled signature annotates only str.
+        boundary=None,  # pyright: ignore[reportArgumentType]
         padded=False,
     )
     magnitude = np.log1p(100.0 * np.abs(spectrum))

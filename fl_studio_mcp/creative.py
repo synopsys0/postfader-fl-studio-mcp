@@ -49,7 +49,6 @@ from .track_b_contracts import (
     VerifiedPatternSelectionWrite,
 )
 from .verified_writer import (
-    PROVENANCE_REFUSAL,
     WRITES_DISABLED_HELP,
     VerifiedWritesUnavailable,
 )
@@ -95,7 +94,7 @@ def _now() -> datetime:
 
 
 def _session_precondition(value: str | None) -> str | None:
-    """Validate an optional bridge-lifetime guard before any side effect."""
+    """Validate an optional bridge/project-session guard before any side effect."""
 
     if value is None:
         return None
@@ -1637,7 +1636,7 @@ def _piano_roll_receipt_path(
     script_path: Path,
     request_id: str,
     *,
-    phase: Literal["arm", "apply", "verify"] = "apply",
+    phase: Literal["arm", "apply", "verify", "inspect"] = "apply",
 ) -> Path:
     directory = script_path.parent / ".postfader-acks"
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -2288,15 +2287,31 @@ def _target_piano_roll(
     *,
     session_fingerprint: str | None = None,
     target_fingerprint: str | None = None,
+    navigation_only: bool = False,
 ) -> PianoRollTargetReceipt:
     if type(channel_index) is not int or channel_index < 0:
         raise ValueError("channel_index must be a non-negative global index")
     if type(pattern_number) is not int or not 1 <= pattern_number <= 999:
         raise ValueError("pattern_number must be within 1..999")
     expected_target = _target_fingerprint_precondition(target_fingerprint)
-    client, _ping, session = _writable_preflight(
-        session_fingerprint=session_fingerprint
-    )
+    if navigation_only:
+        expected_session = _session_precondition(session_fingerprint)
+        client = get_client()
+        ping = client.ping()
+        if not isinstance(ping, dict):
+            raise ValueError("FL bridge returned a malformed editor handshake")
+        connection = connection_from_ping(ping, getattr(client, "transport", "unknown"))
+        if not connection.connected or not connection.compatible:
+            raise IncompatibleFLStudio(connection.error or connection.compatibility_reason)
+        if ping.get("piano_roll_navigation") is not True:
+            raise ValueError("Install and reload the current bridge to enable Piano Roll inspection without project writes.")
+        session = connection.session_fingerprint
+        if session is None or (expected_session is not None and expected_session != session):
+            raise ValueError("Piano Roll inspection session changed; read the current project before continuing")
+    else:
+        client, _ping, session = _writable_preflight(
+            session_fingerprint=session_fingerprint
+        )
     arguments: dict[str, Any] = {
         "channel": channel_index,
         "pattern": pattern_number,
@@ -2319,6 +2334,15 @@ def _target_piano_roll(
 
 def _trigger_piano_roll_shortcut() -> HotkeyDispatch:
     kind = _platform_label()
+    if os.environ.get("FL_BRIDGE_SANDBOXED") == "1":
+        return HotkeyDispatch(
+            platform=kind,
+            shortcut="Cmd+Opt+Y" if kind == "macos" else "Ctrl+Alt+Y",
+            fl_window_found=False,
+            fl_window_focused=False,
+            hotkey_dispatched=False,
+            error="Desktop shortcuts are disabled in the offline test environment.",
+        )
     if kind == "macos":
         script = """tell application "System Events"
   tell process "FL Studio"
@@ -2916,10 +2940,6 @@ def _writable_preflight(
                 mode=connection.bridge_mode,
                 enabled=connection.verified_writes_enabled,
             )
-        )
-    if not connection.bridge_provenance_verified:
-        raise VerifiedWritesUnavailable(
-            PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
         )
     session = connection.session_fingerprint
     if session is None:

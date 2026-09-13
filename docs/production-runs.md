@@ -87,11 +87,11 @@ The normal high-level flow is:
 2. `postfader_execute_run` accepts the request and plan, validates them again,
    captures the current session fingerprint, enables the existing session write
    gate once when authorized, and executes the bounded plan.
-3. `postfader_get_run` returns the current process-local state and concise
-   summary.
+3. `postfader_get_run` returns current or journaled state and a concise
+   summary. `postfader_list_runs` finds recent run IDs after an MCP restart.
 4. `postfader_continue_run` accepts additional operations, a plan delta, or a
    replacement for the not-yet-executed remainder. Completed receipts cannot
-   be rewritten.
+   be rewritten. Use `delta={"mode":"resume"}` to continue the saved plan.
 5. `postfader_stop_run` prevents future operations. It does not undo changes
    that already completed.
 
@@ -198,12 +198,25 @@ validation also distinguishes malformed plans, operations
 unsupported by PostFader, operations not exposed by the current FL Studio API,
 unavailable project targets, and temporary setup or session blockers.
 
-Production Runs reuse the existing bridge provenance, session-fingerprint,
+Production Runs reuse the existing protocol/capability, session-fingerprint,
 write-mode, verified-writer, creative, Piano Roll, and verified-batch
 boundaries. A `plan_only` run never enables writes. An authorized mutating run
 enables the in-memory write gate once and carries the captured session
-fingerprint through its operations; a session reload or changed target stops
+fingerprint through its operations; a script reload, project load, or changed target stops
 the run before the next mutation.
+
+Initial setup blockers can be resolved and continued without recreating the
+run. Before any operation starts, continuation refreshes setup facts so a
+newly loaded instrument or completed Piano Roll setup can be used. Once work
+starts, completed receipts and project checkpoints remain authoritative.
+Playback, record arming, metronome, pre-count and loop toggles alone do not
+invalidate a checkpoint. An internal failure with an unknown mutation outcome
+cannot be resumed by replaying the same operation.
+
+Caller-supplied expected session and project observations are checked on every
+execution path. Nested revisions inherit the authorized task unless the
+operation explicitly declines authorization; a read-only plan need not carry
+a second authorization flag to be applied later.
 
 Sound Palette application revalidates the loaded target and session before
 each exact preset sequence. It applies assignments in deterministic role order,
@@ -221,29 +234,45 @@ the existing later-tick readback boundary. Missing effects or unresolved
 controls remain visible as `dry_missing_effects` or partial processing; an
 Atlas product by itself never creates a processing target.
 
-## Process-local lifetime
+## Durable run journal
 
-Run state is held in a bounded, thread-safe registry in the PostFader MCP
-process. Older terminal records may be evicted deterministically when the
-registry reaches its limit. Runs are not stored in a database, do not contain
-credentials, and do not survive an MCP process restart. If `postfader_get_run`
-cannot find an ID, it reports that the run may belong to a previous process or
-may have expired from the bounded registry.
+Production Runs retain their typed request, plan, generated outputs and receipts
+in a local SQLite journal. The default file is
+`Settings/PostFader/production-runs-v1.sqlite3` under the FL Studio user-data
+folder; `POSTFADER_PRODUCTION_RUN_PATH` overrides it. The database opens lazily
+when a run is created or looked up. No audio or project files are copied into it.
+
+After restarting MCP, call `postfader_list_runs`, inspect a selected run with
+`postfader_get_run`, and continue its remaining plan with
+`postfader_continue_run(run_id=..., delta={"mode":"resume"})`. Recovery rebuilds
+typed output references and rechecks the live session and targets. It does not
+restore write-mode ownership or reuse cached readiness. Piano Roll setup and
+process-local Sound Selection dependencies may need refreshing.
+
+Each operation is marked in progress before dispatch. A receipt and its output
+are committed before the next operation starts. If the process ends while an
+operation is in progress, recovery records an unknown outcome and prevents
+replay. Journal write failure also stops progression. Concurrent MCP processes
+use revision checks so a stale writer cannot overwrite newer progress.
+
+The in-memory registry remains bounded; evicting a terminal record from memory
+does not remove its journal entry. Run retention does not save the FL project.
 
 PostFader changes the open project but does not save it automatically. Save a
 version manually in FL Studio after reviewing the receipts and warnings.
 
 Sound Selection chooses only from generators and effects already loaded in the
 current project. Atlas-only products can be recommended but cannot become run
-assignments, and PostFader cannot insert, remove, or replace plug-ins through
-the supported backend. Loop Starter is a separate explicit source strategy;
+assignments. On macOS the separate `plugins_load` host tool can add a missing
+instrument or effect before planning the run. Removal and replacement remain
+unavailable. Loop Starter is a separate explicit source strategy;
 its reroll has dispatch-only identity and is not a verified palette assignment.
 
 ## FL Studio boundaries
 
 Production Runs cannot add capabilities that FL Studio's public MIDI scripting
 API does not expose. In particular, the MVP does not create, move, or delete
-Playlist clips; render or save a project; insert, remove, or reorder plug-ins;
+Playlist clips; render the live project or save a project; insert, remove, or reorder plug-ins;
 read live audio buffers; or edit/read automation-clip points.
 
 The closed plan schema includes validation-only markers for Playlist clip
@@ -254,17 +283,26 @@ the executor never dispatches them.
 Piano Roll writes and transforms use FL Studio's separate `.pyscript` runtime.
 The one-time PostFader Apply setup must be completed before an automatic run
 can dispatch the operation. The controller bridge can verify the selected
-channel and pattern and report hotkey delivery, but it cannot read the score
-back; `application_verified` therefore remains false. If setup is missing, the
-run reports one concise setup blocker and does not repeat it for every note
-operation.
+channel and pattern and report hotkey delivery. The separate Piano Roll
+runtime returns application and persistence receipts for note writes; only
+matching receipts set `application_verified=true`. Missing receipts leave the
+outcome unknown. Transforms remain dispatch-only and unverified. The separate
+`piano_roll_read_notes` tool can inspect the current score without enabling
+musical writes, but that fresh observation does not verify a prior transform.
+If setup is missing, the run reports one concise setup blocker and does not
+repeat it for every note operation.
 
 Marker names can be read back, but marker times cannot. Automation helpers can
 verify the controlled value and capture conditions, but not the new automation
 point. A send level requires an existing route. Plug-in operations target
 already loaded, supported parameters; unprofiled controls remain unsafe to
-modify. Rendering, project saving, plug-in insertion, Playlist clip creation,
-and live-audio claims remain explicitly unsupported.
+modify. Live-project rendering, project saving, Playlist clip creation,
+and live-audio claims remain explicitly unsupported. The separate
+`postfader_render_saved_project` host tool renders an already-saved `.flp`
+through FL Studio's command-line exporter; it is not a live Production Run operation.
+Likewise, the macOS `plugins_load` host tool can add an instrument or effect
+before a run, then the run can use its verified inventory target. Plug-in
+insertion is not yet an executable Production Run operation.
 
 ## Maintainer live acceptance
 

@@ -19,7 +19,7 @@ from typing import Any, Literal, Protocol, cast
 from pydantic import TypeAdapter
 
 from .bridge_client import BridgeError, get_client
-from .contracts import ConnectionInfo
+from .contracts import ConnectionInfo, display_value_in_unit, normalize_display_unit
 from .readonly_inspector import IncompatibleFLStudio, connection_from_ping
 from .track_b_contracts import (
     FL_COLOR_WORD_MAX,
@@ -669,10 +669,11 @@ class _ConnectionController:
                     enabled=connection.verified_writes_enabled,
                 )
             )
-        if not connection.bridge_provenance_verified:
+        if connection.session_fingerprint is None:
             raise TrackBMutationsUnavailable(
-                "Track B mutations require a running bridge whose source SHA-256 "
-                "matches the packaged bridge; install and reload it before writing."
+                "session precondition failed: the running bridge did not report "
+                "a valid session fingerprint; "
+                "reload the bridge before changing FL Studio state"
             )
         if session_fingerprint is not None:
             if (
@@ -1515,6 +1516,8 @@ class TrackBController(_ConnectionController):
         expected_before: TrackBContract | None,
     ) -> dict[str, Any]:
         connection = self._require_writable(session_fingerprint)
+        if command == "plugin.set_param_display" and arguments.get("target_unit") is not None and not connection.plugin_display_units:
+            raise TrackBMutationsUnavailable("the running bridge does not support display-unit conversion; reload the current bridge")
         arguments.update(
             _mutation_arguments(
                 session_fingerprint=session_fingerprint,
@@ -3080,6 +3083,7 @@ class TrackBController(_ConnectionController):
         *,
         parameter: int | str,
         target_value: float,
+        target_unit: str | None = None,
         target: PluginTarget | dict[str, Any] | None = None,
         track_index: int | None = None,
         slot_index: int | None = None,
@@ -3096,6 +3100,7 @@ class TrackBController(_ConnectionController):
         )
         selector = _plugin_parameter_selector(parameter)
         displayed = _number(target_value, "target_value", low=-1e6, high=1e6)
+        unit = normalize_display_unit(target_unit)
         tolerance_value = (
             None
             if tolerance is None
@@ -3103,6 +3108,8 @@ class TrackBController(_ConnectionController):
         )
         arguments = _plugin_bridge_arguments(resolved)
         arguments.update(param=selector, target=displayed)
+        if unit is not None:
+            arguments["target_unit"] = unit
         if tolerance_value is not None:
             arguments["tolerance"] = tolerance_value
         raw = self._call(
@@ -3130,7 +3137,9 @@ class TrackBController(_ConnectionController):
             raise ValueError(
                 "FL bridge returned a contradictory plug-in display tolerance"
             )
-        after_display_value = _first_displayed_number(after.display_text)
+        if unit is not None and raw.get("requested_unit") != unit:
+            raise ValueError("FL bridge returned a contradictory plug-in display unit")
+        after_display_value = display_value_in_unit(after.display_text, unit) if unit is not None else _first_displayed_number(after.display_text)
         landed_matches = (
             landed is not None
             and abs(landed - displayed) <= reported_tolerance
@@ -3166,6 +3175,7 @@ class TrackBController(_ConnectionController):
                 else str(raw.get("matched_text"))
             ),
             requested_value=displayed,
+            requested_unit=unit,
             tolerance=reported_tolerance,
             landed_value=landed,
             normalized_value=_optional_float(raw.get("normalised")),

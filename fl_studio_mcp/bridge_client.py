@@ -178,6 +178,7 @@ IDEMPOTENT_READ_COMMANDS = frozenset({
     "patterns.list",
     "patterns.find_empty",
     "playlist.list",
+    "creative.piano_roll_target",
 })
 MAX_IDEMPOTENT_READ_RECONNECTS = 1
 RECONNECT_DELAY_SECONDS = 0.05

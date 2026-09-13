@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import secrets
 import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast, get_args
 
 from pydantic import ConfigDict, Field, StrictBool, model_validator
 
@@ -126,6 +127,11 @@ from .creative import (
 )
 from .performance import TrackBController, TrackBInspector
 from .plugin_atlas import load_bundled_registry
+from .production_run_persistence import (
+    LocalProductionRunStore,
+    ProductionRunConflictError,
+    ProductionRunStoreError,
+)
 from .readonly_inspector import ReadOnlyInspector
 from .sound_selection.executor import (
     SoundSelectionApplyResult,
@@ -194,6 +200,8 @@ ChangeCategory: TypeAlias = Literal[
     "sound_selection",
     "review",
 ]
+MAX_CHANGE_CATEGORIES = len(get_args(ChangeCategory))
+
 TargetKind: TypeAlias = Literal["mixer_track", "channel", "pattern", "playlist_track"]
 BlockerCategory: TypeAlias = Literal[
     "malformed_plan",
@@ -260,7 +268,7 @@ class ProductionScope(ProductionRunModel):
         default_factory=tuple, max_length=MAX_TARGETS
     )
     additional_allowed_changes: tuple[ChangeCategory, ...] = Field(
-        default_factory=tuple, max_length=12
+        default_factory=tuple, max_length=MAX_CHANGE_CATEGORIES
     )
 
     @model_validator(mode="after")
@@ -337,7 +345,9 @@ class ProductionRunRequest(ProductionRunModel):
     brief: str = Field(min_length=1, max_length=MAX_RUN_TEXT)
     scope: ProductionScope
     preserve: ProductionPreservation = Field(default_factory=ProductionPreservation)
-    allowed_changes: tuple[ChangeCategory, ...] = Field(min_length=1, max_length=12)
+    allowed_changes: tuple[ChangeCategory, ...] = Field(
+        min_length=1, max_length=MAX_CHANGE_CATEGORIES
+    )
     creative_direction: CreativeDirection = Field(default_factory=CreativeDirection)
     completion_target: str = Field(min_length=1, max_length=MAX_RUN_TEXT)
     interaction_policy: InteractionPolicy = "execute_once"
@@ -922,7 +932,7 @@ class ApplyCreationRevisionOperation(ProductionOperationBase):
     review_session: ReviewSessionSelector
     plan: RevisionPlan | OperationOutputReference
     request: RevisionRequest
-    authorized_to_modify: StrictBool
+    authorized_to_modify: StrictBool | None = None
     expected_session_fingerprint: str | None = Field(
         default=None, pattern=SESSION_FINGERPRINT_PATTERN
     )
@@ -1249,7 +1259,9 @@ class ProductionRunValidation(ProductionRunModel):
     unsupported_operations: tuple[str, ...] = Field(
         default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
     )
-    expected_mutation_categories: tuple[ChangeCategory, ...] = Field(max_length=12)
+    expected_mutation_categories: tuple[ChangeCategory, ...] = Field(
+        max_length=MAX_CHANGE_CATEGORIES
+    )
     session_fingerprint: str | None = Field(
         default=None, pattern=SESSION_FINGERPRINT_PATTERN
     )
@@ -1321,7 +1333,8 @@ class ProductionRunState(ProductionRunModel):
     automatic_replay_attempted: Literal[False] = False
     rollback_attempted: Literal[False] = False
     project_saved: Literal[False] = False
-    process_local: Literal[True] = True
+    process_local: bool = True
+    recovered_at: datetime | None = None
 
     @model_validator(mode="after")
     def validate_progress(self) -> "ProductionRunState":
@@ -1381,7 +1394,7 @@ class ProductionRunResult(ProductionRunModel):
 
 class ProductionRunLookup(ProductionRunModel):
     found: bool
-    process_local: Literal[True] = True
+    process_local: bool = True
     message: str = Field(min_length=1, max_length=512)
     state: ProductionRunState | None = None
 
@@ -1393,7 +1406,7 @@ class ProductionRunLookup(ProductionRunModel):
 
 
 class ProductionRunSnapshot(ProductionRunModel):
-    """Immutable process-local source snapshot for Creation Review.
+    """Immutable source snapshot for Creation Review.
 
     The public get tool intentionally returns only run state. Review Sessions
     also need the original closed plan so section markers, generated roles, and
@@ -1402,7 +1415,7 @@ class ProductionRunSnapshot(ProductionRunModel):
     """
 
     found: bool
-    process_local: Literal[True] = True
+    process_local: bool = True
     message: str = Field(min_length=1, max_length=512)
     state: ProductionRunState | None = None
     plan: ProductionRunPlan | None = None
@@ -1416,7 +1429,7 @@ class ProductionRunSnapshot(ProductionRunModel):
 
 
 class ProductionRunDelta(ProductionRunModel):
-    mode: Literal["append", "replace_remaining"] = "replace_remaining"
+    mode: Literal["append", "replace_remaining", "resume"] = "replace_remaining"
     operations: tuple[ProductionOperation, ...] = Field(
         default_factory=tuple, max_length=MAX_PRODUCTION_OPERATIONS
     )
@@ -1426,7 +1439,29 @@ class ProductionRunDelta(ProductionRunModel):
     def require_append_operations(self) -> "ProductionRunDelta":
         if self.mode == "append" and not self.operations:
             raise ValueError("append continuation needs at least one operation")
+        if self.mode == "resume" and self.operations:
+            raise ValueError("resume uses the saved plan and does not accept operations")
         return self
+
+
+class ProductionRunSummary(ProductionRunModel):
+    """Compact discoverable run metadata, without generated assets or receipts."""
+
+    run_id: str
+    brief: str
+    status: RunStatus
+    updated_at: datetime
+    completed_count: int
+    total_operations: int
+    process_local: bool
+    recovered_at: datetime | None = None
+
+
+class _RunCheckpoint(ProductionRunModel):
+    version: Literal[1] = 1
+    plan: ProductionRunPlan
+    state: ProductionRunState
+    in_flight_operation_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1611,7 +1646,9 @@ def _project_state_digest(project: ProjectSummary) -> str:
 
     This is deliberately not described as a full project-content hash. It
     catches session-local changes visible through project metadata, counts,
-    tempo, transport, dirty state, and undo-history coordinates.
+    tempo, song structure, dirty state, and undo-history coordinates.
+    Audition controls are excluded: playback, recording arming, metronome,
+    pre-count and loop selection do not establish a different edit target.
     """
 
     payload = {
@@ -1628,14 +1665,9 @@ def _project_state_digest(project: ProjectSummary) -> str:
         "undo_history_position": project.undo_history_position,
         "undo_history_count": project.undo_history_count,
         "transport": {
-            "playing": project.transport.playing,
-            "recording": project.transport.recording,
-            "metronome_enabled": project.transport.metronome_enabled,
-            "precount_enabled": project.transport.precount_enabled,
             "time_signature_numerator": project.transport.time_signature_numerator,
             "tempo_bpm": project.transport.tempo_bpm,
             "song_length_ms": project.transport.song_length_ms,
-            "loop_mode": project.transport.loop_mode,
         },
     }
     encoded = json.dumps(
@@ -2110,6 +2142,35 @@ def _bounded_warnings(warnings: list[str] | tuple[str, ...]) -> tuple[str, ...]:
         *tuple(warnings[: MAX_RUN_WARNINGS - 1]),
         f"{omitted} additional warnings were omitted from this bounded report.",
     )
+
+
+def _expected_run_state_blockers(
+    request: ProductionRunRequest,
+    session_fingerprint: str | None,
+    project_state_digest: str | None,
+) -> list[ProductionBlocker]:
+    """Honor caller-supplied observations consistently across execution paths."""
+
+    blockers: list[ProductionBlocker] = []
+    if (
+        request.expected_session_fingerprint is not None
+        and session_fingerprint != request.expected_session_fingerprint
+    ):
+        blockers.append(_blocker(
+            "setup_or_session",
+            "expected_session_changed",
+            "The open FL Studio session no longer matches the session captured for this run.",
+        ))
+    if (
+        request.expected_project_state_digest is not None
+        and project_state_digest != request.expected_project_state_digest
+    ):
+        blockers.append(_blocker(
+            "setup_or_session",
+            "expected_project_changed",
+            "The open project state no longer matches the checkpoint captured for this run.",
+        ))
+    return blockers
 
 
 def _validate_scope_and_authorization(
@@ -2648,13 +2709,6 @@ def _resolve_named_target(
     return matches[0], None
 
 
-def _needs_named_facts(request: ProductionRunRequest) -> bool:
-    return any(
-        target.name is not None
-        for target in (*request.scope.targets, *request.preserve.targets)
-    )
-
-
 def _validate_live_targets(
     request: ProductionRunRequest,
     operations: list[ProductionOperation],
@@ -2667,7 +2721,6 @@ def _validate_live_targets(
 
     blockers: list[ProductionBlocker] = []
     pattern_inventory = None
-    pattern_inventory_attempted = False
     needs_pattern_inventory = any(
         target.kind == "pattern"
         for operation in operations
@@ -2677,7 +2730,6 @@ def _validate_live_targets(
         for target in (*request.scope.targets, *request.preserve.targets)
     )
     if needs_pattern_inventory:
-        pattern_inventory_attempted = True
         try:
             pattern_inventory = track_inspector.list_patterns()
         except Exception as exc:
@@ -2723,35 +2775,41 @@ def _validate_live_targets(
     channel_names: dict[int, str] = {}
     pattern_names: dict[int, str] = {}
     playlist_names: dict[int, str] = {}
-    if _needs_named_facts(request):
+    named_kinds = {
+        target.kind
+        for target in (*request.scope.targets, *request.preserve.targets)
+        if target.name is not None
+    }
+    for kind in sorted(named_kinds):
         try:
-            mixer_names = {
-                item.index: item.name
-                for item in inspector.list_mixer_tracks(
-                    only_used=False, include_peaks=False
-                ).tracks
-            }
-            channel_names = {
-                item.channel_index: item.name
-                for item in track_inspector.list_channels().channels
-            }
-            if pattern_inventory is None and not pattern_inventory_attempted:
-                pattern_inventory = track_inspector.list_patterns()
-            if pattern_inventory is not None:
+            if kind == "mixer_track":
+                mixer_names = {
+                    item.index: item.name
+                    for item in inspector.list_mixer_tracks(
+                        only_used=False, include_peaks=False
+                    ).tracks
+                }
+            elif kind == "channel":
+                channel_names = {
+                    item.channel_index: item.name
+                    for item in track_inspector.list_channels().channels
+                }
+            elif kind == "pattern" and pattern_inventory is not None:
                 pattern_names = {
                     item.pattern_number: item.name
                     for item in pattern_inventory.patterns
                 }
-            playlist_names = {
-                item.track_index: item.name
-                for item in track_inspector.list_playlist_tracks().tracks
-            }
+            elif kind == "playlist_track":
+                playlist_names = {
+                    item.track_index: item.name
+                    for item in track_inspector.list_playlist_tracks().tracks
+                }
         except Exception as exc:
             blockers.append(
                 _blocker(
                     "setup_or_session",
                     "named_target_inspection_failed",
-                    f"Named scope targets could not be resolved before execution: {exc}",
+                    f"Named {kind.replace('_', ' ')} targets could not be resolved before execution: {exc}",
                 )
             )
     facts = _LiveFacts(
@@ -2990,7 +3048,11 @@ def _live_validation(
         )
     ]
     live_operations = [*project_mutating, *live_reading]
-    if not live_operations:
+    if (
+        not live_operations
+        and request.expected_session_fingerprint is None
+        and request.expected_project_state_digest is None
+    ):
         return [], [], None, None
 
     blockers: list[ProductionBlocker] = []
@@ -3011,15 +3073,6 @@ def _live_validation(
             warnings,
             None,
             None,
-        )
-    if project_mutating and not connection.bridge_provenance_verified:
-        blockers.append(
-            _blocker(
-                "setup_or_session",
-                "bridge_provenance_unverified",
-                "The running FL bridge does not match this PostFader package. Reinstall and reload the packaged bridge.",
-                evidence=(connection.bridge_provenance,),
-            )
         )
     if project_mutating and not connection.runtime_write_mode_control:
         blockers.append(
@@ -3075,7 +3128,9 @@ def _live_validation(
         return blockers, warnings, session, None
 
     project_digest = (
-        _project_state_digest(project) if project_mutating else None
+        _project_state_digest(project)
+        if project_mutating or request.expected_project_state_digest is not None
+        else None
     )
 
     track_inspector = TrackBInspector()
@@ -3156,6 +3211,7 @@ def validate_production_run(
             request, plan, start_index=start_index
         )
         warnings.extend(live_warnings)
+        live.extend(_expected_run_state_blockers(request, session, project_digest))
     all_blockers = structural + live
     blockers = _bounded_blockers(
         all_blockers,
@@ -3453,15 +3509,6 @@ def _cached_live_validation(
             [],
             None,
             None,
-        )
-    if project_mutating and not connection.bridge_provenance_verified:
-        blockers.append(
-            _blocker(
-                "setup_or_session",
-                "bridge_provenance_unverified",
-                "The running FL bridge does not match this PostFader package. Reinstall and reload the packaged bridge.",
-                evidence=(connection.bridge_provenance,),
-            )
         )
     if project_mutating and not connection.runtime_write_mode_control:
         blockers.append(
@@ -4181,7 +4228,6 @@ def _semantic_session_matches(*, action: SemanticPluginAction) -> bool:
     return bool(
         connection.connected
         and connection.compatible
-        and connection.bridge_provenance_verified
         and connection.verified_writes_enabled
         and action.session_fingerprint is not None
         and connection.session_fingerprint == action.session_fingerprint
@@ -4240,6 +4286,7 @@ def _dispatch_operation(
     outputs: dict[tuple[str, str, str | None], ProductionGeneratedOutput],
     sound_inventory: SoundInventory | None = None,
     processing_observations: tuple[dict[str, Any], ...] = (),
+    authorized_to_modify: bool = False,
 ) -> ProductionResultPayload:
     """Adapt one production operation to an existing PostFader implementation."""
 
@@ -4388,7 +4435,11 @@ def _dispatch_operation(
                 review_session_id=review_session_id,
                 revision_plan_id=revision_plan.revision_plan_id,
                 request=operation.request,
-                authorized_to_modify=operation.authorized_to_modify,
+                authorized_to_modify=(
+                    authorized_to_modify
+                    if operation.authorized_to_modify is None
+                    else operation.authorized_to_modify
+                ),
                 expected_session_fingerprint=operation.expected_session_fingerprint,
             )
         )
@@ -5045,8 +5096,6 @@ def _capture_project_state(
             or connection.compatibility_reason
             or "No compatible FL Studio bridge is connected.",
         )
-    if not connection.bridge_provenance_verified:
-        return None, "The running FL bridge no longer matches this PostFader package."
     if connection.session_fingerprint != expected_session:
         return None, "FL Studio reloaded the bridge since this run was validated."
     if require_write_mode and not connection.verified_writes_enabled:
@@ -5070,8 +5119,6 @@ def _current_session_matches(
                 or connection.compatibility_reason
                 or "No compatible FL Studio bridge is connected.",
             )
-        if not connection.bridge_provenance_verified:
-            return False, "The running FL bridge no longer matches this package."
         if connection.session_fingerprint != expected:
             return False, "FL Studio reloaded the bridge during this run."
         if not connection.verified_writes_enabled:
@@ -5233,25 +5280,262 @@ class _RunRecord:
     # Keep this process-local uncertainty separate from the public active flag
     # so termination still performs one same-session shutdown attempt.
     write_mode_enable_pending: bool = False
+    journal_revision: int = 0
+    # Retain the durable marker until a receipt is committed, including while
+    # classifying a reply or capturing the post-write checkpoint.
+    journal_operation_id: str | None = None
+    journal_project_checkpoint_current: bool = True
 
 
 class ProductionRunRegistry:
-    """Bounded, deterministic, thread-safe process-local run storage."""
+    """Bounded in-memory runs with an optional durable checkpoint journal."""
 
-    def __init__(self, *, max_runs: int = MAX_PRODUCTION_RUNS) -> None:
+    def __init__(
+        self,
+        *,
+        max_runs: int = MAX_PRODUCTION_RUNS,
+        store: LocalProductionRunStore | None = None,
+        store_path: str | os.PathLike[str] | None = None,
+    ) -> None:
         if type(max_runs) is not int or not 1 <= max_runs <= MAX_PRODUCTION_RUNS:
             raise ValueError(f"max_runs must be within 1..{MAX_PRODUCTION_RUNS}")
         self.max_runs = max_runs
         self._lock = threading.RLock()
         self._runs: dict[str, _RunRecord] = {}
         self._write_mode_owner_run_id: str | None = None
+        if store is not None and store_path is not None:
+            raise ValueError("provide store or store_path, not both")
+        self._store = store if store is not None else (
+            LocalProductionRunStore(store_path) if store_path is not None else None
+        )
 
-    @staticmethod
-    def _missing_message(run_id: str) -> str:
+    def _missing_message(self, run_id: str) -> str:
+        if self._store is not None:
+            return f"Production run {run_id!r} was not found in memory or the local journal."
         return (
             f"Production run {run_id!r} was not found in this MCP process. "
             "It may have expired or belonged to a previous MCP process."
         )
+
+    def _persist(self, record: _RunRecord) -> None:
+        """Commit progress before another operation can cross the boundary."""
+
+        if self._store is None:
+            return
+        with self._lock:
+            marker = record.journal_operation_id
+            if marker in {receipt.operation_id for receipt in record.state.receipts}:
+                marker = None
+            state = record.state.model_copy(update={
+                "process_local": False,
+                "write_mode_active": False,
+                "write_mode_owned_by_run": False,
+                "write_mode_preexisting": False,
+                # Cached creation execution intentionally does not rescan the
+                # whole project after each write. Do not persist its older
+                # baseline as if it described the just-committed receipt.
+                "project_state_digest": (
+                    record.state.project_state_digest
+                    if record.journal_project_checkpoint_current else None
+                ),
+            })
+            checkpoint = _RunCheckpoint(
+                plan=record.plan,
+                state=state,
+                in_flight_operation_id=marker,
+            )
+            try:
+                record.journal_revision = self._store.save(
+                    state.run_id,
+                    checkpoint.model_dump_json(),
+                    expected_revision=record.journal_revision,
+                    updated_at=state.updated_at.isoformat(),
+                )
+            except ProductionRunConflictError:
+                # A subsequent get/continue must actually reload the new row;
+                # retaining this stale cache would conflict forever.
+                if self._runs.get(state.run_id) is record:
+                    del self._runs[state.run_id]
+                raise
+            record.journal_operation_id = marker
+
+    def _get_record_locked(self, run_id: str, *, cache: bool = True) -> _RunRecord | None:
+        record = self._runs.get(run_id)
+        if record is not None or self._store is None:
+            return record
+        stored = self._store.load(run_id)
+        if stored is None:
+            return None
+        revision, payload = stored
+        try:
+            # Several nested timing models normalize mappings in before-
+            # validators, so JSON timestamp strings need normal parsing here.
+            # Revalidate the resulting typed objects strictly below.
+            checkpoint = _RunCheckpoint.model_validate_json(payload, strict=False)
+            checkpoint = _RunCheckpoint.model_validate(checkpoint.model_dump(mode="python"))
+            state, plan = checkpoint.state, checkpoint.plan
+            if state.run_id != run_id or state.plan_id != plan.plan_id:
+                raise ValueError("checkpoint run or plan identity does not match")
+            if state.total_operations != len(plan.operations) and not (
+                state.status == "stopped"
+                and state.total_operations == state.current_operation_index
+                and state.total_operations < len(plan.operations)
+            ):
+                raise ValueError("checkpoint operation count does not match the plan")
+            for receipt in state.receipts:
+                operation = plan.operations[receipt.operation_index]
+                if (receipt.operation_id, receipt.operation) != (
+                    operation.operation_id, operation.operation
+                ) or receipt.operation_index >= state.current_operation_index:
+                    raise ValueError("checkpoint receipt does not match its plan position")
+            marker = checkpoint.in_flight_operation_id
+            if marker is not None and marker not in {
+                item.operation_id for item in plan.operations
+            }:
+                raise ValueError("checkpoint in-flight operation is missing from the plan")
+        except (ValueError, IndexError) as exc:
+            raise ProductionRunStoreError(f"Cannot recover Production Run {run_id}: {exc}") from exc
+
+        now = _now()
+        updates: dict[str, Any] = {
+            "process_local": False,
+            "recovered_at": now,
+            "write_mode_active": False,
+            "write_mode_owned_by_run": False,
+            "write_mode_preexisting": False,
+            # Cached context contains process-bound readiness/arming evidence.
+            # Continuation collects fresh context before it can write again.
+            "run_context": None,
+        }
+        if marker is not None and marker not in {
+            item.operation_id for item in state.receipts
+        }:
+            index, operation = next(
+                (index, operation)
+                for index, operation in enumerate(plan.operations)
+                if operation.operation_id == marker
+            )
+            message = (
+                f"Operation {marker!r} was in flight when its MCP process ended. "
+                "Its outcome is unknown and it has not been replayed."
+            )
+            receipt = ProductionOperationReceipt(
+                operation_index=index,
+                operation_id=marker,
+                operation=operation.operation,
+                status="error_unknown",
+                mutating=_is_mutating(operation),
+                outcome_known=False,
+                verified=False,
+                error=message,
+            )
+            updates.update({
+                "status": "stopped" if state.status == "stopped" else "blocked",
+                "receipts": (*state.receipts, receipt),
+                "current_operation_index": index + 1,
+                "updated_at": now,
+                "finished_at": now,
+                "final_summary": message,
+                "blockers": _bounded_blockers([
+                    *state.blockers,
+                    _blocker(
+                        "unknown_outcome", "operation_interrupted", message,
+                        operation_id=marker,
+                    ),
+                ], limit=MAX_RUN_BLOCKERS),
+            })
+        elif state.status in {"created", "validated", "running"}:
+            updates.update({
+                "status": "blocked",
+                "updated_at": now,
+                "finished_at": now,
+                "final_summary": (
+                    "Recovered the last committed checkpoint. Continue the remaining "
+                    "plan after fresh project validation."
+                ),
+            })
+        state = ProductionRunState.model_validate(state.model_copy(update=updates).model_dump(mode="python"))
+        record = _RunRecord(
+            plan=plan,
+            state=state,
+            outputs={
+                _output_key(output.operation_id, output.output, output.selector_id): output
+                for output in state.generated_outputs
+            },
+            stop_requested=state.status == "stopped",
+            journal_revision=revision,
+            timing=RunTimingCollector(existing_report=state.timing_report),
+            journal_project_checkpoint_current=state.project_state_digest is not None,
+        )
+        if cache:
+            if len(self._runs) >= self.max_runs:
+                self._evict_one_locked()
+            self._runs[run_id] = record
+        return record
+
+    def list_runs(self, *, limit: int = MAX_PRODUCTION_RUNS) -> tuple[ProductionRunSummary, ...]:
+        """List recent run IDs across restarts without contacting FL Studio."""
+
+        if not 1 <= limit <= MAX_PRODUCTION_RUNS:
+            raise ValueError(f"limit must be within 1..{MAX_PRODUCTION_RUNS}")
+        with self._lock:
+            ids = set(self._runs)
+            if self._store is not None:
+                ids.update(self._store.list_ids(limit=limit))
+            states = [
+                record.state for run_id in ids
+                if (record := self._get_record_locked(run_id, cache=False)) is not None
+            ]
+            states.sort(key=lambda state: (state.updated_at, state.run_id), reverse=True)
+            return tuple(
+                ProductionRunSummary(
+                    run_id=state.run_id, brief=state.request.brief, status=state.status,
+                    updated_at=state.updated_at,
+                    completed_count=len(state.completed_operations),
+                    total_operations=state.total_operations,
+                    process_local=state.process_local, recovered_at=state.recovered_at,
+                )
+                for state in states[:limit]
+            )
+
+    @staticmethod
+    def _recovery_identity_blocker(
+        record: _RunRecord, plan: ProductionRunPlan, start_index: int
+    ) -> ProductionBlocker | None:
+        """Older installed bridges cannot distinguish two FLPs in one session."""
+
+        if not (
+            record.state.recovered_at is not None
+            and record.state.project_state_digest is None
+            and any(_requires_project_write(op) for op in plan.operations[:start_index])
+            and any(_requires_project_write(op) for op in plan.operations[start_index:])
+        ):
+            return None
+        try:
+            connection = ReadOnlyInspector().connection_info()
+        except Exception as exc:
+            return _blocker(
+                "setup_or_session", "recovered_project_identity_unavailable",
+                f"The recovered run's current project identity could not be checked: {exc}",
+            )
+        if (
+            not connection.connected
+            or not connection.compatible
+            or connection.session_fingerprint != record.state.session_fingerprint
+        ):
+            return _blocker(
+                "setup_or_session", "continued_session_changed",
+                "The recovered run no longer matches the current FL Studio project session.",
+            )
+        if not getattr(connection, "project_load_epoch", False):
+            return _blocker(
+                "setup_or_session", "recovered_project_identity_unavailable",
+                "This recovered run has no post-write project checkpoint, and the installed "
+                "bridge cannot identify project switches. Inspect the current project and "
+                "start a new run. Updated bridge installations preserve project identity "
+                "for future recoveries.",
+            )
+        return None
 
     def _evict_one_locked(self) -> None:
         candidates = [
@@ -5288,12 +5572,18 @@ class ProductionRunRegistry:
             iteration=1,
             current_operation_index=0,
             total_operations=len(isolated_plan.operations),
+            process_local=self._store is None,
         )
         record = _RunRecord(plan=isolated_plan, state=state, claimed=True)
         with self._lock:
             if len(self._runs) >= self.max_runs:
                 self._evict_one_locked()
             self._runs[state.run_id] = record
+            try:
+                self._persist(record)
+            except Exception:
+                del self._runs[state.run_id]
+                raise
         return record
 
     def _replace_state(self, record: _RunRecord, state: ProductionRunState) -> None:
@@ -5305,11 +5595,14 @@ class ProductionRunRegistry:
 
     def _release(self, record: _RunRecord) -> None:
         with self._lock:
-            record.claimed = False
+            try:
+                self._persist(record)
+            finally:
+                record.claimed = False
 
     def get(self, run_id: str) -> ProductionRunLookup:
         with self._lock:
-            record = self._runs.get(run_id)
+            record = self._get_record_locked(run_id)
             state = (
                 None
                 if record is None
@@ -5321,22 +5614,25 @@ class ProductionRunRegistry:
             return ProductionRunLookup(
                 found=False,
                 message=self._missing_message(run_id),
+                process_local=self._store is None,
             )
         return ProductionRunLookup(
             found=True,
             message=f"Production run {run_id} is {state.status}.",
             state=state,
+            process_local=state.process_local,
         )
 
     def snapshot(self, run_id: str) -> ProductionRunSnapshot:
         """Return isolated state and plan for a linked Review Session."""
 
         with self._lock:
-            record = self._runs.get(run_id)
+            record = self._get_record_locked(run_id)
             if record is None:
                 return ProductionRunSnapshot(
                     found=False,
                     message=self._missing_message(run_id),
+                    process_local=self._store is None,
                 )
             state = ProductionRunState.model_validate(
                 record.state.model_dump(mode="python")
@@ -5349,6 +5645,7 @@ class ProductionRunRegistry:
             message=f"Production run {run_id} is {state.status}.",
             state=state,
             plan=plan,
+            process_local=state.process_local,
         )
 
     @staticmethod
@@ -5778,12 +6075,17 @@ class ProductionRunRegistry:
         )
 
     def _finalize_run(self, record: _RunRecord) -> None:
-        if record.readiness is not None and record.state.session_fingerprint is not None:
+        if (
+            record.readiness is not None
+            and record.state.session_fingerprint is not None
+            and record.state.receipts
+        ):
             digest, reason = _capture_project_state(
                 record.state.session_fingerprint,
                 require_write_mode=False,
             )
             if digest is not None:
+                record.journal_project_checkpoint_current = True
                 record.state = record.state.model_copy(
                     update={
                         "project_state_digest": digest,
@@ -5907,33 +6209,9 @@ class ProductionRunRegistry:
                             start_index=0,
                         )
                     )
-                    revision_precondition_blockers: list[ProductionBlocker] = []
-                    if (
-                        record.state.request.expected_session_fingerprint
-                        is not None
-                        and session
-                        != record.state.request.expected_session_fingerprint
-                    ):
-                        revision_precondition_blockers.append(
-                            _blocker(
-                                "setup_or_session",
-                                "expected_session_changed",
-                                "The open FL Studio session no longer matches the session captured for this run.",
-                            )
-                        )
-                    if (
-                        record.state.request.expected_project_state_digest
-                        is not None
-                        and project_digest
-                        != record.state.request.expected_project_state_digest
-                    ):
-                        revision_precondition_blockers.append(
-                            _blocker(
-                                "setup_or_session",
-                                "expected_project_changed",
-                                "The open project state no longer matches the checkpoint captured for this run.",
-                            )
-                        )
+                    revision_precondition_blockers = _expected_run_state_blockers(
+                        record.state.request, session, project_digest
+                    )
                     readiness_blockers = _bounded_blockers(
                         [
                             *(
@@ -6088,7 +6366,6 @@ class ProductionRunRegistry:
                 and connection.compatible
                 and connection.session_fingerprint == session
                 and connection.verified_writes_enabled
-                and connection.bridge_provenance_verified
             ):
                 return None
             blocker = _blocker(
@@ -6315,6 +6592,7 @@ class ProductionRunRegistry:
                 failure_update["project_state_digest"] = checkpoint
             state = record.state.model_copy(update=failure_update)
             record.state = state
+            self._persist(record)
         blocker = _blocker(
             (
                 "unknown_outcome"
@@ -6458,12 +6736,15 @@ class ProductionRunRegistry:
                 if record.stop_requested or record.state.status == "stopped":
                     return self._result(record.state)
                 record.in_flight_operation_id = operation.operation_id
+                record.journal_operation_id = operation.operation_id
+                self._persist(record)
             try:
                 try:
                     result = _dispatch_operation(
                         operation,
                         session_fingerprint=session,
                         outputs=record.outputs,
+                        authorized_to_modify=record.state.request.authorized_to_modify,
                         sound_inventory=(
                             None
                             if record.readiness is None
@@ -6545,6 +6826,7 @@ class ProductionRunRegistry:
                         }
                     )
                     record.state = state
+                    self._persist(record)
                 blocker = _read_only_result_blocker(operation, result)
                 if blocker is not None:
                     state = self._finish_blocked(
@@ -6684,8 +6966,13 @@ class ProductionRunRegistry:
                     )
                 if checkpoint_digest is not None:
                     update["project_state_digest"] = checkpoint_digest
+                if _requires_project_write(operation):
+                    record.journal_project_checkpoint_current = (
+                        checkpoint_digest is not None and record.readiness is None
+                    )
                 state = record.state.model_copy(update=update)
                 record.state = state
+                self._persist(record)
             if (
                 verified
                 and _requires_project_write(operation)
@@ -6745,7 +7032,7 @@ class ProductionRunRegistry:
         self, run_id: str, delta: ProductionRunDelta
     ) -> ProductionRunResult:
         with self._lock:
-            record = self._runs.get(run_id)
+            record = self._get_record_locked(run_id)
             if record is None:
                 raise ValueError(self._missing_message(run_id))
             if record.claimed or record.state.status == "running":
@@ -6754,7 +7041,44 @@ class ProductionRunRegistry:
                 raise ValueError(
                     "this Production Run was stopped; create a new run for future changes"
                 )
+            if any(
+                blocker.category == "unknown_outcome"
+                and blocker.code in {
+                    "run_execution_failed", "continued_run_execution_failed",
+                    "operation_interrupted",
+                }
+                for blocker in record.state.blockers
+            ):
+                raise ValueError(
+                    "this Production Run lost its execution cursor after an internal failure; "
+                    "inspect the project and create a new run instead of replaying an operation"
+                )
             request = delta.request or record.state.request
+            if (
+                delta.request is None
+                and record.state.recovered_at is not None
+                and record.state.receipts
+                and record.state.project_state_digest is None
+                and request.expected_project_state_digest is not None
+            ):
+                # The original checkpoint assertion was consumed before the
+                # verified writes now preserved in this run. With no final
+                # snapshot before restart, inspect the current same-session
+                # targets rather than comparing them to the pre-write state.
+                request = request.model_copy(update={
+                    "expected_project_state_digest": None,
+                })
+            if (
+                delta.request is None
+                and request.expected_project_state_digest is not None
+                and record.state.project_state_digest is not None
+            ):
+                # An implicit continuation follows this run's own verified
+                # writes. A caller supplying a revised request retains exactly
+                # the checkpoint assertion it supplied for that iteration.
+                request = request.model_copy(update={
+                    "expected_project_state_digest": record.state.project_state_digest,
+                })
             if record.state.iteration >= request.max_iterations:
                 blocker = _blocker(
                     "iteration_limit",
@@ -6774,10 +7098,13 @@ class ProductionRunRegistry:
                     }
                 )
                 record.state = state
+                self._persist(record)
                 return self._result(state)
             start_index = record.state.current_operation_index
             if delta.mode == "append":
                 operations = (*record.plan.operations, *delta.operations)
+            elif delta.mode == "resume":
+                operations = record.plan.operations
             else:
                 operations = (
                     *record.plan.operations[:start_index],
@@ -6809,6 +7136,7 @@ class ProductionRunRegistry:
                 )
                 record.stop_requested = True
                 record.state = state
+                self._persist(record)
                 return self._result(state)
             plan = ProductionRunPlan(
                 plan_id=record.plan.plan_id,
@@ -6821,9 +7149,18 @@ class ProductionRunRegistry:
             completed_operation_ids = frozenset(record.state.completed_operations)
             prior_session = record.state.session_fingerprint
             prior_project_digest = record.state.project_state_digest
+            initial_preflight_only = (
+                record.state.started_at is None and not record.state.receipts
+            )
             record.claimed = True
+            try:
+                self._persist(record)
+            except Exception:
+                record.claimed = False
+                raise
 
         try:
+            self._begin_phase(record, "preflight")
             cached_creation_path = record.readiness is not None or (
                 _creation_plan_needs_readiness(
                     plan.operations,
@@ -6837,7 +7174,18 @@ class ProductionRunRegistry:
                 start_index=start_index,
                 completed_operation_ids=completed_operation_ids,
             )
+            recovery_blocker = self._recovery_identity_blocker(record, plan, start_index)
+            if recovery_blocker is not None:
+                validation = validation.model_copy(update={
+                    "valid": False,
+                    "executable": False,
+                    "blockers": _bounded_blockers(
+                        [*validation.blockers, recovery_blocker],
+                        limit=MAX_VALIDATION_BLOCKERS,
+                    ),
+                })
             continued_readiness_report = record.state.readiness_report
+            collected_new_readiness = False
             if cached_creation_path and validation.valid:
                 current_digest: str | None = None
                 checkpoint_reason = ""
@@ -6866,6 +7214,16 @@ class ProductionRunRegistry:
                             }
                         )
                     elif (
+                        initial_preflight_only
+                        and current_digest != prior_project_digest
+                    ):
+                        # Loading a required instrument or preparing an empty
+                        # pattern resolves initial preflight blockers. No run
+                        # operation has happened yet, so collect the new setup
+                        # instead of forcing the caller to discard this run.
+                        record.readiness = None
+                        prior_project_digest = current_digest
+                    elif (
                         prior_project_digest is not None
                         and current_digest != prior_project_digest
                     ):
@@ -6887,6 +7245,15 @@ class ProductionRunRegistry:
                             }
                         )
                 if validation.valid:
+                    if initial_preflight_only and record.readiness is not None:
+                        cached_connection = record.readiness.connection
+                        if (
+                            record.readiness.project is None
+                            or cached_connection is None
+                            or not cached_connection.connected
+                            or not cached_connection.compatible
+                        ):
+                            record.readiness = None
                     if record.readiness is None:
                         try:
                             continued_readiness_report, collected = (
@@ -6912,6 +7279,7 @@ class ProductionRunRegistry:
                             )
                         else:
                             record.readiness = collected
+                            collected_new_readiness = True
                             record.timing.record_full_inventory_scan(
                                 collected.full_inventory_scan_count
                             )
@@ -6963,7 +7331,7 @@ class ProductionRunRegistry:
                                     record.readiness.readiness_input
                                 )
                             )
-                        cached_blockers, cached_warnings, cached_session, _ = (
+                        cached_blockers, cached_warnings, cached_session, cached_digest = (
                             _cached_live_validation(
                                 request,
                                 plan,
@@ -6971,6 +7339,11 @@ class ProductionRunRegistry:
                                 start_index=start_index,
                             )
                         )
+                        if current_digest is None:
+                            current_digest = cached_digest
+                        cached_blockers.extend(_expected_run_state_blockers(
+                            request, cached_session or prior_session, current_digest
+                        ))
                         readiness_blockers = tuple(
                             _readiness_production_blocker(item)
                             for item in continued_readiness_report.blockers
@@ -6987,8 +7360,8 @@ class ProductionRunRegistry:
                             update={
                                 "valid": not combined,
                                 "executable": not combined,
-                                "session_fingerprint": prior_session
-                                or cached_session,
+                                "session_fingerprint": cached_session
+                                or prior_session,
                                 "project_state_digest": current_digest,
                                 "blockers": combined,
                                 "warnings": _bounded_warnings(
@@ -7017,7 +7390,8 @@ class ProductionRunRegistry:
                     }
                 )
             if (
-                prior_project_digest is not None
+                not initial_preflight_only
+                and prior_project_digest is not None
                 and validation.project_state_digest is not None
                 and validation.project_state_digest != prior_project_digest
             ):
@@ -7123,15 +7497,14 @@ class ProductionRunRegistry:
                         ),
                         "readiness_preflight_count": (
                             record.state.readiness_preflight_count
-                            + int(
-                                record.state.run_context is None
-                                and record.readiness is not None
-                            )
+                            + int(collected_new_readiness)
                         ),
                     }
                 )
                 record.plan = plan
                 record.state = next_state
+                if validation.valid and validation.project_state_digest is not None:
+                    record.journal_project_checkpoint_current = True
             if not validation.valid:
                 self._finalize_run(record)
                 return self._result(record.state)
@@ -7160,7 +7533,7 @@ class ProductionRunRegistry:
 
     def stop(self, run_id: str) -> ProductionRunResult:
         with self._lock:
-            record = self._runs.get(run_id)
+            record = self._get_record_locked(run_id)
             if record is None:
                 raise ValueError(self._missing_message(run_id))
             if record.state.status == "stopped" and record.stop_requested:
@@ -7190,6 +7563,7 @@ class ProductionRunRegistry:
                 }
             )
             record.state = state
+            self._persist(record)
             # An enable request is itself an in-flight write-boundary
             # transition.  Let the execution thread observe the stop and run
             # the ordered shutdown after that request returns; disabling here
@@ -7201,7 +7575,14 @@ class ProductionRunRegistry:
         if can_finalize:
             self._shutdown_write_mode(record)
             self._finalize_run(record)
+            self._persist(record)
         return self._result(record.state)
 
 
-PRODUCTION_RUNS = ProductionRunRegistry()
+PRODUCTION_RUNS = ProductionRunRegistry(store=LocalProductionRunStore())
+
+
+def list_production_runs(*, limit: int = MAX_PRODUCTION_RUNS) -> tuple[ProductionRunSummary, ...]:
+    """Discover recent durable runs, including IDs from a previous MCP process."""
+
+    return PRODUCTION_RUNS.list_runs(limit=limit)

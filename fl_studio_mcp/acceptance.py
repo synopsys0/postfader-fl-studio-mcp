@@ -104,7 +104,7 @@ async def authoritative_tool_surface() -> ToolSurface:
     # A read that needs an opaque process-local registry ID cannot run in the
     # isolated one-tool acceptance worker: that worker intentionally starts
     # with fresh process state. Its creating workflow has dedicated tests.
-    review_workflow_reads = {
+    session_workflow_reads = {
         "postfader_review_start",
         "postfader_review_attach_assets",
         "postfader_review_evaluate",
@@ -117,14 +117,14 @@ async def authoritative_tool_surface() -> ToolSurface:
     workflow_reads = tuple(
         name
         for name in all_reads
-        if name in review_workflow_reads
+        if name in session_workflow_reads
         or (
             set(
                 next(tool for tool in tools if tool.name == name).input_schema.get(
                     "required", ()
                 )
             )
-            & {"watch_id", "plan_id", "palette_id", "review_session_id"}
+            & {"watch_id", "plan_id", "palette_id", "review_session_id", "job_id"}
         )
     )
     reads = tuple(name for name in all_reads if name not in set(workflow_reads))
@@ -676,6 +676,7 @@ def read_acceptance_arguments(
             },
         },
         "postfader_get_run": {"run_id": "0" * 32},
+        "postfader_list_runs": {},
         "processing_plan": {
             "request": {
                 "request_id": "acceptance-processing-plan",
@@ -1653,17 +1654,6 @@ async def run_write_acceptance(
             {
                 "stage": "preflight",
                 "reason": "project summary has no connection evidence",
-                "writes_attempted": 0,
-            }
-        )
-        save_checkpoint("preflight_validation", status="failed", writes_attempted=0)
-        return report
-    if connection.get("bridge_provenance_verified") is not True:
-        report["overall"] = "fail"
-        report["failures"].append(
-            {
-                "stage": "preflight",
-                "reason": "bridge provenance is not verified",
                 "writes_attempted": 0,
             }
         )

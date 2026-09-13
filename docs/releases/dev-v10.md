@@ -1,8 +1,17 @@
 # Next-release notes (development)
 
 These notes describe the integrated Autonomous Creation Quality upgrade on
-the `dev` branch. They are not a released v0.20 claim; the historical
-[v0.20.0 notes](v0.20.0.md) remain unchanged.
+the `dev` branch, reviewed on 2026-09-13. Dev has **134 tools and 8 resources**;
+the published [v0.20.0 package](v0.20.0.md) has **90 tools and 8 resources**.
+These additions are not included in existing downloads. The package version
+in a source checkout is not a release identifier for untagged changes.
+
+## Changes since the published release
+
+Development adds Plugin Atlas, Sound Selection, task-scoped Production Runs,
+Creation Pipeline readiness and processing, Creation Review and delivery, and
+the host adapters described below. See the [tool reference](../tool-contracts.md)
+for exact input schemas, side effects, readback, and refusal behavior.
 
 ## Creation workflow
 
@@ -21,6 +30,19 @@ the `dev` branch. They are not a released v0.20 claim; the historical
 
 ## Sound and processing
 
+- Genre/brief-only sound requests now infer editable roles from ten musical
+  profiles; explicit role and product preferences remain authoritative.
+  Eighteen bundled instrument families support timbre and articulation choices.
+- Atlas filters instrument/effect kinds and excludes poor-fit prose from
+  relevance. Palette scores retain missing requested dimensions as zero.
+- `plugins_list_available` and `plugins_load` add named macOS native-menu
+  discovery and instrument/effect insertion, with new-instance bridge evidence.
+  Windows insertion and plug-in replacement/reordering remain unimplemented.
+- Semantic goals and strength generate supported starting controls when none
+  are supplied. Shared-control conflicts are explicit, and the display solver
+  now carries units through Hz/kHz and ms/seconds changes instead of comparing
+  unrelated numeric scales. Unit-aware writes require the new bridge capability.
+
 - Sound Selection can discover exact preset identities beyond the first
   bounded page and reports coverage, truncation, duplicates, alternatives,
   score margins, metadata confidence, and provenance.
@@ -33,7 +55,7 @@ the `dev` branch. They are not a released v0.20 claim; the historical
 
 ## Creation Review, Revision, and Delivery
 
-- The development MCP surface is now 127 tools and 8 resources, including 13
+- The development MCP surface is now 134 tools and 8 resources, including 13
   Creation Review tools. The closed Production Run union adds 9 corresponding
   review operations: session start, asset attachment, evaluation, feedback,
   revision planning, revision application, bounce comparison, Playlist handoff,
@@ -92,3 +114,20 @@ including Creation Review, but not maintainer scripts or tests. Run manifest
 synchronization, the focused creation and package tests, public-tree/package
 verification, bundle checks, and the installed smoke check before publishing;
 do not tag or publish this development note.
+
+### Autonomous workflow follow-through
+
+- Structured Piano Roll note inspection through the existing script runtime.
+- Durable SQLite Production Run journals, list/get across restarts, and explicit
+  saved-plan resume with fresh authorization and preflight. Operation-start
+  checkpoints prevent unknown writes from replaying after a crash. Journals
+  contain local production data and must remain outside public source/packages.
+- Saved-FLP background WAV rendering with status and cancellation, fresh per-job
+  output directories, file decoding checks, and no automatic project save. It
+  exports saved/default settings, not unsaved live state or promised stems.
+- Stronger public-tree exclusions cover local AI configuration, conversation
+  logs, run databases, caches, and additional GitHub token formats.
+
+These paths have synthetic regression coverage. Live Piano Roll and render
+acceptance on FL Studio remains pending; the updated bridge needs reloading for
+note inspection.

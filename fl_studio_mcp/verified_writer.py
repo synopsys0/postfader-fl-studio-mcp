@@ -63,6 +63,8 @@ from .contracts import (
     VerifiedPluginOptionWrite,
     VerifiedPluginParameterWrite,
     WriteModeChange,
+    display_value_in_unit,
+    normalize_display_unit,
 )
 from .readonly_inspector import (
     BridgeLike,
@@ -124,12 +126,6 @@ MASTER_REFUSAL = (
     "nothing here decides on its own that the master bus is what was meant"
 )
 
-PROVENANCE_REFUSAL = (
-    "refusing to write through an unverified FL bridge: provenance is {status!r}. "
-    "Install this package's bridge with postfader-install-bridge, reload the "
-    "script in FL Studio, and read the connection state again"
-)
-
 SESSION_FINGERPRINT_RE = re.compile(r"[0-9a-f]{32}")
 
 
@@ -183,7 +179,7 @@ def _strict_bool(payload: dict[str, Any], field: str) -> bool:
 
 
 def _session_precondition(value: Any) -> str | None:
-    """Validate an optional bridge-lifetime guard before any dispatch."""
+    """Validate an optional bridge/project-session guard before any dispatch."""
     if value is None:
         return None
     if not isinstance(value, str) or SESSION_FINGERPRINT_RE.fullmatch(value) is None:
@@ -409,11 +405,7 @@ class WriteModeManager:
 
     @staticmethod
     def _require_control_ready(connection: ConnectionInfo) -> str:
-        if not connection.bridge_provenance_verified:
-            raise WriteModeUnavailable(
-                PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
-            )
-        if not connection.runtime_write_mode_control:
+        if connection.bridge_protocol_version != 2 or not connection.runtime_write_mode_control:
             raise WriteModeUnavailable(
                 "the running bridge does not advertise session write-mode control; "
                 "install this package's bridge and reload the controller script"
@@ -506,7 +498,7 @@ class WriteModeManager:
                 "the post-transition bridge handshake omitted its startup default"
             )
 
-        warnings: list[str] = []
+        warnings = list(after.warnings)
         if raw is not None:
             expected_echoes = {
                 "command": "session.set_write_mode",
@@ -631,17 +623,12 @@ class VerifiedWriter:
                     enabled=connection.verified_writes_enabled,
                 )
             )
-        if not connection.bridge_provenance_verified:
+        if connection.session_fingerprint is None:
             raise VerifiedWritesUnavailable(
-                PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
+                "the running bridge did not report a valid session fingerprint; "
+                "reload the packaged bridge and re-read project state"
             )
         if session_fingerprint is not None:
-            if connection.session_fingerprint is None:
-                raise VerifiedWritesUnavailable(
-                    "refusing the session-guarded write because the running bridge "
-                    "did not report a valid session fingerprint; reload the packaged "
-                    "bridge and re-read project state"
-                )
             if session_fingerprint != connection.session_fingerprint:
                 raise VerifiedWritesUnavailable(
                     "session precondition failed before dispatch: FL Studio reloaded "
@@ -667,6 +654,8 @@ class VerifiedWriter:
         """Handshake, dispatch once, and validate the bridge's guard report."""
         session = _session_precondition(session_fingerprint)
         connection = self._require_writable(session)
+        if command == "plugin.set_param_display" and arguments.get("target_unit") is not None and not connection.plugin_display_units:
+            raise VerifiedWritesUnavailable("the running bridge does not support display-unit conversion; reload the current bridge")
         guarded = dict(arguments)
         guarded.update(_precondition_arguments(session, expected_before))
         raw = self.gateway.call(command, **guarded)
@@ -724,7 +713,7 @@ class VerifiedWriter:
             after_volume_normalized=after,
             before_volume_db=_optional_float(raw.get("before_db")),
             after_volume_db=_optional_float(raw.get("after_db")),
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -784,7 +773,7 @@ class VerifiedWriter:
             search_iterations=_index(
                 raw.get("search_iterations"), "search_iterations", low=0, high=20
             ),
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -830,7 +819,7 @@ class VerifiedWriter:
             requested_pan=value,
             before_pan=_optional_float(raw.get("before")),
             after_pan=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -891,7 +880,7 @@ class VerifiedWriter:
             before_name=None if raw.get("before") is None else str(raw["before"]),
             after_name=after_name,
             restored_default=restored,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -962,7 +951,7 @@ class VerifiedWriter:
             before_enabled=_optional_bool(raw.get("before")),
             after_enabled=after,
             level_normalized=_optional_float(raw.get("level")),
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1025,7 +1014,7 @@ class VerifiedWriter:
             before_level_normalized=_optional_float(raw.get("before")),
             after_level_normalized=after,
             send_active=_optional_bool(raw.get("send_active")),
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1036,6 +1025,7 @@ class VerifiedWriter:
         slot_index: int,
         parameter: int | str,
         target_value: float,
+        target_unit: str | None = None,
         tolerance: float | None = None,
         allow_master: bool = False,
         session_fingerprint: str | None = None,
@@ -1064,6 +1054,7 @@ class VerifiedWriter:
         elif not parameter.strip():
             raise ValueError("parameter name must not be empty")
         target = _normalized(target_value, "target_value", low=-1e6, high=1e6)
+        unit = normalize_display_unit(target_unit)
         if tolerance is not None:
             tolerance = _normalized(tolerance, "tolerance", low=0.0, high=1e6)
         if expected_before is not None:
@@ -1079,6 +1070,8 @@ class VerifiedWriter:
         }
         if tolerance is not None:
             arguments["tolerance"] = tolerance
+        if unit is not None:
+            arguments["target_unit"] = unit
         raw, connection, metadata = self._call_guarded(
             "plugin.set_param_display",
             arguments,
@@ -1088,6 +1081,13 @@ class VerifiedWriter:
         verified = _strict_bool(raw, "verified")
         landed = _optional_float(raw.get("landed_on"))
         after = _parameter_observation(raw.get("after"))
+        if unit is not None:
+            if raw.get("requested_unit") != unit:
+                raise ValueError("FL bridge returned a contradictory plug-in display unit")
+            observed = display_value_in_unit(after.display_text, unit)
+            bound = tolerance if tolerance is not None else max(0.01, abs(target) * 0.02)
+            if verified and (landed is None or abs(landed - target) > bound or abs(observed - target) > bound):
+                raise ValueError("FL bridge display-unit readback contradicts its verification")
         summary, warnings = _verification(
             verified,
             f"FL searched the control and its own readback now reports "
@@ -1113,12 +1113,13 @@ class VerifiedWriter:
             verified=verified,
             verification_summary=summary,
             requested_value=target,
+            requested_unit=unit,
             tolerance=_optional_float(raw.get("tolerance")) or 0.0,
             landed_value=landed,
             normalized_value=_optional_float(raw.get("normalised")),
             before=_parameter_observation(raw.get("before")),
             after=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1242,7 +1243,7 @@ class VerifiedWriter:
             options=options,
             before=_parameter_observation(raw.get("before")),
             after=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1290,7 +1291,7 @@ class VerifiedWriter:
             requested_muted=muted,
             before_muted=_optional_bool(raw.get("before")),
             after_muted=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1338,7 +1339,7 @@ class VerifiedWriter:
             requested_soloed=wanted,
             before_soloed=_optional_bool(raw.get("before")),
             after_soloed=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1386,7 +1387,7 @@ class VerifiedWriter:
             requested_armed=wanted,
             before_armed=_optional_bool(raw.get("before")),
             after_armed=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1442,7 +1443,7 @@ class VerifiedWriter:
             requested_color=wanted,
             before_color=before,
             after_color=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1494,7 +1495,7 @@ class VerifiedWriter:
             requested_stereo_separation=wanted,
             before_stereo_separation=_optional_float(raw.get("before")),
             after_stereo_separation=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1539,7 +1540,7 @@ class VerifiedWriter:
             requested_active_track_index=index,
             before_active_track_index=_optional_index(raw.get("before")),
             after_active_track_index=after,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1629,7 +1630,7 @@ class VerifiedWriter:
             after=after,
             gain_verified=gain_verified,
             frequency_verified=frequency_verified,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )
 
@@ -1721,6 +1722,6 @@ class VerifiedWriter:
             after=after,
             display_changed=display_changed,
             reads_at_requested_value=reads_at_value,
-            warnings=list(connection.warnings) + warnings,
+            warnings=warnings + list(connection.warnings),
             **metadata,
         )

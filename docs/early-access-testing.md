@@ -1,7 +1,10 @@
 # Early-user activation guide
 
 This guide is for the first external users and maintainers helping them
-activate PostFader v0.20. It is a manual, privacy-preserving checklist. The
+activate PostFader. Stable v0.20.0 contains 90 tools and 8 resources; development
+source contains 134 tools and 8 resources. Record the branch/commit as well as
+the package version for source installs, and use the [development notes](releases/dev-v10.md)
+for new feature qualification boundaries. This is a manual, privacy-preserving checklist. The
 project has no telemetry or automatic analytics: activation results must be
 shared only when a user chooses to report them.
 

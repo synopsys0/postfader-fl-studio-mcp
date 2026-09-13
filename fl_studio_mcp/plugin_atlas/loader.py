@@ -11,9 +11,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from dataclasses import dataclass
 from importlib import resources
-from importlib.resources.abc import Traversable
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, cast
 
@@ -44,6 +44,12 @@ from .models import (
     VendorKnowledge,
     WriteValidationEvidence,
 )
+
+
+if sys.version_info >= (3, 11):
+    from importlib.resources.abc import Traversable
+else:  # Python 3.10 exposes this protocol in importlib.abc.
+    from importlib.abc import Traversable
 
 
 DEFAULT_DATA_PACKAGE = "fl_studio_mcp.plugin_atlas_data"

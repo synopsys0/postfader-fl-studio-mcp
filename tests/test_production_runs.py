@@ -138,6 +138,131 @@ def verified_selection(
     )
 
 
+class ProductionAutonomyRegressionTests(unittest.TestCase):
+    def project(self, **updates: object) -> ProjectSummary:
+        connection = ConnectionInfo(
+            connected=True,
+            compatible=True,
+            compatibility_reason="ok",
+            runtime_write_mode_control=True,
+            verified_writes_enabled=True,
+            bridge_provenance="mismatched",
+            bridge_provenance_verified=False,
+            session_fingerprint=SESSION,
+        )
+        return ProjectSummary(
+            observed_at=datetime.now(timezone.utc),
+            connection=connection,
+            channel_count=4,
+            transport=TransportState(tempo_bpm=120, time_signature_numerator=4),
+        ).model_copy(update=updates)
+
+    def test_all_supported_change_categories_fit_request_scope_and_report(self) -> None:
+        from typing import get_args
+
+        categories = get_args(runs.ChangeCategory)
+        broad_request = request(allowed_changes=categories)
+        scope = runs.ProductionScope(
+            description="All supported production changes.",
+            additional_allowed_changes=categories,
+        )
+        validation = runs.validate_production_run(
+            broad_request, plan(melody()), inspect_live=False
+        )
+        report = runs.ProductionRunValidation.model_validate(
+            {
+                **validation.model_dump(mode="python"),
+                "expected_mutation_categories": categories,
+            }
+        )
+
+        self.assertEqual(broad_request.allowed_changes, categories)
+        self.assertEqual(scope.additional_allowed_changes, categories)
+        self.assertEqual(report.expected_mutation_categories, categories)
+
+    def test_audition_controls_do_not_invalidate_project_checkpoint(self) -> None:
+        before = self.project()
+        after = before.model_copy(
+            update={
+                "transport": before.transport.model_copy(
+                    update={
+                        "playing": True,
+                        "recording": True,
+                        "metronome_enabled": True,
+                        "precount_enabled": True,
+                        "loop_mode": 1,
+                        "song_position_normalized": 0.5,
+                    }
+                )
+            }
+        )
+        self.assertEqual(
+            runs._project_state_digest(before), runs._project_state_digest(after)
+        )
+        for updates in (
+            {"channel_count": 5},
+            {"undo_history_position": 2},
+            {"tempo_bpm": 123.0},
+            {"project_title": "Different project"},
+        ):
+            with self.subTest(updates=updates):
+                self.assertNotEqual(
+                    runs._project_state_digest(before),
+                    runs._project_state_digest(before.model_copy(update=updates)),
+                )
+
+    def test_source_hash_mismatch_does_not_block_session_checks(self) -> None:
+        project = self.project()
+        inspector = mock.Mock()
+        inspector.project_summary.return_value = project
+        inspector.connection_info.return_value = project.connection
+        with mock.patch.object(runs, "ReadOnlyInspector", return_value=inspector):
+            digest, reason = runs._capture_project_state(SESSION)
+            self.assertEqual(digest, runs._project_state_digest(project))
+            self.assertEqual(reason, "")
+            self.assertEqual(runs._current_session_matches(SESSION), (True, ""))
+            self.assertFalse(runs._current_session_matches(OTHER_SESSION)[0])
+            inspector.connection_info.return_value = project.connection.model_copy(
+                update={"compatible": False}
+            )
+            self.assertFalse(runs._current_session_matches(SESSION)[0])
+
+    def test_named_channel_scope_does_not_require_unrelated_inventories(self) -> None:
+        project = self.project()
+        tracks = mock.Mock()
+        tracks.list_channels.return_value = SimpleNamespace(
+            channels=(SimpleNamespace(channel_index=1, name="Lead"),)
+        )
+        tracks.list_playlist_tracks.side_effect = AssertionError("unrelated read")
+        tracks.list_patterns.side_effect = AssertionError("unrelated read")
+        inspector = mock.Mock()
+        inspector.list_mixer_tracks.side_effect = AssertionError("unrelated read")
+        operation = runs.ApplyVerifiedBatchOperation(
+            operation_id="lead-level",
+            operations=({
+                "operation_id": "level",
+                "operation": "channel_mix",
+                "channel_index": 1,
+                "volume_normalized": 0.6,
+            },),
+        )
+        scoped = request(scope=runs.ProductionScope(
+            kind="selected_targets",
+            description="Adjust the lead.",
+            targets=(runs.ProductionTarget(kind="channel", name="Lead"),),
+        ))
+
+        blockers = runs._validate_live_targets(
+            scoped, [operation], project, project.connection, inspector, tracks
+        )
+
+        self.assertFalse(blockers)
+        tracks.list_channels.assert_called_once_with()
+        tracks.list_playlist_tracks.assert_not_called()
+        tracks.list_patterns.assert_not_called()
+        inspector.list_mixer_tracks.assert_not_called()
+
+
 class ProductionRunTests(unittest.TestCase):
     def setUp(self) -> None:
         checkpoint = mock.patch.object(
@@ -147,6 +272,131 @@ class ProductionRunTests(unittest.TestCase):
         )
         checkpoint.start()
         self.addCleanup(checkpoint.stop)
+
+    def test_noncached_execute_honors_caller_state_assertions(self) -> None:
+        for assertion, value, expected_code in (
+            ("expected_session_fingerprint", OTHER_SESSION, "expected_session_changed"),
+            ("expected_project_state_digest", "d" * 64, "expected_project_changed"),
+        ):
+            with (
+                self.subTest(assertion=assertion),
+                mock.patch.object(runs, "_live_validation", return_value=(
+                    [], [], SESSION, PROJECT_STATE,
+                )),
+                mock.patch.object(runs, "_dispatch_operation") as dispatch,
+                mock.patch.object(runs, "WriteModeManager") as mode,
+            ):
+                result = runs.ProductionRunRegistry().execute(
+                    request(allowed_changes=("pattern_metadata",)).model_copy(
+                        update={assertion: value}
+                    ),
+                    plan(select_pattern()),
+                )
+                self.assertEqual(result.status, "blocked")
+                self.assertIn(expected_code, {item.code for item in result.blockers})
+                dispatch.assert_not_called()
+                mode.assert_not_called()
+
+    def test_noncached_continuation_honors_revised_request_assertions(self) -> None:
+        for assertion, value, expected_code in (
+            ("expected_session_fingerprint", OTHER_SESSION, "expected_session_changed"),
+            ("expected_project_state_digest", "d" * 64, "expected_project_changed"),
+        ):
+            registry = runs.ProductionRunRegistry()
+            mode = mock.Mock()
+            mode.set_write_mode.return_value = SimpleNamespace(
+                session_fingerprint=SESSION, after_enabled=True,
+            )
+            initial_request = request(allowed_changes=("pattern_metadata",))
+            with (
+                self.subTest(assertion=assertion),
+                mock.patch.object(runs, "_live_validation", return_value=(
+                    [], [], SESSION, PROJECT_STATE,
+                )),
+                mock.patch.object(runs, "_current_session_matches", return_value=(True, "")),
+                mock.patch.object(runs, "WriteModeManager", return_value=mode),
+                mock.patch.object(runs, "_dispatch_operation", return_value=verified_selection()) as dispatch,
+            ):
+                first = registry.execute(initial_request, plan(select_pattern("first")))
+                continued = registry.continue_run(first.run_id, runs.ProductionRunDelta(
+                    mode="append", operations=(select_pattern("second", 3),),
+                    request=initial_request.model_copy(update={assertion: value}),
+                ))
+                self.assertEqual(first.status, "completed")
+                self.assertEqual(continued.status, "blocked")
+                self.assertIn(expected_code, {item.code for item in continued.blockers})
+                dispatch.assert_called_once()
+
+    def test_implicit_continuation_advances_its_own_expected_checkpoint(self) -> None:
+        registry = runs.ProductionRunRegistry()
+        mode = mock.Mock()
+        mode.set_write_mode.return_value = SimpleNamespace(
+            session_fingerprint=SESSION, after_enabled=True,
+        )
+        after_write = "d" * 64
+        with (
+            mock.patch.object(runs, "_live_validation", side_effect=[
+                ([], [], SESSION, PROJECT_STATE), ([], [], SESSION, after_write),
+            ]),
+            mock.patch.object(runs, "_capture_project_state", return_value=(after_write, "")),
+            mock.patch.object(runs, "_current_session_matches", return_value=(True, "")),
+            mock.patch.object(runs, "WriteModeManager", return_value=mode),
+            mock.patch.object(runs, "_dispatch_operation", return_value=verified_selection()) as dispatch,
+        ):
+            first = registry.execute(
+                request(allowed_changes=("pattern_metadata",)).model_copy(update={
+                    "expected_session_fingerprint": SESSION,
+                    "expected_project_state_digest": PROJECT_STATE,
+                }),
+                plan(select_pattern("first")),
+            )
+            continued = registry.continue_run(first.run_id, runs.ProductionRunDelta(
+                mode="append", operations=(select_pattern("second", 3),),
+            ))
+
+        self.assertEqual(first.status, "completed")
+        self.assertEqual(continued.status, "completed")
+        self.assertEqual(dispatch.call_count, 2)
+        self.assertEqual(
+            registry.get(first.run_id).state.request.expected_project_state_digest,
+            after_write,
+        )
+
+    def test_unrecorded_dispatch_cannot_replay_through_continuation(self) -> None:
+        registry = runs.ProductionRunRegistry()
+        mode = mock.Mock()
+        mode.set_write_mode.return_value = SimpleNamespace(
+            session_fingerprint=SESSION, after_enabled=True,
+        )
+        with (
+            mock.patch.object(runs, "_live_validation", return_value=(
+                [], [], SESSION, PROJECT_STATE,
+            )),
+            mock.patch.object(runs, "_current_session_matches", return_value=(True, "")),
+            mock.patch.object(runs, "WriteModeManager", return_value=mode),
+            mock.patch.object(runs, "_dispatch_operation", return_value=verified_selection()) as dispatch,
+            mock.patch.object(runs, "_generated_outputs_for", side_effect=RuntimeError(
+                "post-dispatch receipt construction failed"
+            )),
+        ):
+            first = registry.execute(
+                request(allowed_changes=("pattern_metadata",)),
+                plan(select_pattern("first")),
+            )
+            self.assertEqual(first.status, "blocked")
+            self.assertFalse(first.receipts)
+            self.assertIn("run_execution_failed", {item.code for item in first.blockers})
+            for delta in (
+                runs.ProductionRunDelta(
+                    mode="append", operations=(select_pattern("second", 3),),
+                ),
+                runs.ProductionRunDelta(
+                    mode="replace_remaining", operations=(select_pattern("replacement", 3),),
+                ),
+            ):
+                with self.assertRaisesRegex(ValueError, "lost its execution cursor"):
+                    registry.continue_run(first.run_id, delta)
+            dispatch.assert_called_once()
 
     def test_valid_multi_operation_plan_has_order_and_capabilities(self) -> None:
         production_plan = plan(
@@ -654,6 +904,10 @@ class ProductionRunTests(unittest.TestCase):
             mock.patch.object(
                 runs, "_collect_run_readiness", return_value=(initial_report, collection)
             ) as collect,
+            mock.patch.object(
+                runs, "_capture_project_state",
+                return_value=(runs._project_state_digest(project), ""),
+            ),
             mock.patch.object(runs, "_current_session_matches", return_value=(True, "")),
             mock.patch.object(runs, "WriteModeManager", return_value=mode),
             mock.patch.object(

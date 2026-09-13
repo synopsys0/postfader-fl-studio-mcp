@@ -102,7 +102,7 @@ class MCPBPackagingTests(unittest.TestCase):
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 75)
-        self.assertEqual(len(names), 127)
+        self.assertEqual(len(names), 134)
         self.assertEqual(
             {
                 name

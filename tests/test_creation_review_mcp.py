@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -39,7 +40,10 @@ from fl_studio_mcp.creation_review.persistence import (
 )
 from fl_studio_mcp.creation_review.revision_executor import RevisionExecutor
 from fl_studio_mcp.creation_review.revision_planner import revision_request_digest
-from fl_studio_mcp.creation_review.sessions import ReviewSessionError, ReviewSessionRegistry
+from fl_studio_mcp.creation_review.sessions import (
+    ReviewSessionError,
+    ReviewSessionRegistry,
+)
 from fl_studio_mcp.mcp_server import mcp
 from fl_studio_mcp.production_runs import ProductionRunSnapshot
 
@@ -125,7 +129,7 @@ class CreationReviewMCPTests(unittest.TestCase):
 
     def test_review_tools_are_registered_with_honest_annotations(self) -> None:
         tools = {item.name: item for item in asyncio.run(mcp.list_tools())}
-        self.assertEqual(len(tools), 127)
+        self.assertEqual(len(tools), 134)
         read_only = {
             "postfader_review_start",
             "postfader_review_attach_assets",
@@ -485,7 +489,7 @@ class CreationReviewMCPTests(unittest.TestCase):
             request = self._apply_request(
                 review_session_id="review-authorization",
                 authorized_to_modify=True,
-                revision_authorized_to_modify=True,
+                revision_authorized_to_modify=False,
             )
             registry.add_revision_plan(
                 "review-authorization",
@@ -515,7 +519,60 @@ class CreationReviewMCPTests(unittest.TestCase):
             ) as executor:
                 result = review_api.review_apply_revision(request)
             executor.assert_called_once()
+            self.assertTrue(executor.call_args.kwargs["current_authorization"])
             self.assertEqual(result.revision_pass_id, "pass-later-authorization")
+
+    def test_overlapping_apply_does_not_dispatch_the_same_revision_twice(self) -> None:
+        registry = self._registry()
+        self._evaluated_session(registry)
+        request = self._apply_request(
+            review_session_id="review-1", authorized_to_modify=True,
+        )
+        registry.add_revision_plan(
+            "review-1",
+            RevisionPlan(
+                revision_plan_id="revision-1", review_session_id="review-1",
+                source_evaluation_id="evaluation-1", source_run_id="run-1",
+                revision_request_digest=revision_request_digest(request.request),
+                operations=(RecordFeedbackLockOperation(operation_id="lock-record"),),
+            ),
+        )
+        entered = threading.Event()
+        finish = threading.Event()
+        errors = []
+
+        def execute(*args, **kwargs):
+            entered.set()
+            if not finish.wait(5):
+                raise RuntimeError("test did not release the executor")
+            return RevisionPass(
+                revision_pass_id="pass-concurrent", review_session_id="review-1",
+                source_evaluation_id="evaluation-1", revision_plan_id="revision-1",
+                source_run_id="run-1", status="completed",
+            )
+
+        def first_apply():
+            try:
+                review_api.review_apply_revision(request)
+            except Exception as exc:
+                errors.append(exc)
+
+        with patch.object(review_api, "REVIEW_SESSIONS", registry), patch.object(
+            RevisionExecutor, "apply", side_effect=execute,
+        ) as executor:
+            worker = threading.Thread(target=first_apply)
+            worker.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                with self.assertRaisesRegex(ValueError, "already being applied"):
+                    review_api.review_apply_revision(request)
+                self.assertEqual(executor.call_count, 1)
+            finally:
+                finish.set()
+                worker.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(registry.get("review-1").revision_passes), 1)
 
     def test_apply_rejects_request_that_differs_from_validated_plan(self) -> None:
         registry = self._registry()

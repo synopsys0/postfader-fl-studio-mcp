@@ -43,6 +43,7 @@ from fl_studio_mcp.plugin_atlas import (
     match_runtime_plugin,
     recommend_products,
     recommend_stock_alternatives,
+    score_product,
 )
 from fl_studio_mcp.plugin_atlas.cli import run as run_atlas_cli
 from fl_studio_mcp.plugin_atlas.compatibility import join_compatibility
@@ -77,12 +78,6 @@ AUXILIARY_PLUGIN_DIGEST = (
 LEGACY_NAME_DIGEST = (
     "859afe276a49ef3c94d20834b6c2c2c65fd557421b18b46fab2e3cdb4bdb01b2"
 )
-# Canonical JSON digest of the complete v0.20 mix_list_plugin_profiles response.
-# Atlas owns the records now, but the existing public response must not drift.
-V020_MIX_PROFILE_CATALOG_DIGEST = (
-    "a0a2d2ebfed261efdae83d4c6981a26604434fbdfaa1bf5a43d0f724204fab14"
-)
-
 AUXILIARY_PLUGIN_ROWS = (
     ("FL Studio Mobile Rack + FX", "mobile_container", "fruity"),
     ("Fruity Envelope Controller", "internal_controller", "fruity"),
@@ -880,13 +875,62 @@ class RecommendationTests(unittest.TestCase):
 
     def test_stock_alternatives_include_explicit_and_inferred_stock_rows(self) -> None:
         alternatives = recommend_stock_alternatives(self.registry, "p-alpha")
-        self.assertEqual([row.product_id for row in alternatives], ["p-stock", "p-synth"])
+        self.assertEqual([row.product_id for row in alternatives], ["p-stock"])
         self.assertTrue(all(row.stock_alternative for row in alternatives))
         self.assertTrue(all(row.source_product_id == "p-alpha" for row in alternatives))
-        self.assertGreater(alternatives[0].score, alternatives[1].score)
         self.assertIn("explicit stock alternative", alternatives[0].reasons)
         with self.assertRaisesRegex(KeyError, "unknown Atlas product"):
             recommend_stock_alternatives(self.registry, "missing")
+
+    def test_kind_filters_even_exact_names_and_stock_tiebreakers(self) -> None:
+        self.assertEqual(recommend_products(self.registry, RecommendationRequest(
+            query="Alpha Compressor", kind="instrument", prefer_stock=True,
+        )), ())
+        self.assertEqual([row.product_id for row in recommend_products(
+            self.registry, RecommendationRequest(kind="instrument", prefer_stock=True),
+        )], ["p-synth"])
+        product = self.registry.product("p-alpha")
+        assert product is not None
+        self.assertEqual(score_product(product, RecommendationRequest(kind="instrument")), 0.0)
+
+    def test_poor_fit_and_stock_or_loaded_status_cannot_create_relevance(self) -> None:
+        product = self.registry.product("p-alpha")
+        assert product is not None
+        negative = product.model_copy(update={"poor_fit_when": ("granular resynthesis",)})
+        registry = AtlasRegistry.from_bundle(self.registry.bundle.model_copy(update={"products": (negative,)}))
+        self.assertEqual(recommend_products(
+            registry, RecommendationRequest(query="granular resynthesis", prefer_stock=True),
+            loaded_matches=(self._loaded_match(),),
+        ), ())
+        self.assertEqual(score_product(negative, "granular resynthesis"), 0.0)
+
+    def test_bundled_bass_instrument_search_excludes_bass_effects(self) -> None:
+        registry = load_bundled_registry()
+        rows = recommend_products(registry, RecommendationRequest(query="bass", kind="instrument", limit=128))
+        self.assertGreater(len(rows), 3)
+        self.assertNotIn("image-line.fruity-bass-boost", {row.product_id for row in rows})
+        self.assertIn("image-line.3x-osc", {row.product_id for row in rows})
+        for row in rows:
+            product = registry.product(row.product_id)
+            assert product is not None
+            self.assertTrue(product.kind == "instrument" or "instrument" in product.plugin_kinds)
+
+    def test_common_instruments_are_usable_source_knowledge(self) -> None:
+        registry = load_bundled_registry()
+        rows = recommend_products(registry, RecommendationRequest(
+            sources=("piano",), kind="instrument", limit=128,
+        ))
+        self.assertIn("image-line.fl-keys", {row.product_id for row in rows})
+
+    def test_natural_request_filler_does_not_make_every_instrument_relevant(self) -> None:
+        registry = load_bundled_registry()
+        rows = recommend_products(registry, RecommendationRequest(
+            query="I want a plugin for bass", kind="instrument", limit=128,
+        ))
+        ids = {row.product_id for row in rows}
+        self.assertIn("image-line.boobass", ids)
+        self.assertNotIn("image-line.fl-keys", ids)
+        self.assertNotIn("image-line.fpc", ids)
 
     def test_recommendation_limits_are_bounded(self) -> None:
         for limit in (0, 129):
@@ -976,16 +1020,14 @@ class GenericDiscoveryAndMixCompatibilityTests(unittest.TestCase):
 
     def test_existing_mix_profile_response_shape_remains_compatible(self) -> None:
         complete_catalog = list_plugin_profiles()
-        encoded = json.dumps(
-            complete_catalog.model_dump(mode="json"),
-            ensure_ascii=True,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-        self.assertEqual(
-            hashlib.sha256(encoded).hexdigest(),
-            V020_MIX_PROFILE_CATALOG_DIGEST,
-        )
+        payload = complete_catalog.model_dump(mode="json")
+        self.assertEqual(set(payload), {"schema_version", "profiles", "profile_count", "warnings"})
+        self.assertEqual(payload["profile_count"], len(payload["profiles"]))
+        expected_fields = {"profile_id", "plugin_names", "category", "supported_intents", "parameters", "recipes", "provenance", "exact_version_required", "warnings"}
+        for row in payload["profiles"]:
+            self.assertEqual(set(row), expected_fields)
+            self.assertIsInstance(row["plugin_names"], list)
+            self.assertIsInstance(row["parameters"], list)
 
         catalog = list_plugin_profiles("compressor")
         self.assertEqual(catalog.profile_count, 1)

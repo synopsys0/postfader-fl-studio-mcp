@@ -528,6 +528,7 @@ class CreativeTests(unittest.TestCase):
     def test_macos_piano_roll_shortcut_targets_fl_studio_process(self) -> None:
         completed = mock.Mock(returncode=0, stderr="")
         with (
+            mock.patch.dict(os.environ, {"FL_BRIDGE_SANDBOXED": "0"}),
             mock.patch.object(
                 creative_module, "_platform_label", return_value="macos"
             ),
@@ -1073,6 +1074,16 @@ class CreativeTests(unittest.TestCase):
         self.assertFalse(prepare_thread.is_alive())
         self.assertEqual(errors, [])
         self.assertTrue(bootstrap_written.is_set())
+
+    def test_pattern_creation_uses_protocol_instead_of_build_hash(self) -> None:
+        client = DirectFakeClient()
+        with (
+            mock.patch.object(bridge, "BRIDGE_SOURCE_SHA256", "0" * 64),
+            mock.patch("fl_studio_mcp.creative.get_client", return_value=client),
+        ):
+            result = prepare_empty_pattern(name="Verse", length_beats=32)
+        self.assertTrue(result.verified)
+        self.assertEqual(_state.PATTERNS[result.pattern_number].name, "Verse")
 
     def test_native_pattern_marker_and_automation_workflows(self) -> None:
         client = DirectFakeClient()

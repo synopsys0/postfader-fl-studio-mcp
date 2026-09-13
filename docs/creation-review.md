@@ -4,7 +4,7 @@ Creation Review connects a completed Production Run to one or more bounces that
 the user exported from FL Studio. It measures the supplied audio, keeps direct
 producer feedback as the highest-authority taste signal, compiles one bounded
 revision, compares the next bounce, and creates a precise delivery handoff.
-PostFader does not render, save, or listen to the live project, and it does not
+Creation Review does not render, save, or listen to the live project, and it does not
 contain a language or audio model.
 
 ## Review Sessions
@@ -368,17 +368,16 @@ bounces, project files, screenshots, logs, and evidence outside source control.
 
 ## Current boundaries
 
-Creation Review has no live audio capture, automatic render or save/Save As,
+Creation Review has no live audio capture, automatic FL render or save/Save As,
 Playlist clip CRUD or placement readback, plug-in insertion/removal/reorder,
 automation-point read/edit, unrestricted file or URL access, cloud telemetry,
-stem separation, embedded model, or undocumented UI automation. Piano Roll
+embedded model, or undocumented UI automation. Piano Roll
 score enumeration/editing remains a separate user-run `.pyscript` path and is
 not application-verified. Marker names can be observed, but marker times are
 not verified. The live FL `ProjectSummary` normally provides scalar tempo and
 meter, not automatic tempo-map discovery; map support depends on retained or
 caller-supplied source context. Vocal and instrumental stems can be measured
-when supplied, but source separation, slicing, pitch mapping, and chop
-generation remain future Vocal Chop Engine work. Musical approval and the
+when supplied. Musical approval and the
 under-five-minute armed-ready live revision target require maintainer
 acceptance against a disposable project and private bounces; public tests use
 only deterministic synthetic material.

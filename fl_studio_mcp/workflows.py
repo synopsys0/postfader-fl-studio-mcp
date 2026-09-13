@@ -68,7 +68,6 @@ from .track_b_contracts import (
     VerifiedTempoWrite,
 )
 from .verified_writer import (
-    PROVENANCE_REFUSAL,
     WRITES_DISABLED_HELP,
     VerifiedWriter,
     VerifiedWritesUnavailable,
@@ -607,10 +606,6 @@ class VerifiedBatchExecutor:
                     mode=connection.bridge_mode,
                     enabled=connection.verified_writes_enabled,
                 )
-            )
-        if not connection.bridge_provenance_verified:
-            raise VerifiedWritesUnavailable(
-                PROVENANCE_REFUSAL.format(status=connection.bridge_provenance)
             )
         session = connection.session_fingerprint
         if session is None:

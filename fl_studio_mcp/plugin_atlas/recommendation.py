@@ -18,12 +18,27 @@ from .registry import AtlasRegistry, normalize_search_text
 
 
 MAX_RECOMMENDATIONS = 128
+_QUERY_STOP_WORDS = frozenset({
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "could", "do", "for", "from",
+    "give", "i", "in", "is", "it", "like", "make", "me", "more", "my", "need", "of", "on",
+    "or", "please", "some", "that", "the", "this", "to", "use", "using", "want", "what",
+    "which", "with", "would", "plugin", "plugins",
+})
+_MUSICAL_TERM_ALIASES = {
+    "vocals": "vocal", "leads": "lead", "pads": "pad", "textures": "texture",
+    "drums": "drum", "bells": "bell", "compressors": "compressor",
+    "reverbs": "reverb", "delays": "delay", "synths": "synthesizer", "synth": "synthesizer",
+}
 
 
 def _terms(values: Iterable[str]) -> frozenset[str]:
     result: set[str] = set()
     for value in values:
-        result.update(normalize_search_text(value).split())
+        result.update(
+            _MUSICAL_TERM_ALIASES.get(term, term)
+            for term in normalize_search_text(value).split()
+            if term not in _QUERY_STOP_WORDS
+        )
     return frozenset(result)
 
 
@@ -68,6 +83,8 @@ def _product_score(
     *,
     loaded_matches: Sequence[RuntimeMatch] = (),
 ) -> tuple[float, tuple[str, ...]]:
+    if request.kind is not None and not _matches_kind(product, request.kind):
+        return 0.0, ()
     query = normalize_search_text(request.query)
     query_terms = _terms((request.query,))
     score = 0.0
@@ -91,8 +108,9 @@ def _product_score(
                 *product.categories,
                 *product.problems,
                 *product.use_cases,
-                *product.poor_fit_when,
                 *product.common_sources,
+                *product.common_instruments,
+                *product.common_track_types,
                 *product.technique_ids,
             )
             field_overlap = _overlap(query_terms, field_values)
@@ -112,13 +130,20 @@ def _product_score(
         if overlap:
             score += 0.28 * overlap
             matched.append("technique")
-    source_overlap = _overlap(_terms(request.sources), product.common_sources)
+    source_overlap = _overlap(
+        _terms(request.sources),
+        (*product.common_sources, *product.common_instruments, *product.common_track_types),
+    )
     if source_overlap:
         score += 0.15 * source_overlap
         matched.append("source")
-    if request.kind is not None and (
-        product.kind == request.kind or request.kind in product.plugin_kinds
-    ):
+    # Stock status and runtime presence are tie-breakers, not evidence that a
+    # product solves the requested problem. A negative use-case sentence must
+    # never turn an otherwise unrelated product into a recommendation.
+    has_content_request = bool(query or requested_problems or requested_techniques or request.sources)
+    if has_content_request and not matched:
+        return 0.0, ()
+    if request.kind is not None:
         score += 0.10
         matched.append("kind")
     if request.prefer_stock and product.stock:
@@ -132,12 +157,16 @@ def _product_score(
         ),
         None,
     )
-    if runtime is not None:
+    if runtime is not None and runtime.availability.state == "loaded":
         score += 0.08 * runtime.overall_score
         matched.append("loaded_match")
     if not (query or requested_problems or requested_techniques or request.sources):
         score = 0.5 + (0.05 if request.prefer_stock and product.stock else 0.0)
     return min(1.0, score), tuple(dict.fromkeys(matched))
+
+
+def _matches_kind(product: ProductKnowledge, requested: str) -> bool:
+    return product.kind == requested or requested in product.plugin_kinds
 
 
 def score_product(
@@ -203,6 +232,8 @@ def recommend_products(
         raise ValueError("recommendation limit is outside bounds")
     rows: list[ProductRecommendation] = []
     for product in registry.products:
+        if base.kind is not None and not _matches_kind(product, base.kind):
+            continue
         score, fields = _product_score(product, base, loaded_matches=loaded_matches)
         exact_query = normalize_search_text(base.query) in {
             normalize_search_text(product.name),
@@ -267,6 +298,10 @@ def recommend_stock_alternatives(
         if item.stock
         and item.product_id != source.product_id
         and item.lifecycle in {"current", "auxiliary"}
+        and (
+            item.product_id in explicit
+            or bool({item.kind, *item.plugin_kinds}.intersection({source.kind, *source.plugin_kinds}))
+        )
     ]
     scored: list[ProductRecommendation] = []
     source_terms = _terms(
@@ -288,6 +323,8 @@ def recommend_stock_alternatives(
         )
         overlap = len(source_terms.intersection(candidate_terms)) / max(1, len(source_terms))
         score = min(1.0, 0.7 * overlap + (0.3 if candidate.product_id in explicit else 0.0))
+        if score == 0.0:
+            continue
         reasons = ("explicit stock alternative",) if candidate.product_id in explicit else (
             "shared production problems or techniques",
         )

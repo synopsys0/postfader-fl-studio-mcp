@@ -19,8 +19,8 @@ from fl_studio_mcp.bridge_install import expected_bridge_deployment
 from fl_studio_mcp.performance import (
     TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
     TEMPO_READBACK_TOLERANCE,
-    TRACK_B_MUTATION_COMMANDS,
     TRACK_B_MCP_TOOL_NAMES,
+    TRACK_B_MUTATION_COMMANDS,
     TRACK_B_READ_COMMANDS,
     TrackBBoundaryViolation,
     TrackBController,
@@ -37,7 +37,6 @@ from fl_studio_mcp.track_b_contracts import (
     ChannelIdentitySnapshot,
     ChannelMixSnapshot,
     ChannelPitchSnapshot,
-    ChannelRouteSnapshot,
     ChannelSoloSnapshot,
     ChannelSummary,
     ExpectedChannelIdentityState,
@@ -79,6 +78,11 @@ from fl_studio_mcp.track_b_contracts import (
     compute_channel_fingerprint,
     compute_step_sequence_digest,
     normalize_fl_color,
+)
+from fl_studio_mcp.verified_writer import (
+    VerifiedWriter,
+    VerifiedWritesUnavailable,
+    WriteGateway,
 )
 
 
@@ -450,12 +454,20 @@ class MutationGateTests(unittest.TestCase):
             controller.set_playing(playing=True)
         self.assertEqual(client.calls, [])
 
-    def test_mismatched_bridge_provenance_refuses_before_dispatch(self) -> None:
+    def test_source_digest_does_not_override_compatible_live_protocol(self) -> None:
         controller, client = controller_for(
             transport_handler,
             ping=compatible_ping(bridge_source_sha256="0" * 64),
         )
-        with self.assertRaisesRegex(TrackBMutationsUnavailable, "source SHA-256"):
+        result = controller.set_playing(playing=True)
+        self.assertTrue(result.verified)
+        self.assertEqual([name for name, _ in client.calls], ["transport.set_playing"])
+
+    def test_missing_live_session_refuses_before_any_mutation(self) -> None:
+        controller, client = controller_for(
+            transport_handler, ping=compatible_ping(session_fingerprint=None)
+        )
+        with self.assertRaisesRegex(TrackBMutationsUnavailable, "session fingerprint"):
             controller.set_playing(playing=True)
         self.assertEqual(client.calls, [])
 
@@ -1693,6 +1705,38 @@ def effect_target_echo(track: int, slot: int) -> dict[str, Any]:
 
 
 class TargetAwarePluginTests(unittest.TestCase):
+    def test_display_units_reach_both_writers_and_validate_prefixed_readback(self) -> None:
+        def handler(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
+            self.assertEqual(arguments["target_unit"], "Hz")
+            return {
+                **mutation_envelope(command, arguments), **effect_target_echo(4, 2),
+                "index": 1, "plugin": "EQ", "name": "Frequency", "matched_on": "index",
+                "normalised": 0.5, "requested_unit": "Hz", "landed_on": 3000.0,
+                "tolerance": 60.0, "before": {"value": 0.2, "display": "200Hz"},
+                "after": {"value": 0.5, "display": "3.0kHz"}, "verified": True,
+            }
+
+        for targeted in (False, True):
+            with self.subTest(targeted=targeted):
+                ping = {**compatible_ping(), "plugin_display_units": True}
+                client = ScriptedClient(handler, ping=ping)
+                controller = TrackBController(TrackBMutationGateway(client)) if targeted else VerifiedWriter(WriteGateway(client))
+                result = controller.set_plugin_parameter_display(track_index=4, slot_index=2, parameter=1, target_value=3000.0, target_unit="hz")
+                self.assertTrue(result.verified)
+                self.assertEqual(result.requested_unit, "Hz")
+                self.assertEqual(result.landed_value, 3000.0)
+                self.assertEqual(len(client.calls), 1)
+                self.assertEqual(client.ping_count, 1)
+
+    def test_unit_requests_refuse_older_bridges_before_mutation(self) -> None:
+        for targeted in (False, True):
+            with self.subTest(targeted=targeted):
+                client = ScriptedClient(None)
+                controller = TrackBController(TrackBMutationGateway(client)) if targeted else VerifiedWriter(WriteGateway(client))
+                with self.assertRaises((TrackBMutationsUnavailable, VerifiedWritesUnavailable)):
+                    controller.set_plugin_parameter_display(track_index=4, slot_index=2, parameter=1, target_value=3000.0, target_unit="Hz")
+                self.assertFalse(client.calls)
+
     def test_existing_six_plugin_tools_are_the_only_target_aware_names(self) -> None:
         self.assertEqual(
             TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
@@ -2114,6 +2158,13 @@ class TargetAwarePluginTests(unittest.TestCase):
 
 
 class TargetAwareMCPBoundaryTests(unittest.TestCase):
+    def test_mcp_display_unit_is_forwarded_for_both_addressing_modes(self) -> None:
+        with mock.patch.object(mcp_server, "_write", new_callable=mock.AsyncMock) as legacy, mock.patch.object(mcp_server, "_performance_write", new_callable=mock.AsyncMock) as targeted:
+            asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", track_index=4, slot_index=2))
+            asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", target=ChannelGeneratorTarget(channel_index=7)))
+        self.assertEqual(legacy.await_args.kwargs["target_unit"], "Hz")
+        self.assertEqual(targeted.await_args.kwargs["target_unit"], "Hz")
+
     TARGETED_ADDRESS_TOOLS = {
         "plugins_inspect_parameter_map",
         "plugins_scan_parameters",

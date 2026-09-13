@@ -547,7 +547,7 @@ def check_lean_writes(c):
               "channel.set_solo", "channel.set_pitch", "channel.select",
               "pattern.select", "pattern.set_identity", "pattern.set_length",
               "playlist.set_identity", "playlist.set_state",
-              "creative.prepare_piano_roll", "arrangement.add_markers",
+              "arrangement.add_markers",
               "automation.record_value",
               "channel.set_identity", "channel.route_to_mixer",
               "sequencer.set", "channel.trigger_note",
@@ -556,10 +556,11 @@ def check_lean_writes(c):
     check("the write surface is exactly the published set",
           w.LEAN_WRITE_COMMANDS == published_writes,
           sorted(w.LEAN_WRITE_COMMANDS))
-    check("the dispatcher contains exactly reads, session control, and verified writes",
+    check("the dispatcher contains exactly reads, session control, navigation and verified writes",
           set(w.HANDLERS) == set(
               w.READ_ONLY_COMMANDS
               | w.SESSION_CONTROL_COMMANDS
+              | w.NAVIGATION_COMMANDS
               | w.LEAN_WRITE_COMMANDS
           ),
           sorted(w.HANDLERS))
@@ -607,8 +608,6 @@ def check_lean_writes(c):
         ("pattern.set_length", {"pattern": 1, "length": 8}),
         ("playlist.set_identity", {"track": 1, "name": "gated"}),
         ("playlist.set_state", {"track": 1, "muted": True}),
-        ("creative.prepare_piano_roll", {
-            "channel": 0, "pattern": 1, "index_scope": "global"}),
         ("arrangement.add_markers", {
             "markers": [{"time_ticks": 0, "name": "gated"}]}),
         ("automation.record_value", {
@@ -1459,6 +1458,156 @@ def check_lean_writes(c):
         )
 
     check("no verified write saved the project", not saves, saves)
+
+
+def check_display_unit_solver():
+    """Exercise display suffix changes through the actual bounded solver."""
+    import plugins as fake_plugins
+    from fl_studio_mcp.contracts import display_value_in_unit
+
+    print("\n-- display-unit conversions across solver observations --")
+    w = _load_bridge_with_writes()
+    for text, unit, expected in (
+        ("3.0kHz", "Hz", 3000.0), ("500 Hz", "kHz", 0.5),
+        ("250ms", "seconds", 0.25), ("1.5 seconds", "ms", 1500.0),
+        ("2sec", "ms", 2000.0), ("-18dB", "dB", -18.0),
+        ("40%", "percent", 40.0), ("6:2", "ratio", 3.0),
+        (".5", "ratio", 0.5),
+    ):
+        host_value = display_value_in_unit(text, unit)
+        bridge_value = w._display_value_in_unit(text, unit)
+        check("host and standalone bridge convert %r to %s consistently" % (text, unit),
+              abs(host_value - expected) < 1e-9 and abs(bridge_value - expected) < 1e-9,
+              (host_value, bridge_value, expected))
+    for text, unit in (("1 kHz", "dB"), ("40", "%"),
+                       ("3 oct", "ratio"), ("1:0", "ratio"),
+                       ("inf Hz", "Hz")):
+        rejected = 0
+        for parser in (display_value_in_unit, w._display_value_in_unit):
+            try:
+                parser(text, unit)
+            except ValueError:
+                rejected += 1
+        check("host and bridge both reject incompatible %r for %s" % (text, unit),
+              rejected == 2, rejected)
+    original_display = fake_plugins.getParamValueString
+    try:
+        cases = (
+            ("frequency Hz", "Hz", 3000.0, 5.0, "frequency"),
+            ("frequency kHz", "kHz", 3.0, 0.005, "frequency"),
+            ("descending frequency", "Hz", 3000.0, 5.0, "descending_frequency"),
+            ("time milliseconds", "ms", 2500.0, 5.0, "time"),
+            ("time seconds", "s", 2.5, 0.005, "time"),
+            ("decibels", "dB", -18.0, 0.01, "gain"),
+            ("percentage", "%", 40.0, 0.01, "percent"),
+            ("ratio notation", "ratio", 4.0, 0.005, "ratio"),
+            ("ratio denominator", "ratio", 4.0, 0.005, "scaled_ratio"),
+            ("plain ratio", "ratio", 4.0, 0.005, "unitless"),
+        )
+        for label, unit, target, tolerance, curve in cases:
+            _state.reset()
+            plugin = _state.TRACKS[3].slots[1]
+            plugin.values[0] = 0.2
+            observed_suffixes = set()
+
+            def display(index, track, slot=-1, *args, **kwargs):
+                if (track, slot, index) != (3, 1, 0):
+                    return original_display(index, track, slot, *args, **kwargs)
+                value = plugin.values[index]
+                if curve in ("frequency", "descending_frequency"):
+                    hz = 20.0 * 1000.0 ** (1.0 - value if curve == "descending_frequency" else value)
+                    suffix = "kHz" if hz >= 1000.0 else "Hz"
+                    observed_suffixes.add(suffix)
+                    return "%.6f %s" % (hz / 1000.0 if suffix == "kHz" else hz, suffix)
+                if curve == "time":
+                    ms = 100.0 * 100.0 ** value
+                    suffix = "s" if ms >= 1000.0 else "ms"
+                    observed_suffixes.add(suffix)
+                    return "%.6f %s" % (ms / 1000.0 if suffix == "s" else ms, suffix)
+                if curve == "gain":
+                    return "%.6f dB" % (-60.0 + value * 60.0)
+                if curve == "percent":
+                    return "%.6f %%" % (100.0 * value)
+                ratio = 1.0 + value * 9.0
+                if curve == "scaled_ratio":
+                    return "%.6f:2" % (ratio * 2)
+                return "%.6f:1" % ratio if curve == "ratio" else "%.6f" % ratio
+
+            fake_plugins.getParamValueString = display
+            response, yields = drive(w, "plugin.set_param_display", track=3, slot=1,
+                                     param=0, target=target, tolerance=tolerance,
+                                     target_unit=unit)
+            result = response.get("result", {})
+            check(label + " lands in the requested physical unit",
+                  response.get("ok") and result.get("verified")
+                  and abs(result.get("landed_on", target + 100) - target) <= tolerance,
+                  response)
+            check(label + " remains bounded and yields for FL readback",
+                  3 <= yields <= w.SOLVE_ITERATIONS + 8, (yields, response))
+            if "frequency" in curve:
+                check(label + " observes both Hz and kHz during one search",
+                      observed_suffixes == {"Hz", "kHz"}, observed_suffixes)
+            if curve == "time":
+                check(label + " observes both ms and seconds during one search",
+                      observed_suffixes == {"ms", "s"}, observed_suffixes)
+
+        for unit, text in (("Hz", "-18 dB"), ("dB", "5 ms"),
+                           ("%", "0.5"), ("ratio", "2.5:0"),
+                           ("bananas", "40 %")):
+            _state.reset()
+            plugin = _state.TRACKS[3].slots[1]
+            before = list(plugin.values)
+            before_undo = list(_state.UNDO)
+            fake_plugins.getParamValueString = lambda *args, **kwargs: text
+            response = dispatch(w, "plugin.set_param_display", track=3, slot=1,
+                                param=0, target=3.0, target_unit=unit)
+            check("incompatible display %r for %r is refused before writes" % (text, unit),
+                  not response.get("ok") and plugin.values == before
+                  and _state.UNDO == before_undo, response)
+
+        _state.reset()
+        plugin = _state.TRACKS[3].slots[1]
+        plugin.values[0] = 0.2
+        before = plugin.values[0]
+
+        def changing_family(index, track, slot=-1, *args, **kwargs):
+            value = plugin.values[index]
+            return "%.3f Hz" % (1000 * value) if value < 0.5 else "%.3f dB" % value
+
+        fake_plugins.getParamValueString = changing_family
+        response = dispatch(w, "plugin.set_param_display", track=3, slot=1,
+                            param=0, target=750.0, target_unit="Hz")
+        check("unit family changing mid-search is reported without success",
+              not response.get("ok"), response)
+        check("unit family change restores the starting normalized control",
+              abs(plugin.values[0] - before) < 1e-9, plugin.values[0])
+
+        for final_text in ("3 kHz", "60 %"):
+            _state.reset()
+            plugin = _state.TRACKS[3].slots[1]
+            plugin.values[0] = 0.2
+            at_target_reads = [0]
+
+            def final_observation_changes(index, track, slot=-1, *args, **kwargs):
+                value = plugin.values[index]
+                if abs(value - 0.5) < 1e-9:
+                    at_target_reads[0] += 1
+                    if at_target_reads[0] >= 2:
+                        return final_text
+                return "%.3f %%" % (value * 100.0)
+
+            fake_plugins.getParamValueString = final_observation_changes
+            response = dispatch(w, "plugin.set_param_display", track=3, slot=1,
+                                param=0, target=50.0, tolerance=0.01, target_unit="%")
+            result = response.get("result", {})
+            check("contradictory final display %r cannot retain prior verification" % final_text,
+                  not response.get("ok") or not result.get("verified"), response)
+            if final_text == "60 %" and response.get("ok"):
+                check("final landed value reports the last observed physical value",
+                      result.get("landed_on") == 60.0, response)
+    finally:
+        fake_plugins.getParamValueString = original_display
+        _state.reset()
 
 
 def check_track_b():
@@ -2973,9 +3122,244 @@ def check_mixer_count_sentinel(c):
         fake_channels.setTargetFxTrack = saved["set_target"]
 
 
+def check_project_load_lifecycle():
+    """Project switches cancel old work without touching new project indices."""
+    import channels as fake_channels
+    import tempfile
+
+    print("\n-- project-load epochs and pending command cleanup --")
+    w = _load_bridge_with_writes()
+    notes = []
+    calls = []
+    responses = []
+    original_note = getattr(fake_channels, "midiNoteOn", None)
+    fake_channels.midiNoteOn = lambda channel, note, velocity, midi_channel=-1: notes.append(
+        (channel, note, velocity, midi_channel)
+    )
+
+    class LifecycleTransport:
+        name = "test"
+
+        def __init__(self):
+            self.ready = []
+
+        def alive(self, handle):
+            return True
+
+        def poll(self):
+            requests, self.ready = self.ready, []
+            return requests
+
+        def respond(self, handle, response):
+            responses.append(response)
+
+        def flush(self):
+            pass
+
+        def close(self):
+            pass
+
+        def project_changed(self):
+            self.ready = []
+
+    transport = LifecycleTransport()
+    w._transport = transport
+
+    def staged_write(args):
+        calls.append("before_yield")
+        yield
+        calls.append("after_yield")
+        return {"verified": True}
+
+    w.HANDLERS["mixer.set_volume"] = staged_write
+    initial = w.SESSION_FINGERPRINT
+    client_session = "a" * 32
+    token = client_session + "-42"
+    try:
+        initial_ping = dispatch(w, "ping")["result"]
+        check("ping advertises project-load identity without loading",
+              initial_ping["project_load_epoch"] is True
+              and initial_ping["project_loading"] is False, initial_ping)
+        pending = w._dispatch({
+            "id": 61, "cmd": "mixer.set_volume", "args": {},
+            "client_session": client_session, "request_token": token,
+        })
+        next(pending.gen)
+        unstarted = w._dispatch({"id": 62, "cmd": "mixer.set_volume", "args": {}})
+        audition = w._dispatch({
+            "id": 63, "cmd": "channel.trigger_note",
+            "args": {"channel": 0, "index_scope": "global", "note": 60,
+                     "velocity": 80, "duration_ms": 5000,
+                     "session_fingerprint": initial},
+        })
+        next(audition.gen)
+        w._jobs[:] = [pending, unstarted, audition]
+        transport.ready = [(64, {"id": 64, "cmd": "mixer.set_volume", "args": {}})]
+        w.OnProjectLoad(0)
+        loading = dispatch(w, "ping")["result"]
+        check("load start rotates identity and closes project write mode",
+              loading["session_fingerprint"] != initial
+              and loading["project_loading"] is True
+              and loading["verified_writes_enabled"] is False
+              and loading["write_mode_origin"] == "disabled", loading)
+        check("load start cancels started, unstarted, and buffered commands",
+              w._jobs == [] and transport.ready == [] and calls == ["before_yield"],
+              (w._jobs, transport.ready, calls))
+        check("interrupted replies retain caller correlation and never claim success",
+              len(responses) == 3
+              and all(not item["ok"] for item in responses)
+              and responses[0].get("request_token") == token
+              and responses[0].get("client_session") == client_session,
+              responses)
+        check("departing project auditions receive cleanup before indices are reused",
+              notes == [(0, 60, 80, -1), (0, 60, 0, -1)]
+              and w._active_notes == [], (notes, w._active_notes))
+        while_loading = [
+            w._dispatch({"id": 65, "cmd": command, "args": {}})
+            for command in w.READ_ONLY_COMMANDS | w.LEAN_WRITE_COMMANDS
+            | w.SESSION_CONTROL_COMMANDS | w.NAVIGATION_COMMANDS
+            if command != "ping"
+        ]
+        check("only diagnostics run while FL is loading a project",
+              all(isinstance(reply, dict) and not reply["ok"]
+                  and "loading a project" in reply["error"] for reply in while_loading),
+              while_loading[:3])
+        w.OnIdle()
+        check("idle never resumes a cancelled write during loading",
+              calls == ["before_yield"] and w._jobs == [], calls)
+
+        during_load = w.SESSION_FINGERPRINT
+        w.OnProjectLoad(100)
+        current = w.SESSION_FINGERPRINT
+        check("successful load rotates again and makes project reads available",
+              current not in {initial, during_load}
+              and not dispatch(w, "ping")["result"]["project_loading"]
+              and dispatch(w, "project.info")["ok"], current)
+        old_enable = dispatch(w, "session.set_write_mode", enabled=True,
+                              confirm_user_present=True, session_fingerprint=initial)
+        check("old project authorization cannot enable the newly loaded project",
+              not old_enable["ok"] and not w.LEAN_WRITES_ENABLED, old_enable)
+        navigation = dispatch(w, "creative.prepare_piano_roll", channel=0,
+                              pattern=1, index_scope="global", session_fingerprint=current)
+        check("fresh Piano Roll navigation works with project write mode closed",
+              navigation["ok"] and navigation["result"]["selected_target_verified"]
+              and not w.LEAN_WRITES_ENABLED, navigation)
+        enabled = dispatch(w, "session.set_write_mode", enabled=True,
+                           confirm_user_present=True, session_fingerprint=current)
+        stale_write = dispatch(w, "pattern.select", pattern=2, session_fingerprint=initial)
+        fresh_write = dispatch(w, "pattern.select", pattern=2, session_fingerprint=current)
+        check("existing setters reject stale project identity after fresh authorization",
+              enabled["ok"] and not stale_write["ok"] and fresh_write["ok"],
+              (stale_write, fresh_write))
+
+        # A job retained outside the active queue must still be rejected if it
+        # is accidentally enqueued after a lifecycle event.
+        retained = w._dispatch({"id": 66, "cmd": "mixer.set_volume", "args": {}})
+        next(retained.gen)
+        w.OnProjectLoad(100)
+        w._jobs.append(retained)
+        w._advance_jobs()
+        check("the scheduler rejects a requeued job from a previous project epoch",
+              calls == ["before_yield", "before_yield"]
+              and not responses[-1]["ok"] and w._jobs == [], (calls, responses[-1]))
+
+        dispatch(w, "session.set_write_mode", enabled=True,
+                 confirm_user_present=True, session_fingerprint=w.SESSION_FINGERPRINT)
+        notes[:] = []
+        late_note = w._dispatch({
+            "id": 67, "cmd": "channel.trigger_note",
+            "args": {"channel": 0, "index_scope": "global", "note": 62,
+                     "velocity": 81, "duration_ms": 5000},
+        })
+        next(late_note.gen)
+        w._jobs.append(late_note)
+        before_error = w.SESSION_FINGERPRINT
+        w.OnProjectLoad(101)
+        w.OnIdle()
+        check("load-error completion without start never sends old note-offs to new indices",
+              w.SESSION_FINGERPRINT != before_error and not w._project_loading
+              and notes == [(0, 62, 81, -1)] and w._active_notes == [],
+              (notes, w._active_notes))
+
+        dispatch(w, "session.set_write_mode", enabled=True,
+                 confirm_user_present=True, session_fingerprint=w.SESSION_FINGERPRINT)
+        failed_offs = []
+
+        def failing_note_off(channel, note, velocity, midi_channel=-1):
+            if velocity == 0:
+                failed_offs.append((channel, note))
+                raise RuntimeError("old project instrument disappeared")
+
+        fake_channels.midiNoteOn = failing_note_off
+        failed_note = w._dispatch({
+            "id": 68, "cmd": "channel.trigger_note",
+            "args": {"channel": 0, "index_scope": "global", "note": 64,
+                     "velocity": 82, "duration_ms": 5000},
+        })
+        next(failed_note.gen)
+        w._jobs.append(failed_note)
+        w.OnProjectLoad(0)
+        attempts_before_finish = len(failed_offs)
+        w.OnProjectLoad(100)
+        for _ in range(3):
+            w.OnIdle()
+        check("failed departing note-offs are never retried in the new project",
+              attempts_before_finish > 0 and len(failed_offs) == attempts_before_finish
+              and not w._active_notes, failed_offs)
+
+        midi_transport = w._MidiTransport()
+        midi_transport.partial = {1: {"parts": {0: "old"}}}
+        midi_transport.partial_bytes = 3
+        midi_transport.ready = [(2, {"id": 2, "cmd": "pattern.select", "args": {}})]
+        midi_transport.outbox = [b"old response"]
+        w._transport = midi_transport
+        w.OnProjectLoad(0)
+        check("project switch drops old assembled and partial MIDI requests and responses",
+              not midi_transport.partial and midi_transport.partial_bytes == 0
+              and not midi_transport.ready and not midi_transport.outbox)
+        w.OnProjectLoad(100)
+        unchanged = w.SESSION_FINGERPRINT
+        w.OnProjectLoad(42)
+        w.OnProjectLoad(False)
+        check("unrecognized lifecycle values do not disturb an established project epoch",
+              w.SESSION_FINGERPRINT == unchanged and not w._project_loading)
+
+        socket_transport = w._SocketTransport()
+        closed = []
+
+        class BufferedClient:
+            def close(self):
+                closed.append(True)
+
+        listener = object()
+        socket_transport.server = listener
+        socket_transport.clients = [BufferedClient()]
+        socket_transport.project_changed()
+        check("TCP project switches disconnect old buffers and preserve the listener",
+              closed == [True] and socket_transport.clients == []
+              and socket_transport.server is listener)
+        with tempfile.TemporaryDirectory() as directory:
+            file_transport = w._FileTransport(directory)
+            stale = os.path.join(directory, w.REQ_PREFIX + "old.json")
+            unrelated = os.path.join(directory, "keep.txt")
+            for path in (stale, unrelated):
+                with open(path, "w") as stream:
+                    stream.write("old")
+            file_transport.project_changed()
+            check("file transport clears old bridge work while preserving unrelated files",
+                  not os.path.exists(stale) and os.path.exists(unrelated))
+    finally:
+        if original_note is None:
+            delattr(fake_channels, "midiNoteOn")
+        else:
+            fake_channels.midiNoteOn = original_note
+
+
 def main():
     _state.reset()
     check_source_is_ascii()
+    check_project_load_lifecycle()
+    _state.reset()
     check_transport_selection()
     bridge.OnInit()
     bridge.OnIdle()
@@ -3081,7 +3465,7 @@ def main():
     names = [p["name"] for p in res["params"]]
     check("unnamed but meaningful param kept",
           res["params"][0]["display"] == "Auto mode", res["params"][0])
-    check("named params kept", names[1:] == ["Scale", "Key", "Tune Speed"],
+    check("named params kept", names[1:] == ["Scale", "Key", "Response Time"],
           names)
 
     r = c.call("plugin.params", track=5, slot=0, limit=240, skip_padding=False)
@@ -3109,6 +3493,7 @@ def main():
     check("param filter works", len(r["result"]["params"]) == 1, r["result"]["params"])
 
     check_lean_writes(c)
+    check_display_unit_solver()
     check_track_b()
 
     print("\n-- channels and dispatch errors --")
@@ -3117,9 +3502,9 @@ def main():
     r = c.call("call", module="mixer", function="getTrackName", args=[3])
     check("generic calls are rejected", not r["ok"], r)
     r = c.call("bogus.command")
-    check("unknown command lists only reads and session control",
+    check("unknown command lists reads, session control and navigation",
           not r["ok"] and set(r["available"]) == set(
-              bridge.READ_ONLY_COMMANDS | bridge.SESSION_CONTROL_COMMANDS
+              bridge.READ_ONLY_COMMANDS | bridge.SESSION_CONTROL_COMMANDS | bridge.NAVIGATION_COMMANDS
           ),
           r)
 

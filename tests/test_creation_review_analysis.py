@@ -10,6 +10,9 @@ from builtins import open as builtin_open
 from pathlib import Path
 from unittest import mock
 
+import numpy as np
+import soundfile as sf
+
 import fl_studio_mcp.creation_review.analysis as review_analysis
 import fl_studio_mcp.creation_review.assets as review_assets
 import fl_studio_mcp.creation_review.contrast as review_contrast
@@ -38,6 +41,30 @@ FIXTURES = ROOT / "tests" / "fixtures" / "creation_review"
 
 
 class CreationReviewAnalysisTests(unittest.TestCase):
+    def test_loaded_feature_cache_keeps_the_audio_version_that_was_decoded(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="review-bounce-version-") as raw:
+            path = Path(raw) / "bounce.wav"
+            sf.write(path, np.full(4000, 0.25), 8000)
+            original = validate_audio_asset(path, asset_kind="candidate_full_mix")
+            cache = DecodedAudioCache()
+            decoded_before = cache.get_or_decode(original)
+            sf.write(path, np.full(4000, -0.25), 8000)
+            replaced = validate_audio_asset(path, asset_kind="after_full_mix")
+            decoded_after = cache.get_or_decode(replaced)
+            before_mean = cache.get_or_compute(
+                decoded_before,
+                analyzer_version="mean-v1",
+                compute=lambda loaded: float(loaded.samples.mean()),
+            )
+            after_mean = cache.get_or_compute(
+                decoded_after,
+                analyzer_version="mean-v1",
+                compute=lambda loaded: float(loaded.samples.mean()),
+            )
+            self.assertGreater(before_mean, 0)
+            self.assertLess(after_mean, 0)
+            self.assertEqual(cache.stats().feature_entries, 2)
+
     def asset(self, name: str, kind: str, **kwargs: object):
         return validate_audio_asset(
             str(FIXTURES / name), asset_kind=kind, **kwargs
@@ -106,7 +133,7 @@ class CreationReviewAnalysisTests(unittest.TestCase):
 
         def growing_open(candidate: object, mode: str = "r", *args: object, **kwargs: object):
             wrapped = builtin_open(candidate, mode, *args, **kwargs)
-            if Path(candidate) == path and mode == "rb":
+            if Path(candidate).resolve() == path.resolve() and mode == "rb":
                 return GrowingReader(wrapped)
             return wrapped
 

@@ -386,6 +386,46 @@ class CreationReviewProductionRunTests(unittest.TestCase):
         self.assertEqual(result.attempted_count, 0)
         self.assertEqual(result.write_mode_enable_count, 0)
 
+    def test_revision_adapter_inherits_run_authorization_unless_explicitly_set(self) -> None:
+        revision_request = RevisionRequest(
+            source_evaluation_id="evaluation-1",
+            source_run_id="source-run",
+            requested_objective="Record the accepted element.",
+            allowed_changes=("record_feedback_lock",),
+        )
+        revision_plan = RevisionPlan(
+            revision_plan_id="revision-1",
+            review_session_id="review-1",
+            source_evaluation_id="evaluation-1",
+            source_run_id="source-run",
+            operations=(RecordFeedbackLockOperation(operation_id="lock"),),
+        )
+        for explicit, inherited, expected in (
+            (None, True, True),
+            (None, False, False),
+            (False, True, False),
+            (True, True, True),
+        ):
+            with self.subTest(explicit=explicit, inherited=inherited):
+                kwargs = {} if explicit is None else {"authorized_to_modify": explicit}
+                operation = runs.ApplyCreationRevisionOperation(
+                    operation_id="apply",
+                    review_session="review-1",
+                    plan=revision_plan,
+                    request=revision_request,
+                    **kwargs,
+                )
+                with mock.patch.object(review_api, "review_apply_revision") as apply:
+                    runs._dispatch_operation(
+                        operation,
+                        session_fingerprint=None,
+                        outputs={},
+                        authorized_to_modify=inherited,
+                    )
+                self.assertIs(
+                    apply.call_args.args[0].authorized_to_modify, expected
+                )
+
     def test_outer_apply_adapter_leaves_write_boundary_to_revision_executor(self) -> None:
         revision_request = RevisionRequest(
             source_evaluation_id="evaluation-1",

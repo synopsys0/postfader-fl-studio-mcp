@@ -1,14 +1,20 @@
 {
   "schema_version": "1.0",
-  "metadata_version": "1.0",
+  "metadata_version": "1.1",
   "records": [],
   "families": [
     {
       "family_id": "image-line.3x-osc:subtractive",
       "product_id": "image-line.3x-osc",
       "family_name": "3x OSC subtractive synthesizer",
-      "descriptors": ["synthetic"],
-      "common_roles": ["bass", "lead", "keys"],
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "keys"
+      ],
       "known_limitations": [
         "Family evidence describes the compact subtractive instrument, not any particular preset sound."
       ],
@@ -21,8 +27,15 @@
       "family_id": "image-line.flex:preset-instrument",
       "product_id": "image-line.flex",
       "family_name": "FLEX preset instrument",
-      "descriptors": ["synthetic"],
-      "common_roles": ["bass", "lead", "pad", "keys"],
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "pad",
+        "keys"
+      ],
       "known_limitations": [
         "FLEX is described as a preset-centered instrument; this family row does not classify an individual installed library or preset."
       ],
@@ -35,8 +48,17 @@
       "family_id": "image-line.sytrus:fm-hybrid",
       "product_id": "image-line.sytrus",
       "family_name": "Sytrus FM/RM hybrid synthesizer",
-      "descriptors": ["synthetic", "digital", "evolving"],
-      "common_roles": ["bass", "lead", "pad", "keys"],
+      "descriptors": [
+        "synthetic",
+        "digital",
+        "evolving"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "pad",
+        "keys"
+      ],
       "known_limitations": [
         "Family evidence describes Sytrus capabilities and common roles, not the timbre of a selected preset."
       ],
@@ -49,8 +71,16 @@
       "family_id": "image-line.harmor:additive-resynthesis",
       "product_id": "image-line.harmor",
       "family_name": "Harmor additive/resynthesis instrument",
-      "descriptors": ["synthetic", "evolving"],
-      "common_roles": ["bass", "lead", "pad", "texture"],
+      "descriptors": [
+        "synthetic",
+        "evolving"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "pad",
+        "texture"
+      ],
       "known_limitations": [
         "Family evidence describes additive and resynthesis capabilities, not an auditioned preset result."
       ],
@@ -58,6 +88,279 @@
       "review_date": "2026-08-30",
       "confidence": "medium",
       "source_id": "plugin-atlas:image-line.harmor"
+    },
+    {
+      "family_id": "image-line.fl-keys:sampled-keys",
+      "product_id": "image-line.fl-keys",
+      "family_name": "FL Keys sampled keyboard",
+      "descriptors": [
+        "tonal"
+      ],
+      "common_roles": [
+        "keys",
+        "chords"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.fl-keys"
+    },
+    {
+      "family_id": "image-line.boobass:bass-guitar",
+      "product_id": "image-line.boobass",
+      "family_name": "BooBass simulated bass guitar",
+      "descriptors": [
+        "tonal"
+      ],
+      "common_roles": [
+        "bass"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.boobass"
+    },
+    {
+      "family_id": "image-line.fruity-dx10:fm",
+      "product_id": "image-line.fruity-dx10",
+      "family_name": "Fruity DX10 FM synthesizer",
+      "descriptors": [
+        "synthetic",
+        "digital"
+      ],
+      "common_roles": [
+        "keys",
+        "bass",
+        "lead"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.fruity-dx10"
+    },
+    {
+      "family_id": "image-line.fruity-granulizer:granular",
+      "product_id": "image-line.fruity-granulizer",
+      "family_name": "Fruity Granulizer sample transformation",
+      "descriptors": [],
+      "common_roles": [
+        "texture",
+        "pad"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.fruity-granulizer"
+    },
+    {
+      "family_id": "image-line.harmless:additive",
+      "product_id": "image-line.harmless",
+      "family_name": "Harmless additive synthesizer",
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "pad",
+        "keys"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.harmless"
+    },
+    {
+      "family_id": "image-line.morphine:spectral-morphing",
+      "product_id": "image-line.morphine",
+      "family_name": "Morphine additive resynthesis",
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "pad",
+        "texture"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.morphine"
+    },
+    {
+      "family_id": "image-line.ogun:additive-percussion",
+      "product_id": "image-line.ogun",
+      "family_name": "Ogun additive percussion design",
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "percussion",
+        "keys"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.ogun"
+    },
+    {
+      "family_id": "image-line.plucked:plucked-string",
+      "product_id": "image-line.plucked",
+      "family_name": "Plucked! string modeling",
+      "descriptors": [
+        "synthetic",
+        "plucked"
+      ],
+      "common_roles": [
+        "keys",
+        "lead"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.plucked"
+    },
+    {
+      "family_id": "image-line.sakura:string-modeling",
+      "product_id": "image-line.sakura",
+      "family_name": "Sakura string modeling",
+      "descriptors": [
+        "tonal"
+      ],
+      "common_roles": [
+        "keys",
+        "lead",
+        "texture"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.sakura"
+    },
+    {
+      "family_id": "image-line.sawer:subtractive",
+      "product_id": "image-line.sawer",
+      "family_name": "Sawer vintage-style synthesizer",
+      "descriptors": [
+        "synthetic",
+        "retro"
+      ],
+      "common_roles": [
+        "bass",
+        "lead"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.sawer"
+    },
+    {
+      "family_id": "image-line.transistor-bass:acid-bass",
+      "product_id": "image-line.transistor-bass",
+      "family_name": "Transistor Bass acid-style synthesizer",
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "bass"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.transistor-bass"
+    },
+    {
+      "family_id": "image-line.fpc:drum-sampler",
+      "product_id": "image-line.fpc",
+      "family_name": "FPC multi-pad drum sampler",
+      "descriptors": [
+        "percussive"
+      ],
+      "common_roles": [
+        "drums",
+        "percussion"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.fpc"
+    },
+    {
+      "family_id": "image-line.drumaxx:modeled-kit",
+      "product_id": "image-line.drumaxx",
+      "family_name": "Drumaxx modeled percussion kit",
+      "descriptors": [
+        "synthetic",
+        "percussive"
+      ],
+      "common_roles": [
+        "drums",
+        "percussion"
+      ],
+      "known_limitations": [
+        "Product-family capability evidence from the bundled Atlas; individual presets and installed sample content have not been auditioned or identified."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:image-line.drumaxx"
+    },
+    {
+      "family_id": "vital-audio.vital:wavetable",
+      "product_id": "vital-audio.vital",
+      "family_name": "Vital wavetable synthesizer",
+      "descriptors": [
+        "synthetic"
+      ],
+      "common_roles": [
+        "bass",
+        "lead",
+        "pad",
+        "keys",
+        "texture"
+      ],
+      "known_limitations": [
+        "Wavetable and modulation capability does not establish the timbre of an individual preset or prove this third-party instrument is installed."
+      ],
+      "provenance": "bundled_reviewed",
+      "review_date": "2026-09-04",
+      "confidence": "medium",
+      "source_id": "plugin-atlas:vital-audio.vital"
     }
   ],
   "warnings": [
