@@ -58,6 +58,8 @@ FORBIDDEN_PARTS = {
     ".git",
     ".github",
     ".private",
+    ".codex",
+    ".claude",
     ".venv",
     "__pycache__",
     "tests",
@@ -67,6 +69,11 @@ FORBIDDEN_PARTS = {
 }
 FORBIDDEN_NAMES = {".mcp.json", ".env", ".DS_Store"}
 FORBIDDEN_SUFFIXES = {
+    ".jsonl",
+    ".log",
+    ".sqlite",
+    ".sqlite3",
+    ".db",
     ".aif",
     ".aiff",
     ".flac",
@@ -111,6 +118,7 @@ def inspect_bundle(bundle: Path) -> list[str]:
                 lowered_name in FORBIDDEN_NAMES
                 or lowered_name.startswith(".env.")
                 or path.suffix.lower() in FORBIDDEN_SUFFIXES
+                or path.suffix.lower().startswith((".sqlite-", ".sqlite3-", ".db-"))
             ):
                 leaked.append(name)
         if leaked:

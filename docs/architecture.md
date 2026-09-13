@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current development surface contains 134 tools and 8 resources.
+controller script. The current V10 surface contains 134 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -229,7 +229,7 @@ plausible-looking result.
 testing, then local MIDI SysEx for the production FL Studio connection. On the
 validated macOS host, FL Studio's embedded interpreter can use neither sockets
 nor files, so CoreMIDI/IAC is the retained operational path. Windows uses the
-same SysEx protocol over a user-configured virtual endpoint. The v0.20 surface
+same SysEx protocol over a user-configured virtual endpoint. The V10 surface
 at revision `3f63d43` was live-qualified on both the documented macOS arm64/IAC
 host and Windows 11 x64 host; those results qualify that revision and the tested
 systems rather than every possible host, virtual MIDI provider, FL Studio

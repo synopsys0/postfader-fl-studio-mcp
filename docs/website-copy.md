@@ -29,10 +29,9 @@ documents instead of expanding the homepage.
 
 ## Release scope
 
-The current development source has 134 tools and 8 resources. The linked
-v0.20.0 downloads have 90 tools and 8 resources. Label development features
-explicitly wherever this copy is published; see [next-release notes](releases/dev-v10.md).
-Never put the development tool count beside a stable download without this distinction.
+PostFader V10 (10.0.0) contains 134 tools and 8 resources. Use the
+[V10 release notes](releases/v10.0.0.md) for feature limits and live acceptance
+status. These counts apply to the matching V10 packages.
 
 ## Hero
 
@@ -47,12 +46,12 @@ another local MCP client.
 
 **Primary actions**
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
 
 **Secondary action:** Explore what PostFader can do
 
-**Development proof strip:** 134 tools · 8 live resources · Windows and macOS · Open source ·
+**V10 proof strip:** 134 tools · 8 live resources · Windows and macOS · Open source ·
 No PostFader account
 
 Starts read-only and never saves your project automatically.
@@ -202,7 +201,7 @@ A cleaner session or an attempted change to a supported exposed plug-in
 parameter after you explicitly confirm that you are present and enable writes
 for the current session. The result says whether FL Studio's readback matched,
 refused the request, or could not confirm it. PostFader works with plug-ins
-already in the project. Development tools also discover macOS native Add-menu
+already in the project. V10 tools also discover macOS native Add-menu
 favorites and load one named instrument or effect with bridge readback. This
 requires Accessibility access and a supported English menu. Windows insertion,
 removal, and reordering remain unavailable, and FL
@@ -276,7 +275,7 @@ plans and applies one revision through the existing Production Run executor
 when you clearly request a change, then asks for a matching revised bounce.
 Technical improvements and regressions remain separate, and Playlist placement,
 rendering of unsaved edits, project saving, and artistic approval stay with you.
-The separate development renderer exports an explicitly selected saved `.flp`
+The separate V10 renderer exports an explicitly selected saved `.flp`
 to WAV; it does not capture the open project or silently save it.
 
 ### You receive
@@ -342,7 +341,7 @@ individual commands. PostFader connects them into a production workflow.
 - Read undo/redo history bounds and edit the current step sequence.
 - Discover and control supported parameters on loaded effects and generators.
 
-### Development workflow additions
+### V10 workflow additions
 
 - Plugin Atlas supplies offline product knowledge independently of runtime availability.
 - Sound Selection infers editable roles from producer direction, chooses coherent
@@ -355,7 +354,8 @@ individual commands. PostFader connects them into a production workflow.
   a bounded revision, compares a rebounce, and prepares delivery manifests.
 
 Live acceptance for the new note-inspection and render paths is pending.
-These additions are not part of the v0.20.0 downloads.
+These additions are included in V10; do not imply that experimental host paths
+have completed live qualification.
 
 ### Create music
 
@@ -535,8 +535,8 @@ installer, select the virtual MIDI endpoint you created, complete one FL Studio
 MIDI setup stage—Input, Output, Universal Bridge, matching port, and script
 reload—and connect your AI client.
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
 - [Read the complete setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 
 Dedicated Codex packages add guided Codex registration. The Claude Desktop
@@ -546,7 +546,7 @@ Python, or a virtual MIDI provider. Every path still requires the matching
 Universal Bridge, a user-created virtual MIDI endpoint, and FL Studio MIDI
 configuration.
 
-PostFader v0.20 supports Python 3.10–3.14, FL Studio 2026 version 26.1.3 build
+PostFader V10 supports Python 3.10–3.14, FL Studio 2026 version 26.1.3 build
 5336 or newer, and MIDI scripting API 44 or newer. Live qualification is
 limited to macOS 27.0 arm64 with FL Studio Producer Edition 26.1.3 build 5336
 and Windows 11 x64 with FL Studio Producer Edition 26.1.4 build 5589; it is not
@@ -598,9 +598,9 @@ guaranteed rollback, or a guaranteed undo point.
 Inspect the project. Diagnose the mix. Build the parts. Review the plan. Make
 the change.
 
-[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-Windows.zip)
+[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
 ·
-[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v0.20.0-macOS.zip)
+[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
 ·
 [Read the setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 

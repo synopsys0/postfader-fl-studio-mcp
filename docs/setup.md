@@ -64,8 +64,8 @@ postfader setup
 ```
 
 For Codex, the release also provides dedicated
-`PostFader-v0.20.0-Codex-Windows.zip` and
-`PostFader-v0.20.0-Codex-macOS.zip` packages. Their launchers run the same base
+`PostFader-v10.0.0-Codex-Windows.zip` and
+`PostFader-v10.0.0-Codex-macOS.zip` packages. Their launchers run the same base
 installation, preselect `codex-toml`, and request a separate confirmation
 before registering the resolved server through the Codex CLI. The equivalent
 command for a source or Python installation is:
@@ -204,7 +204,7 @@ can then call `postfader_review_start`, `postfader_review_attach_assets`, and
 `postfader_review_evaluate`; attach a reference or synchronized stem only when
 the requested finding needs that evidence. Review never captures FL's live
 audio and never renders or saves the live project. For an already-saved FLP,
-use the separate development saved-project rendering tools described below;
+use the separate V10 saved-project rendering tools described below;
 that export excludes unsaved changes.
 
 Review Sessions are process-local by default. Set `persist_session=true` when
@@ -498,9 +498,9 @@ are create-only. Choose a new output directory or filename and inspect the
 read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
 manifest and will not save the FL Studio project.
 
-## Development host workflows
+## V10 host workflows
 
-These tools are available on dev, not in the v0.20.0 downloads. Upgrade the
+These tools are included in V10. Upgrade the
 server and bridge together before using them.
 
 - **Read existing notes:** prepare and arm the Piano Roll script once per MCP
@@ -528,7 +528,7 @@ server and bridge together before using them.
 
 The new note-read and render paths have deterministic coverage; live FL Studio
 acceptance remains pending. See the [contracts](tool-contracts.md) and
-[development notes](releases/dev-v10.md) before relying on them.
+[V10 release notes](releases/v10.0.0.md) before relying on them.
 
 ## Environment variables
 

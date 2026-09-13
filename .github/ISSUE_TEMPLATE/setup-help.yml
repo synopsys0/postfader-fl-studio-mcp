@@ -10,7 +10,7 @@ body:
     id: postfader_version
     attributes:
       label: PostFader version
-      placeholder: 0.20.0
+      placeholder: 10.0.0
     validations:
       required: true
   - type: dropdown

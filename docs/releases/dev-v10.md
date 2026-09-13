@@ -1,14 +1,11 @@
-# Next-release notes (development)
+# V10 feature notes
 
-These notes describe the integrated Autonomous Creation Quality upgrade on
-the `dev` branch, reviewed on 2026-09-13. Dev has **134 tools and 8 resources**;
-the published [v0.20.0 package](v0.20.0.md) has **90 tools and 8 resources**.
-These additions are not included in existing downloads. The package version
-in a source checkout is not a release identifier for untagged changes.
+V10 is published as `10.0.0`, with 134 tools and 8 resources.
+See the [versioned release notes](v10.0.0.md) for packages and upgrade steps.
 
 ## Changes since the published release
 
-Development adds Plugin Atlas, Sound Selection, task-scoped Production Runs,
+V10 adds Plugin Atlas, Sound Selection, task-scoped Production Runs,
 Creation Pipeline readiness and processing, Creation Review and delivery, and
 the host adapters described below. See the [tool reference](../tool-contracts.md)
 for exact input schemas, side effects, readback, and refusal behavior.
@@ -55,7 +52,7 @@ for exact input schemas, side effects, readback, and refusal behavior.
 
 ## Creation Review, Revision, and Delivery
 
-- The development MCP surface is now 134 tools and 8 resources, including 13
+- The V10 MCP surface is now 134 tools and 8 resources, including 13
   Creation Review tools. The closed Production Run union adds 9 corresponding
   review operations: session start, asset attachment, evaluation, feedback,
   revision planning, revision application, bounce comparison, Playlist handoff,
@@ -113,7 +110,7 @@ fixtures, and acceptance harnesses. MCPB contains runtime modules/package data,
 including Creation Review, but not maintainer scripts or tests. Run manifest
 synchronization, the focused creation and package tests, public-tree/package
 verification, bundle checks, and the installed smoke check before publishing;
-do not tag or publish this development note.
+publish only the matching versioned release after automated checks pass.
 
 ### Autonomous workflow follow-through
 
