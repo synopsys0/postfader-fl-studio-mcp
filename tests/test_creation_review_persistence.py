@@ -30,8 +30,8 @@ class CreationReviewPersistenceTests(unittest.TestCase):
     def test_save_and_reload_without_posix_fchmod(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sessions.json"
-            with mock.patch.object(review_persistence.os, "fchmod", create=True):
-                del review_persistence.os.fchmod
+            with mock.patch.dict(review_persistence.os.__dict__):
+                review_persistence.os.__dict__.pop("fchmod", None)
                 LocalReviewSessionStore(path).save(self._session("review-portable"))
             self.assertIsNotNone(LocalReviewSessionStore(path).get("review-portable"))
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
