@@ -644,6 +644,14 @@ class ProductionRunTests(unittest.TestCase):
         )
 
     def test_registry_is_bounded_and_evicts_oldest_released_run(self) -> None:
+        # Coarse host clocks can stamp successive runs identically. Reverse
+        # lexical IDs ensure eviction follows insertion order, not random IDs.
+        clock = mock.patch.object(runs, "_now", return_value=datetime(2026, 1, 1, tzinfo=timezone.utc))
+        clock.start()
+        self.addCleanup(clock.stop)
+        ids = mock.patch.object(runs.secrets, "token_hex", side_effect=("f" * 32, "a" * 32, "b" * 32))
+        ids.start()
+        self.addCleanup(ids.stop)
         registry = runs.ProductionRunRegistry(max_runs=2)
         records = [
             registry._create_record(

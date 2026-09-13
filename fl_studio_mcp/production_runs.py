@@ -5549,7 +5549,9 @@ class ProductionRunRegistry:
             )
         oldest = min(
             candidates,
-            key=lambda record: (record.state.created_at, record.state.run_id),
+            # min keeps the first insertion for equal timestamps. Random IDs
+            # must not reorder runs created within the same host clock tick.
+            key=lambda record: record.state.created_at,
         )
         del self._runs[oldest.state.run_id]
 
