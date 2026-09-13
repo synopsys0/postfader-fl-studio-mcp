@@ -27,8 +27,8 @@ class SoundSelectionHistoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sound-history.json"
             digest = preset_identity_digest("synth", "Preset", 1)
-            with patch.object(history_module.os, "fchmod", create=True):
-                del history_module.os.fchmod
+            with patch.dict(history_module.os.__dict__):
+                history_module.os.__dict__.pop("fchmod", None)
                 self.assertTrue(LocalSoundSelectionHistory(path).record_usage(
                     "synth", digest, "main_lead",
                 ))
