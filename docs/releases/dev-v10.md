@@ -127,6 +127,9 @@ do not tag or publish this development note.
   exports saved/default settings, not unsaved live state or promised stems.
 - Stronger public-tree exclusions cover local AI configuration, conversation
   logs, run databases, caches, and additional GitHub token formats.
+- Review Session and Sound Selection history persistence also support Windows
+  Python without `os.fchmod`; atomic writes and error preservation remain intact.
+  POSIX file modes apply on POSIX systems; Windows uses inherited directory ACLs.
 
 These paths have synthetic regression coverage. Live Piano Roll and render
 acceptance on FL Studio remains pending; the updated bridge needs reloading for

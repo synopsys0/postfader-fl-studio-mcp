@@ -23,6 +23,20 @@ from fl_studio_mcp.sound_selection.models import preset_identity_digest
 
 
 class SoundSelectionHistoryTests(unittest.TestCase):
+    def test_save_and_reload_without_posix_fchmod(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sound-history.json"
+            digest = preset_identity_digest("synth", "Preset", 1)
+            with patch.object(history_module.os, "fchmod", create=True):
+                del history_module.os.fchmod
+                self.assertTrue(LocalSoundSelectionHistory(path).record_usage(
+                    "synth", digest, "main_lead",
+                ))
+            self.assertIsNotNone(LocalSoundSelectionHistory(path).lookup(
+                product_id="synth", preset_identity_digest=digest, role_id="main_lead",
+            ))
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
     def test_atomic_persistence_pruning_and_explicit_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "sound-history.json"

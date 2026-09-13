@@ -27,6 +27,30 @@ from fl_studio_mcp.creation_review.persistence import LocalReviewSessionStore
 
 
 class CreationReviewPersistenceTests(unittest.TestCase):
+    def test_save_and_reload_without_posix_fchmod(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sessions.json"
+            with mock.patch.object(review_persistence.os, "fchmod", create=True):
+                del review_persistence.os.fchmod
+                LocalReviewSessionStore(path).save(self._session("review-portable"))
+            self.assertIsNotNone(LocalReviewSessionStore(path).get("review-portable"))
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
+    def test_permission_failure_preserves_existing_store(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sessions.json"
+            store = LocalReviewSessionStore(path)
+            store.save(self._session("review-original"))
+            before = path.read_bytes()
+            with mock.patch.object(
+                review_persistence.os, "fchmod", create=True,
+                side_effect=OSError("permission denied"),
+            ), self.assertRaises(review_persistence.ReviewSessionWriteError):
+                store.save(self._session("review-new"))
+            self.assertEqual(path.read_bytes(), before)
+            self.assertIsNone(LocalReviewSessionStore(path).get("review-new"))
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
+
     @staticmethod
     def _session(session_id: str) -> ReviewSession:
         return ReviewSession(

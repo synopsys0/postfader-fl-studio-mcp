@@ -792,7 +792,10 @@ class LocalReviewSessionStore:
             descriptor, temporary = tempfile.mkstemp(
                 prefix=f".{self.path.name}.", suffix=".tmp", dir=os.fspath(parent)
             )
-            os.fchmod(descriptor, 0o600)
+            # mkstemp already requests owner-only POSIX permissions. Older
+            # Windows Python has no fchmod; access there follows directory ACLs.
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "wb") as handle:
                 descriptor = -1
                 handle.write(payload)
