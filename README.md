@@ -1,6 +1,6 @@
 <div align="center">
 
-# PostFader
+# PostFader — FL Studio MCP server
 
 **The AI copilot for FL Studio**
 
@@ -31,6 +31,12 @@ supported changes from natural language.
 **90 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
 Starts read-only and never saves your project automatically.
+
+**Development preview:** [Dev now exposes 134 tools and 8 resources](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/dev/docs/releases/dev-v10.md),
+including Plugin Atlas, Sound Selection, Production Runs with durable recovery,
+Creation Review and delivery, Piano Roll note inspection, native macOS plug-in
+loading, and saved-FLP rendering. New note-read and renderer paths await live
+acceptance. These additions are not included in the v0.20.0 downloads.
 
 [What it can do](#not-just-another-note-sender) ·
 [Workflows](#four-ways-to-work-with-postfader) ·
@@ -352,6 +358,35 @@ Writes affect the open project immediately. Ask the AI client to enable write
 mode only when you want changes, use a blank or disposable project for the
 first write test, and disable write mode when you are done.
 
+## FL Studio MCP questions
+
+### What is PostFader?
+
+PostFader is an open-source FL Studio MCP server. It connects a local AI client
+to FL Studio through the Universal Bridge and virtual MIDI, with additional
+file-based audio analysis and composition workflows.
+
+### Does it work on Windows and macOS?
+
+Yes. The release includes standard and Codex setup ZIPs for both platforms,
+an optional Claude Desktop MCPB, and Python packages. FL Studio, matching bridge
+installation, and a bidirectional virtual MIDI endpoint are required.
+
+### Which features are released?
+
+Version 0.20.0 ships 90 tools and 8 resources. The development branch has 134
+tools and 8 resources, adding sound selection, recoverable production runs,
+creation review, note inspection, macOS plug-in loading, and saved-project
+rendering. See the [development notes](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/dev/docs/releases/dev-v10.md)
+for qualification status. Installing the stable package does not install dev.
+
+### Does it upload my music or save my project?
+
+PostFader has no hosted service or telemetry and never saves your project
+automatically. Audio analysis runs on files you select. Your AI client may send
+tool arguments and results to its model provider under that client's settings.
+Keep private project data and local run journals out of public reports.
+
 ## Documentation
 
 | Guide | What it covers |
@@ -361,6 +396,7 @@ first write test, and disable write mode when you are done.
 | [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
+| [Distribution and listings](docs/distribution.md) | Published versions, development scope, and verified MCP directory status |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
 | [Security](SECURITY.md) | Threat model, local trust boundaries, privacy, and vulnerability reporting |
 | [Early-user activation](docs/early-access-testing.md) | A privacy-safe first-session and return-session checklist |
