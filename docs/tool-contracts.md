@@ -1,6 +1,6 @@
 # Tool and command reference
 
-PostFader exposes 134 MCP tools and 8 MCP resources on the current development branch. The MCP layer is the supported
+PostFader exposes 134 MCP tools and 8 MCP resources on the V10 release. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 

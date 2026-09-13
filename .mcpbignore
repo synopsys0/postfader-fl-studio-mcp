@@ -3,6 +3,8 @@
 .github/
 .venv/
 .private/
+.codex/
+.claude/
 venv/
 .pytest_cache/
 .ruff_cache/
@@ -31,6 +33,14 @@ MANIFEST.in
 *.key
 *.p12
 *.pfx
+*.jsonl
+*.log
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
 
 # User project/audio material and generated extension archives.
 artifacts/

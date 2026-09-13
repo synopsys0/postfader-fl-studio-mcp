@@ -97,7 +97,7 @@ that a preset is unsuitable.
 ## How support works for what can be reached
 
 Generic plug-in discovery is identity-independent: there is no allowlist that a
-plug-in must enter before the connector can inspect it. PostFader v0.20 also
+plug-in must enter before the connector can inspect it. PostFader V10 also
 ships a small set of optional processing-intent adapter profiles. The profiles
 describe parameter roles for selected reported names so the `mix_*` planning
 tools can resolve intents such as dynamics, EQ, reverb, or delay. They do not

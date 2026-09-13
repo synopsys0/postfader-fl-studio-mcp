@@ -2,8 +2,8 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "0.20.0",
-  "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
+  "version": "10.0.0",
+  "description": "FL Studio MCP server with 134 tools for mixing, composition, sound selection, production runs, and review.",
   "long_description": "A local 134-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, review exported creation bounces, plan one bounded revision, prepare delivery handoffs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"

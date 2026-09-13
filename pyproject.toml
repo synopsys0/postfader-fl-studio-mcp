@@ -1,6 +1,6 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "0.20.0"
+version = "10.0.0"
 description = "AI copilot for FL Studio project control, mix analysis, plug-ins, composition, and arrangement"
 readme = "README.md"
 license = "Apache-2.0"

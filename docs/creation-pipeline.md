@@ -1,6 +1,6 @@
 # Autonomous Creation Quality and Fast Execution
 
-The development branch extends task-scoped Production Runs with one creation
+V10 extends task-scoped Production Runs with one creation
 pipeline. A connected AI still interprets the producer's request and submits a
 closed typed plan; PostFader does not contain an LLM, audition live audio, or
 invent unsupported FL Studio operations.

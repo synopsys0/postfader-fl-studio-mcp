@@ -1,9 +1,8 @@
 # Tool-surface evaluation
 
-> Current development inventory, checked against the SDK listing on 2026-09-13.
-> Published v0.20.0 has 90 tools; dev has 134. Both expose 8 resources.
+> V10 inventory: 134 tools and 8 resources, checked against the SDK listing.
 
-PostFader development source exposes 134 MCP tools and 8 live resources. This document is a
+PostFader V10 exposes 134 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,
 profile rollout, telemetry, or a silent change to the default surface.
@@ -179,8 +178,7 @@ does not support resources, or failed to start the server. Attach the output of
 an explicit tool-listing check only after removing paths, environment values,
 and private metadata.
 
-The expected values are 134 tools and 8 resources on dev, or 90 tools and 8
-resources for published v0.20.0. A client
+The expected V10 values are 134 tools and 8 resources. A client
 showing fewer is not evidence that the repository should silently change its
 default surface. Escalate client limits or MCP SDK compatibility separately.
 

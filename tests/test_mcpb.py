@@ -273,6 +273,12 @@ class MCPBPackagingTests(unittest.TestCase):
             ".git/",
             ".github/",
             ".private/",
+            ".codex/",
+            ".claude/",
+            "*.jsonl",
+            "*.log",
+            "*.sqlite3",
+            "*.sqlite3-*",
             ".mcp.json",
             ".env",
             "tests/",
@@ -284,6 +290,11 @@ class MCPBPackagingTests(unittest.TestCase):
             self.assertIn(required, patterns)
 
     def test_forged_bundle_with_private_member_is_rejected(self) -> None:
+        private_members = (
+            ".private/host-report.md", ".codex/config.toml",
+            ".claude/settings.json", "conversation.jsonl", "session.log",
+            "production.sqlite3", "production.sqlite3-wal", "run.db-shm",
+        )
         with tempfile.TemporaryDirectory(prefix="postfader-forged-mcpb-") as raw:
             bundle = Path(raw) / "forged.mcpb"
             with zipfile.ZipFile(bundle, "w") as archive:
@@ -300,9 +311,12 @@ class MCPBPackagingTests(unittest.TestCase):
                     "manifest.json",
                     (ROOT / "manifest.json").read_text(encoding="utf-8"),
                 )
-                archive.writestr(".private/host-report.md", "must not ship")
+                for member in private_members:
+                    archive.writestr(member, "must not ship")
             failures = inspect_bundle(bundle)
-        self.assertTrue(any(".private/host-report.md" in item for item in failures))
+        for member in private_members:
+            with self.subTest(member=member):
+                self.assertTrue(any(member in item for item in failures))
 
     def test_missing_bundle_fails_inspection(self) -> None:
         failures = inspect_bundle(ROOT / "does-not-exist.mcpb")

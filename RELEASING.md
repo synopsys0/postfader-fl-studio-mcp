@@ -7,14 +7,13 @@ builds and inspects the Python distributions, validates the MCPB and platform
 bundles, publishes to PyPI and the MCP Registry, and attaches the verified
 assets and SHA-256 checksums to GitHub.
 
-## Current publication boundary
+## V10 publication
 
-As of 2026-09-13, GitHub, PyPI, and the official MCP Registry publish v0.20.0
-with 90 tools and 8 resources. Dev has 134 tools and 8 resources; its new Piano
-Roll inspection and saved-project renderer still need live acceptance. Do not
-retag v0.20.0 or advertise these additions as shipped. Use the [development
-notes](docs/releases/dev-v10.md) and [directory ledger](docs/distribution.md)
-to distinguish source availability from package publication.
+V10 uses package version `10.0.0` and exposes 134 tools and 8 resources.
+Publish the reviewed dev feature set through a main pull request, then the
+matching version tag. The new host-adapter paths retain explicit live-validation
+limitations; do not imply a new complete hardware qualification matrix.
+The previous v0.20.0 assets and tags remain immutable.
 
 ## Before preparing a version
 
