@@ -407,7 +407,10 @@ class LocalSoundSelectionHistory:
                 prefix=f".{self.path.name}.", suffix=".tmp", dir=os.fspath(parent)
             )
             try:
-                os.fchmod(descriptor, 0o600)
+                # Windows Python may not expose this POSIX permission API.
+                # mkstemp remains exclusive; Windows access follows parent ACLs.
+                if hasattr(os, "fchmod"):
+                    os.fchmod(descriptor, 0o600)
                 with os.fdopen(descriptor, "wb") as handle:
                     descriptor = -1
                     handle.write(payload)
