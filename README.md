@@ -37,6 +37,12 @@ for the feature and live-acceptance boundaries before installing from source.
 
 Starts read-only and never saves your project automatically.
 
+**Development preview:** [Dev now exposes 134 tools and 8 resources](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/dev/docs/releases/dev-v10.md),
+including Plugin Atlas, Sound Selection, Production Runs with durable recovery,
+Creation Review and delivery, Piano Roll note inspection, native macOS plug-in
+loading, and saved-FLP rendering. New note-read and renderer paths await live
+acceptance. These additions are not included in the v0.20.0 downloads.
+
 [What it can do](#not-just-another-note-sender) ·
 [Workflows](#workflows-with-postfader) ·
 [Feature depth](#feature-depth) ·
@@ -502,6 +508,7 @@ Keep private project data and local run journals out of public reports.
 | [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
 | [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
+| [Distribution and listings](docs/distribution.md) | Published versions, development scope, and verified MCP directory status |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
 | [Development release notes](docs/releases/dev-v10.md) | New features, stable-versus-dev differences, and pending live acceptance |
 | [Distribution and listings](docs/distribution.md) | Verified releases, canonical descriptions, and MCP directory status |
