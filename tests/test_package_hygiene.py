@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 import zipfile
@@ -16,10 +18,12 @@ from importlib.resources import files
 from pathlib import Path
 from unittest import mock
 
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.fspath(ROOT))
 
-import fl_studio_mcp
+import fl_studio_mcp  # noqa: E402
+
 
 try:
     import tomllib
@@ -92,6 +96,39 @@ class PackageHygieneTests(unittest.TestCase):
                     with mock.patch.object(scanner, "ROOT", root):
                         failures = scanner.check_file(Path("candidate.txt"))
                 self.assertIn("absolute Windows home path", failures)
+
+    def test_local_conversations_and_run_journals_cannot_enter_public_tree(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        candidates = (
+            ".codex/config.toml", "conversation.jsonl", "session.log",
+            "production-runs-v1.sqlite3", "runs.sqlite3-wal", "runs.db-shm",
+        )
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            for name in candidates:
+                with self.subTest(name=name):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("synthetic private record", encoding="utf-8")
+                    with mock.patch.object(scanner, "ROOT", root):
+                        self.assertTrue(scanner.check_file(Path(name)))
+                    ignored = subprocess.run(
+                        ["git", "check-ignore", "--no-index", name],
+                        cwd=ROOT, capture_output=True, check=False,
+                    )
+                    self.assertEqual(ignored.returncode, 0)
+
+    def test_github_credential_families_are_rejected_without_echoing_secrets(self) -> None:
+        scanner = self.load_public_tree_scanner()
+        with tempfile.TemporaryDirectory(prefix="postfader-public-tree-") as raw:
+            root = Path(raw)
+            for family in "pousr":
+                with self.subTest(family=family):
+                    (root / "candidate.txt").write_text(
+                        "gh" + family + "_" + "a" * 24, encoding="utf-8",
+                    )
+                    with mock.patch.object(scanner, "ROOT", root):
+                        self.assertIn("GitHub token", scanner.check_file(Path("candidate.txt")))
 
     def test_internal_working_documents_are_rejected_by_public_tree_scanner(
         self,
@@ -211,6 +248,15 @@ class PackageHygieneTests(unittest.TestCase):
                 os.environ["FL_BRIDGE_MIDI_PORT"], "Must Not Be Enumerated"
             )
 
+    def test_every_offline_test_is_included_in_the_required_suite(self) -> None:
+        runner = load_safe_runner()
+        offline = {
+            path.relative_to(ROOT).as_posix()
+            for path in (ROOT / "tests").glob("test_*.py")
+        } - {"tests/test_midi_transport.py"}
+        self.assertEqual(set(runner.SAFE_TESTS), offline)
+        self.assertEqual(len(runner.SAFE_TESTS), len(offline))
+
     def test_safe_runner_passes_isolation_and_timeout_to_every_child(self) -> None:
         runner = load_safe_runner()
         completed = subprocess.CompletedProcess(
@@ -237,6 +283,9 @@ class PackageHygieneTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["FL_BRIDGE_SANDBOXED"], "1")
         self.assertEqual(kwargs["timeout"], runner.SAFE_TEST_TIMEOUT_SECONDS)
         self.assertGreater(kwargs["timeout"], 0)
+        journal = Path(kwargs["env"]["POSTFADER_PRODUCTION_RUN_PATH"])
+        self.assertEqual(journal.name, "production-runs.sqlite3")
+        self.assertFalse(journal.parent.exists(), "test journal directory must be temporary")
 
     def test_safe_runner_can_instrument_children_for_coverage(self) -> None:
         runner = load_safe_runner()
@@ -343,6 +392,7 @@ with mock.patch.object(
                 "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
                 "postfader-doctor": "fl_studio_mcp.diagnostics:main",
                 "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+                "postfader-plugin-atlas": "fl_studio_mcp.plugin_atlas.cli:main",
                 "postfader-setup": "fl_studio_mcp.setup_wizard:main",
             },
         )
@@ -359,6 +409,39 @@ with mock.patch.object(
             "fl_studio_mcp._bridge",
             declared["tool"]["setuptools"]["packages"],
         )
+        self.assertIn(
+            "fl_studio_mcp.plugin_atlas",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.plugin_atlas_data",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.sound_selection",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.sound_selection.data",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        self.assertIn(
+            "fl_studio_mcp.creation_review",
+            declared["tool"]["setuptools"]["packages"],
+        )
+        atlas_data = files("fl_studio_mcp.plugin_atlas_data")
+        source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+        for path in source_data.rglob("*.json"):
+            relative = path.relative_to(source_data)
+            with self.subTest(atlas_data=relative.as_posix()):
+                self.assertTrue(atlas_data.joinpath(*relative.parts).is_file())
+
+        sound_data = files("fl_studio_mcp.sound_selection.data")
+        source_sound_data = ROOT / "fl_studio_mcp" / "sound_selection" / "data"
+        for path in source_sound_data.rglob("*.json"):
+            relative = path.relative_to(source_sound_data)
+            with self.subTest(sound_data=relative.as_posix()):
+                self.assertTrue(sound_data.joinpath(*relative.parts).is_file())
 
     def test_runtime_modules_do_not_import_the_fl_controller_body(self) -> None:
         # `_bridge` has no __init__.py, but its directory may still be found as
@@ -371,7 +454,13 @@ with mock.patch.object(
         self.assertTrue(controller.is_file())
         self.assertFalse((controller.parent / "__init__.py").exists())
 
-        for module in package.glob("*.py"):
+        modules = list(package.glob("*.py"))
+        modules.extend((package / "plugin_atlas").rglob("*.py"))
+        modules.extend((package / "plugin_atlas_data").rglob("*.py"))
+        modules.extend((package / "sound_selection").rglob("*.py"))
+        modules.extend((package / "creation_pipeline").rglob("*.py"))
+        modules.extend((package / "creation_review").rglob("*.py"))
+        for module in modules:
             tree = ast.parse(module.read_text(encoding="utf-8"), filename=str(module))
             imports = []
             for node in ast.walk(tree):
@@ -414,9 +503,25 @@ with mock.patch.object(
         )
         self.assertEqual(
             metadata["tool"]["setuptools"]["packages"],
-            ["fl_studio_mcp", "fl_studio_mcp._bridge"],
+            [
+                "fl_studio_mcp",
+                "fl_studio_mcp._bridge",
+                "fl_studio_mcp.creation_pipeline",
+                "fl_studio_mcp.creation_review",
+                "fl_studio_mcp.plugin_atlas",
+                "fl_studio_mcp.plugin_atlas_data",
+                "fl_studio_mcp.sound_selection",
+                "fl_studio_mcp.sound_selection.data",
+            ],
         )
-        self.assertNotIn("package-data", metadata["tool"]["setuptools"])
+        self.assertFalse(metadata["tool"]["setuptools"]["include-package-data"])
+        self.assertEqual(
+            metadata["tool"]["setuptools"]["package-data"],
+            {
+                "fl_studio_mcp.plugin_atlas_data": ["*.json", "**/*.json"],
+                "fl_studio_mcp.sound_selection.data": ["*.json", "**/*.json"],
+            },
+        )
 
     def test_offline_prototype_is_not_in_the_public_package(self) -> None:
         package = ROOT / "fl_studio_mcp"
@@ -523,6 +628,85 @@ with mock.patch.object(
         }
         self.assertEqual(verifier.V013_REQUIRED_RUNTIME_MODULES, expected)
         self.assertLessEqual(expected, verifier.RUNTIME_MODULES)
+
+    def test_distribution_verifier_pins_plugin_atlas_modules_and_data(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.ATLAS_RUNTIME_MODULES)
+        self.assertTrue(verifier.ATLAS_DATA_FILES)
+        self.assertLessEqual(verifier.ATLAS_RUNTIME_MODULES, verifier.RUNTIME_MODULES)
+        self.assertTrue(
+            all(
+                path.startswith("fl_studio_mcp/plugin_atlas_data/")
+                and path.endswith(".json")
+                for path in verifier.ATLAS_DATA_FILES
+            )
+        )
+
+    def test_distribution_verifier_pins_sound_selection_modules_and_data(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.SOUND_SELECTION_RUNTIME_MODULES)
+        self.assertTrue(verifier.SOUND_SELECTION_DATA_FILES)
+        self.assertLessEqual(
+            verifier.SOUND_SELECTION_RUNTIME_MODULES,
+            verifier.RUNTIME_MODULES,
+        )
+        self.assertTrue(
+            all(
+                path.startswith("fl_studio_mcp/sound_selection/data/")
+                and path.endswith(".json")
+                for path in verifier.SOUND_SELECTION_DATA_FILES
+            )
+        )
+        self.assertIn(
+            "/scripts/live_sound_selection_acceptance.py",
+            verifier.SDIST_REQUIRED_SUFFIXES,
+        )
+
+    def test_distribution_verifier_pins_creation_review_modules_and_docs(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertTrue(verifier.CREATION_REVIEW_RUNTIME_MODULES)
+        self.assertLessEqual(
+            verifier.CREATION_REVIEW_RUNTIME_MODULES,
+            verifier.RUNTIME_MODULES,
+        )
+        self.assertIn("/docs/creation-review.md", verifier.SDIST_REQUIRED_SUFFIXES)
+        self.assertIn(
+            "/scripts/generate_creation_review_fixtures.py",
+            verifier.SDIST_REQUIRED_SUFFIXES,
+        )
+
+    def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
+        verifier = load_distribution_verifier()
+        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 134)
+        self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
+
+    def test_sdist_verification_requires_every_runtime_module(self) -> None:
+        verifier = load_distribution_verifier()
+        required = (
+            verifier.RUNTIME_MODULES
+            | verifier.ATLAS_DATA_FILES
+            | verifier.SOUND_SELECTION_DATA_FILES
+            | {name.lstrip("/") for name in verifier.SDIST_REQUIRED_SUFFIXES}
+        )
+        missing_module = "fl_studio_mcp/plugin_loading.py"
+        self.assertIn(missing_module, required)
+        with tempfile.TemporaryDirectory(prefix="postfader-sdist-check-") as raw:
+            archive_path = Path(raw) / "source.tar.gz"
+            for omit in (None, missing_module):
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    for name in sorted(required - {omit}):
+                        content = (
+                            verifier.MCP_OWNERSHIP_MARKER.encode("utf-8")
+                            if name == "README.md" else b"fixture"
+                        )
+                        member = tarfile.TarInfo("package/" + name)
+                        member.size = len(content)
+                        archive.addfile(member, io.BytesIO(content))
+                failures = verifier.inspect_sdist(archive_path)
+                if omit is None:
+                    self.assertEqual(failures, [])
+                else:
+                    self.assertEqual(failures, ["sdist is missing " + missing_module])
 
 
 if __name__ == "__main__":

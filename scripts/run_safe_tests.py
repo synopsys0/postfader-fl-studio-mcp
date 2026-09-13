@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -55,6 +56,8 @@ SAFE_TESTS = (
     "tests/test_resource_bounds.py",
     "tests/test_plugin_profile.py",
     "tests/test_plugin_report.py",
+    "tests/test_plugin_atlas.py",
+    "tests/test_plugin_atlas_mcp.py",
     "tests/test_bridge_client_recovery.py",
     "tests/test_fixtures.py",
     "tests/test_package_hygiene.py",
@@ -65,6 +68,37 @@ SAFE_TESTS = (
     "tests/test_workflows.py",
     "tests/test_mixing.py",
     "tests/test_creative.py",
+    "tests/test_piano_roll.py",
+    "tests/test_saved_project_render.py",
+    "tests/test_plugin_loading.py",
+    "tests/test_creation_pipeline_foundation.py",
+    "tests/test_creation_composition.py",
+    "tests/test_creation_pipeline_integration.py",
+    "tests/test_creation_write_boundary.py",
+    "tests/test_semantic_processing.py",
+    "tests/test_creation_review_sessions.py",
+    "tests/test_creation_review_rebounce.py",
+    "tests/test_creation_review_persistence.py",
+    "tests/test_creation_review_analysis.py",
+    "tests/test_creation_review_comparison.py",
+    "tests/test_creation_review_revision.py",
+    "tests/test_creation_review_delivery.py",
+    "tests/test_creation_review_fixtures.py",
+    "tests/test_creation_review_mcp.py",
+    "tests/test_creation_review_production_runs.py",
+    "tests/test_live_creation_review_acceptance.py",
+    "tests/test_production_runs.py",
+    "tests/test_production_run_persistence.py",
+    "tests/test_preset_bridge.py",
+    "tests/test_preset_contracts.py",
+    "tests/test_preset_performance.py",
+    "tests/test_sound_selection_core.py",
+    "tests/test_sound_selection_history.py",
+    "tests/test_sound_selection_scoring.py",
+    "tests/test_sound_selection_quality.py",
+    "tests/test_sound_selection_service.py",
+    "tests/test_sound_selection_production_runs.py",
+    "tests/test_sound_selection_mcp.py",
 )
 
 
@@ -107,15 +141,19 @@ def run_safe_test(path: Path) -> subprocess.CompletedProcess[str]:
     else:
         command = [sys.executable, "-B", str(path)]
 
-    return subprocess.run(
-        command,
-        cwd=ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-        env=environment,
-        timeout=SAFE_TEST_TIMEOUT_SECONDS,
-    )
+    with tempfile.TemporaryDirectory(prefix="postfader-safe-test-") as isolated:
+        environment["POSTFADER_PRODUCTION_RUN_PATH"] = os.fspath(
+            Path(isolated) / "production-runs.sqlite3"
+        )
+        return subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=environment,
+            timeout=SAFE_TEST_TIMEOUT_SECONDS,
+        )
 
 
 def _timeout_output(error: subprocess.TimeoutExpired) -> str:

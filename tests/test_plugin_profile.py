@@ -60,7 +60,7 @@ SCAN = {
 
 class ClassifyTests(unittest.TestCase):
     def test_trailing_whitespace_does_not_change_the_verdict(self):
-        # Every display string on the live VST3 carried a trailing space.
+        # Trailing spaces must not change the semantic display value.
         self.assertEqual(classify("Off "), ("on_off", None))
         self.assertEqual(classify("Off"), ("on_off", None))
 

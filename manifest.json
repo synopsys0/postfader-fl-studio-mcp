@@ -2,9 +2,9 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "0.20.0",
-  "description": "AI copilot for FL Studio project understanding, mixing, plug-ins, composition, and arrangement.",
-  "long_description": "A local 90-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, diagnose exported mixes, work with loaded plug-ins, build reviewable mix plans, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
+  "version": "10.0.0",
+  "description": "FL Studio MCP server with 134 tools for mixing, composition, sound selection, production runs, and review.",
+  "long_description": "A local 134-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, review exported creation bounces, plan one bounded revision, prepare delivery handoffs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
     "name": "ZEROD4Y"
   },
@@ -84,6 +84,22 @@
     {
       "name": "plugins_scan_parameters",
       "description": "De-pad a whole plug-in in one call; prefer this over paging a VST."
+    },
+    {
+      "name": "plugins_atlas_search",
+      "description": "Search bundled static plug-in knowledge without contacting FL Studio."
+    },
+    {
+      "name": "plugins_atlas_get_product",
+      "description": "Read one static Atlas product and its related descriptive records."
+    },
+    {
+      "name": "plugins_atlas_recommend",
+      "description": "Rank static plug-in choices or stock alternatives without changing FL."
+    },
+    {
+      "name": "plugins_atlas_inspect_loaded",
+      "description": "Match the target-aware live Track B inventory to static Atlas knowledge."
     },
     {
       "name": "copilot_capture_readonly_inspection",
@@ -212,6 +228,22 @@
     {
       "name": "fl_get_plugin_preset_count",
       "description": "Read FL's authoritative preset count for one loaded plug-in."
+    },
+    {
+      "name": "plugins_list_presets",
+      "description": "Read one deterministic preset page without changing the plug-in."
+    },
+    {
+      "name": "plugins_get_current_preset",
+      "description": "Read FL's current preset name and an index only when it is unique."
+    },
+    {
+      "name": "plugins_inspect_pad_map",
+      "description": "Read generic pad, MIDI-note, color, empty, and mute observations."
+    },
+    {
+      "name": "fl_select_plugin_preset",
+      "description": "Navigate to an exact preset and require later-idle-tick identity readback."
     },
     {
       "name": "fl_list_channels",
@@ -358,8 +390,152 @@
       "description": "Run the end-to-end read-only finish assessment and stop at user export."
     },
     {
+      "name": "sound_selection_inventory",
+      "description": "Read a compact loaded sound pool; Atlas-only products remain recommendations."
+    },
+    {
+      "name": "sound_selection_plan",
+      "description": "Choose deterministic loaded-target assignments without changing FL or history."
+    },
+    {
+      "name": "sound_selection_get",
+      "description": "Look up one process-local palette without treating expiry as a server error."
+    },
+    {
+      "name": "sound_selection_create_variation",
+      "description": "Return a section delta instead of replacing the existing palette."
+    },
+    {
+      "name": "sound_selection_apply",
+      "description": "Apply exact presets in deterministic order and stop on unknown or unverified outcomes."
+    },
+    {
+      "name": "sound_selection_record_feedback",
+      "description": "Update bounded local ranking feedback; silence is never inferred."
+    },
+    {
+      "name": "sound_selection_history_status",
+      "description": "Report the local history path, health, schema, and bounded record counts."
+    },
+    {
+      "name": "sound_selection_history_reset",
+      "description": "Explicitly remove bounded local selection history; project state is unchanged."
+    },
+    {
+      "name": "postfader_creation_readiness",
+      "description": "Aggregate all detectable setup blockers without changing FL Studio."
+    },
+    {
+      "name": "processing_plan",
+      "description": "Plan loaded-effect processing without enabling writes or mutating FL."
+    },
+    {
+      "name": "processing_apply_plan",
+      "description": "Apply a semantic plan through one task-scoped verified Production Run."
+    },
+    {
+      "name": "postfader_validate_run",
+      "description": "Validate a bounded Production Run and current capabilities without changing FL."
+    },
+    {
+      "name": "postfader_execute_run",
+      "description": "Create and execute one task-scoped run until its plan completes or blocks."
+    },
+    {
+      "name": "postfader_list_runs",
+      "description": "Find recent runs after an MCP restart without executing any operations."
+    },
+    {
+      "name": "postfader_get_run",
+      "description": "Read a current or journaled run, its generated outputs and operation receipts."
+    },
+    {
+      "name": "postfader_continue_run",
+      "description": "Continue or replace only a run's unexecuted remainder after a follow-up."
+    },
+    {
+      "name": "postfader_stop_run",
+      "description": "Stop future run operations without undoing completed project changes."
+    },
+    {
+      "name": "postfader_review_start",
+      "description": "Start a bounded Review Session from one completed Production Run."
+    },
+    {
+      "name": "postfader_review_attach_assets",
+      "description": "Validate and attach explicit audio assets without changing FL Studio."
+    },
+    {
+      "name": "postfader_review_evaluate",
+      "description": "Measure one bounce globally and by known section; apply zero FL mutations."
+    },
+    {
+      "name": "postfader_review_get",
+      "description": "Read a Review Session, retained evidence, status, and exact next action."
+    },
+    {
+      "name": "postfader_review_compare",
+      "description": "Compare before and after bounces without implying producer approval."
+    },
+    {
+      "name": "postfader_review_plan_revision",
+      "description": "Compile and validate one bounded RevisionPlan before any project mutation."
+    },
+    {
+      "name": "postfader_delivery_manifest",
+      "description": "Build the final multi-dimensional delivery view without writing a file."
+    },
+    {
+      "name": "postfader_review_export_handoff",
+      "description": "Return one precise full-mix export request and only necessary stems."
+    },
+    {
+      "name": "postfader_review_apply_revision",
+      "description": "Apply one bounded revision with one preflight and one write authorization."
+    },
+    {
+      "name": "postfader_review_record_feedback",
+      "description": "Record explicit feedback; silence and measurements never grant approval."
+    },
+    {
+      "name": "postfader_review_stop",
+      "description": "Stop future review work without undoing completed project changes."
+    },
+    {
+      "name": "postfader_review_delete",
+      "description": "Delete one Review Session record without touching audio or the FL project."
+    },
+    {
+      "name": "postfader_delivery_export_manifest",
+      "description": "Create local delivery files without overwriting or saving the FL project."
+    },
+    {
+      "name": "plugins_list_available",
+      "description": "Read the native Add menu on macOS; opens/closes the menu and changes focus."
+    },
+    {
+      "name": "plugins_load",
+      "description": "Load one macOS Add-menu plugin, then identify its new channel or effect slot."
+    },
+    {
       "name": "piano_roll_bridge",
       "description": "Manage the one-time-per-process arm for FL's separate Piano Roll script runtime."
+    },
+    {
+      "name": "piano_roll_read_notes",
+      "description": "Open a score and read notes without changing notes or enabling musical writes."
+    },
+    {
+      "name": "postfader_render_saved_project",
+      "description": "Start FL's command-line WAV exporter in a separate process; saved state only."
+    },
+    {
+      "name": "postfader_render_get_job",
+      "description": "Get render progress and decoded WAV evidence; completed also requires FL exit."
+    },
+    {
+      "name": "postfader_render_cancel",
+      "description": "Cancel monitoring and its owned process; on macOS the renderer may remain open."
     },
     {
       "name": "piano_roll_write_notes",
@@ -383,7 +559,7 @@
     },
     {
       "name": "compose_drums",
-      "description": "Generate GM-mapped kick/snare/hat patterns without changing FL."
+      "description": "Generate mapped kick/snare/hat patterns without changing FL."
     },
     {
       "name": "midi_export_type1",

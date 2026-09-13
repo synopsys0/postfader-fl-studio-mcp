@@ -1,0 +1,83 @@
+{
+  "reeverb": {
+    "plugin_name": "Fruity Reeverb 2",
+    "parameters": [
+      {
+        "index": 5,
+        "name": "Decay time",
+        "display": "2.0sec"
+      },
+      {
+        "index": 12,
+        "name": "Wet level",
+        "display": "40%"
+      }
+    ]
+  },
+  "eq2": {
+    "plugin_name": "Fruity parametric EQ 2",
+    "parameters": [
+      {
+        "index": 2,
+        "name": "Band 3 level"
+      },
+      {
+        "index": 9,
+        "name": "Band 3 freq"
+      }
+    ]
+  },
+  "compressor": {
+    "plugin_name": "Fruity Compressor",
+    "parameters": [
+      {
+        "index": 0,
+        "name": "Threshold"
+      },
+      {
+        "index": 1,
+        "name": "Ratio"
+      },
+      {
+        "index": 3,
+        "name": "Attack"
+      },
+      {
+        "index": 4,
+        "name": "Release"
+      }
+    ]
+  },
+  "limiter": {
+    "plugin_name": "Fruity Limiter",
+    "parameters": [
+      {
+        "index": 2,
+        "name": "Limiter ceiling"
+      }
+    ]
+  },
+  "delay": {
+    "plugin_name": "Fruity Delay 3",
+    "parameters": [
+      {
+        "index": 2,
+        "name": "Tempo sync",
+        "display": "On"
+      },
+      {
+        "index": 4,
+        "name": "Time",
+        "display": "4:0"
+      },
+      {
+        "index": 14,
+        "name": "Feedback level"
+      },
+      {
+        "index": 23,
+        "name": "Output wet"
+      }
+    ]
+  }
+}

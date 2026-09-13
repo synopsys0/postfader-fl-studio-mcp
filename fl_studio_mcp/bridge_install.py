@@ -25,7 +25,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from .bridge_stamp import BridgeStampError, stamp_bridge_source
+from .bridge_stamp import BridgeStampError, read_stamped_bridge_source
 from .host_config import (
     HostConfigurationError,
     default_fl_studio_user_data_dir,
@@ -103,7 +103,7 @@ def midi_setup_epilog(platform_name: str | None = None) -> str:
 def expected_bridge_deployment() -> tuple[bytes, str]:
     """Return the exact installed bytes and source hash this version ships."""
     try:
-        return stamp_bridge_source(bridge_source_path().read_bytes())
+        return read_stamped_bridge_source(bridge_source_path())
     except (BridgeStampError, OSError) as exc:
         raise BridgeInstallError("could not prepare the bridge: %s" % exc) from exc
 

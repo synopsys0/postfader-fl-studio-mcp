@@ -3,6 +3,58 @@
 These FL Studio 2026 MIDI-scripting behaviors determine what FL Studio MCP
 Bridge can safely expose. They are runtime constraints, not musical policy.
 
+## Plugin Atlas does not extend the FL Studio API
+
+[Plugin Atlas](plugin-atlas.md) is bundled static product knowledge. It can
+describe a product and link to reviewed sources, but it cannot establish that
+the product is installed, owned, or loaded, and it is never a runtime
+allowlist. The [validated plug-in matrix](plugin-matrix.md) is a separate set
+of bounded observations and compatibility/write evidence; a matrix row is not
+an Atlas record or a guarantee about every version, control, or format.
+
+Neither surface adds capabilities that FL Studio does not expose here. In
+particular, Atlas and the matrix cannot insert, remove, or reorder plug-ins,
+save or render a project, or read FL Studio's live audio output.
+
+Creation Review consequently works from explicit audio exports selected by the
+caller. It can measure those files, map known Production Run sections, compare
+matching before/after bounces, and request only the stems needed for an
+unresolved finding. It cannot capture FL's live output, render unsaved revisions,
+save the project, separate stems, verify manual Playlist placement, or
+establish artistic approval from measurements.
+
+Sound Selection follows the same boundary: it chooses only from generators and
+effects already loaded in the open project. Atlas-only products can be
+recommended, but they cannot be loaded or assigned by PostFader. Load the
+instrument pool manually before planning a palette. Loop Starter is separate
+and must be requested explicitly; its reroll exposes dispatch but no stable
+selected-loop identity.
+
+## Creation readiness is observational
+
+The creation-readiness scorecard aggregates what this bridge can detect before
+the first write: connection/capabilities, Piano Roll arming, loaded generators,
+semantic drum coverage, empty patterns and arrangement limits, loaded-effect
+coverage, and manual handoff requirements. It performs no mutation and cannot
+make an unloaded instrument/effect, missing pad, or unavailable Playlist
+operation appear ready. A complete Production Run performs that readiness
+preflight once, caches the bounded session/target/project context, and then
+uses phase-specific checks rather than rescanning the full project before
+every phase.
+
+Sound-aware composition uses metadata such as register, articulation, envelope,
+density, and mono/poly behavior only when its provenance and confidence allow
+it. Name inference is never audible evidence. A selected sound can therefore
+produce a technical composition receipt while audible quality remains
+`not_evaluated`.
+
+Effect coverage has the same boundary. A semantic processing action requires a
+loaded effect, Atlas capability evidence, an adapter, and a runtime control
+observation. Processing plans are read-only; applies use existing verified
+display/option/normalized setters and later-tick readback. Missing effects or
+unresolved controls yield an honest dry/partial result, not a claim that FL
+was processed or that the result sounds correct.
+
 ## The embedded Python environment cannot use files or sockets
 
 Inside FL Studio's MIDI-script interpreter, low-level file construction can
@@ -36,7 +88,9 @@ environment variable.
 still read only when the script loads. Changing that variable after FL Studio
 starts has no effect. A script reload resets the in-memory gate to the startup
 default; a normal FL Studio process with no startup opt-in therefore returns to
-read-only mode.
+read-only mode. Project-load callbacks also disable writes and rotate the
+session fingerprint, including a failed load. Pending commands are abandoned
+with unknown outcomes rather than resumed against newly loaded indices.
 
 ## The bridge source must be ASCII-only
 
@@ -71,6 +125,24 @@ control surface is much smaller:
 The reported count is therefore only an address-space upper bound. Parameter
 scans are paged, omit padding, and stop before treating the MIDI CC block as a
 plug-in surface.
+
+## Preset identity and drum-pad reads are bounded
+
+FL's preset APIs expose a reported count, current-preset name, and
+`nextPreset`/`prevPreset` navigation, but not a universal durable preset UUID.
+PostFader therefore reads bounded index/name pages and reports duplicate or
+blank names explicitly. A current index is used only when it resolves
+uniquely. Exact selection accepts a name and/or index, refuses ambiguous names,
+uses a bounded shortest navigation path when possible, and verifies the
+requested identity after later idle ticks. Unknown or unverified mutation
+outcomes are not replayed or rolled back; FL's `undo_point_created` evidence is
+reported as observed, including `null` when unavailable.
+
+`plugins.getPadInfo` is similarly optional and generic. When exposed,
+PostFader reads each pad's semitone/MIDI note, color, empty/muted flags, and
+reported name, then derives semantic drum roles. It cannot assume General MIDI
+note numbers or invent a missing kick, snare, or hat. A Sound Selection drum
+plan with required unmapped roles blocks before Piano Roll note writing.
 
 ## Same-tick readback can return the previous value
 
@@ -131,6 +203,10 @@ shows the updated setting. The verified setters use both observations:
 Use `fl_set_plugin_param_display` when the target must land in the units the
 plug-in shows. A name such as `Attack` and a target such as `20` can be
 resolved without the caller knowing the plug-in's normalized curve.
+For a unit-specific request, supply `target_unit`, for example `ms` with
+`target_value=20`. The solver normalizes each display read, including a change
+between Hz and kHz or ms and seconds. This path requires a bridge advertising
+`plugin_display_units`; older numeric calls remain available without it.
 
 ## Parameter writes require pickup mode to be disabled
 
@@ -155,7 +231,7 @@ and should not be run during recording or on an irreplaceable project. If the
 requested option is not found, the bridge attempts to restore the starting
 value and reports the result.
 
-## The public API does not insert or render
+## The MIDI scripting API does not insert plug-ins or render audio
 
 The supported MIDI scripting modules provide no operation for:
 
@@ -168,13 +244,18 @@ The supported MIDI scripting modules provide no operation for:
 FL Studio contains undocumented internal operations, but they are not a stable
 third-party integration surface and this project does not depend on them.
 
-Plug-ins can be inserted manually through FL Studio's UI and then inspected
-immediately through `plugins.isValid`, `plugins.getPluginName`, and the
-parameter tools. The division is explicit: insertion stays outside this MCP
-server; verification and parameter configuration remain inside it.
+The macOS host adapter supplies insertion through FL's named native Add menu:
+`plugins_list_available` enumerates menu entries and `plugins_load` adds one
+instrument or a mixer effect. Bridge inventory verifies the new instance.
+This is a desktop capability separate from the MIDI API. It requires
+Accessibility access, supports the observed English menu structure, and does
+not implement Windows insertion, removal, replacement or reordering.
 
-Audio must likewise be exported or recorded through FL Studio before the
-audio-analysis tools can measure it.
+Audio must be exported or recorded through FL Studio before the audio-analysis
+tools can measure it. Separately from the MIDI bridge,
+`postfader_render_saved_project` invokes FL's documented command-line WAV
+exporter on an existing `.flp` in another process. That export includes saved
+state only; it does not save the open project or capture unsaved changes.
 
 ## Piano Roll scripts are a separate runtime
 
@@ -182,13 +263,19 @@ FL's controller scripting API can select a global channel and pattern and show
 the Piano Roll, but it cannot enumerate or edit the score. FL exposes those
 notes to a separate `.pyscript` runtime instead. PostFader therefore installs a
 small user-run bootstrap and atomically replaces one generated **Postfader
-Apply** script for each requested write or transform.
+Apply** script for each requested inspection, write, or transform.
 
 The controller bridge verifies the intended channel, pattern, and Piano Roll
-visibility before the host sends the platform shortcut. A successful shortcut
-dispatch proves focus/key delivery only. Because the controller side has no
-note getter, `application_verified` is always false and no second Piano Roll
-mutation should be inferred safe merely from dispatch.
+visibility before the host sends the platform shortcut. Editor navigation is
+available while musical writes are disabled. `piano_roll_read_notes` obtains
+bounded note pages from the separate runtime and rechecks the target afterward;
+a missing receipt or changed target exposes no attributed notes.
+
+A successful shortcut proves dispatch only. Note writes set
+`application_verified=true` only after matching application and persistence
+receipts arrive from the script runtime. Transforms remain dispatch-only and
+unverified; a later inspection provides a fresh score observation without
+retroactively verifying a transform.
 
 ## Markers and automation have asymmetric getters
 

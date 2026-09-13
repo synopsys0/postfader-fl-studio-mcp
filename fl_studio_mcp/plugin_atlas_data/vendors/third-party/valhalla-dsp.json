@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "vendor": {
+    "id": "valhalla-dsp",
+    "name": "Valhalla DSP",
+    "origin": "third_party",
+    "website": "https://valhalladsp.com/"
+  },
+  "products": [
+    {
+      "id": "valhalla-dsp.supermassive",
+      "name": "Valhalla Supermassive",
+      "aliases": ["ValhallaSupermassive", "Valhalla Supermassive VST3"],
+      "plugin_kinds": ["effect"],
+      "kind": "effect",
+      "origin": "third_party",
+      "catalog_scope": "selected_third_party",
+      "lifecycle": "current",
+      "edition_min": "not_applicable",
+      "categories": ["reverb", "delay", "creative-space"],
+      "summary": "A free feedback-delay-network effect for very large reverbs, evolving echoes, and atmospheric spaces.",
+      "problems_solved": ["large ambient space", "long evolving delay", "dense modulated reverb", "rhythmic echo"],
+      "appropriate_for": ["synth and vocal atmospheres", "sound design", "send effects", "unusually long or evolving tails"],
+      "poor_fit_when": ["a short transparent room is the only goal", "extreme feedback would obscure the source", "the product is not already loaded and insertion is required"],
+      "common_sources": ["synths", "vocals", "guitars", "effects sends"],
+      "techniques": ["reverb", "delay", "chorus", "filtering", "stereo-imaging"],
+      "major_modules": [
+        {"id": "algorithms", "name": "Reverb and echo algorithms", "description": "Multiple modes vary attack, density, decay, and echo structure."},
+        {"id": "feedback-network", "name": "Feedback delay network", "description": "Delay, Warp, Feedback, and Density shape repeating and diffuse energy."},
+        {"id": "modulation-eq", "name": "Modulation and feedback EQ", "description": "Modulation plus high- and low-cut controls shape motion and decay."}
+      ],
+      "limitations": ["Long feedback settings can dominate a mix; Atlas cannot hear or audition the result.", "An Atlas entry does not prove the exact loaded version, format, exposed parameter map, or write behavior."],
+      "stock_alternatives": ["image-line.luxeverb", "image-line.fruity-reeverb-2", "image-line.fruity-delay-3"],
+      "formats": ["vst", "vst3", "au"],
+      "manual_path": "https://valhalladsp.com/shop/reverb/valhalla-supermassive/",
+      "knowledge_depth": "curated",
+      "commercial_model": "freeware"
+    }
+  ]
+}

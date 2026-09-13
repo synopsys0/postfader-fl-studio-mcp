@@ -17,7 +17,7 @@ Run the static checks:
 
 ```bash
 python -m ruff check fl_studio_mcp scripts
-python -m pyright --project pyrightconfig.json
+python -m pyright --pythonpath "$(python -c 'import sys; print(sys.executable)')" --project pyrightconfig.json
 ```
 
 Run the hermetic suite with coverage. The optional artifact directory receives
@@ -61,8 +61,11 @@ probe still reports 94 diagnostics while the enforced Pyright baseline is
 clean; this difference is why mypy is documented as exploratory rather than a
 second failing CI gate.
 
-`pyrightconfig.json` uses basic checking and includes exactly those seven
-entry modules. Their imported application modules are analyzed normally.
+`pyrightconfig.json` uses basic checking over the established typed core plus
+Plugin Atlas, Sound Selection, Creation Pipeline, Production Runs, Creation
+Review, Piano Roll inspection, saved-project rendering, native plug-in loading,
+run persistence, and the review fixture/live-acceptance scripts. Imported application
+modules are analyzed normally.
 The FL-only controller and test harnesses are excluded for the same runtime
 reasons described above. The only source-level compatibility adjustment is a
 targeted `reportMissingImports` comment on the Python 3.10-only `tomli`

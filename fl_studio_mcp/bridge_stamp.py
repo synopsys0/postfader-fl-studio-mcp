@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
@@ -36,6 +37,34 @@ def stamp_bridge_source(source: bytes) -> tuple[bytes, str]:
         f'BRIDGE_SOURCE_SHA256 = "{digest}"  # injected-by-install'.encode("ascii")
     )
     return source.replace(BRIDGE_SOURCE_MARKER, replacement, 1), digest
+
+
+@lru_cache(maxsize=4)
+def _read_stamped_bridge_source(
+    path: Path, identity: tuple[int, int, int, int, int]
+) -> tuple[bytes, str]:
+    # The identity is a cache key, not a second content-integrity check.
+    return stamp_bridge_source(path.read_bytes())
+
+
+def read_stamped_bridge_source(path: Path) -> tuple[bytes, str]:
+    """Read and stamp each source revision once, including editable installs.
+
+    Handshakes need the packaged source digest for diagnostics. Reopening,
+    hashing, and copying the entire controller on every ping adds no new
+    information while the file is unchanged. A cheap stat also lets a running
+    development server notice edits, replacements, and missing source files.
+    """
+    path = path.absolute()
+    metadata = path.stat()
+    identity = (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+    return _read_stamped_bridge_source(path, identity)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

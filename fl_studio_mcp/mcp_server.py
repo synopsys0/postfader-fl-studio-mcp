@@ -1,33 +1,10 @@
-"""The MCP server for FL Studio 2026.  This is the default agent entry point.
+"""MCP entry point for FL Studio project control and production workflows.
 
-Five surfaces, and nothing else is reachable from here:
-
-* **Reads** over the live project, through the fail-closed inspector allowlist.
-* **Measurements** of rendered audio files, because the FL API exposes no
-  audio. Those tools read files the caller names, plus a bounded lookup over
-  FL Studio's usual output and project folders; the discovery roots are fixed
-  in code and cannot be chosen by an agent.
-* **Verified state mutations** for transport, mixer tracks, global Channel Rack
-  targets, the current pattern's step cells, and mixer-effect or generator
-  parameters. Each reads FL back on a *later* idle tick and reports
-  ``verified`` from that readback alone.
-* **Session write-mode control**, which can expose or lock those exact
-  mutations without restarting FL Studio. Enabling requires an explicit
-  user-present confirmation and is independently verified by a new handshake.
-* **Bounded live-note audition**, which reports note dispatch and release but
-  never fabricates state verification.
-
-There is still no undo command, render, project save, caller-directed
-filesystem search, playback-speed setter without a getter, or reflective FL
-API escape hatch.
-
-The project write tools apply and report; there is no confirmation round-trip
-and no rollback ceremony. Where an FL undo request applies, whether a point actually
-appeared is reported as ``undo_point_created`` rather than assumed; transient
-transport and note actions truthfully report null. They are dispatchable only
-while the bridge reports verified write mode; when it does not, they refuse locally with
-:class:`~fl_studio_mcp.verified_writer.VerifiedWritesUnavailable`, which names
-the user-confirmed mode tool, rather than surfacing a raw bridge rejection.
+Named tools expose live inspection, verified state edits, composition, offline
+analysis, sound selection, production runs and creation review.
+Blocking bridge and audio work runs off the MCP event loop. Task authorization
+flows through the workflow; typed receipts report applied, partial and unknown
+outcomes. The bridge owns live capabilities and session/target checks.
 """
 
 from __future__ import annotations
@@ -84,6 +61,41 @@ from .contracts import (
     VerifiedPluginParameterWrite,
     WriteModeChange,
 )
+from .creation_review.mcp import (
+    ReviewApplyRevisionRequest,
+    ReviewAttachAssetsRequest,
+    ReviewCompareRequest,
+    ReviewDeleteResult,
+    ReviewDeliveryExportRequest,
+    ReviewDeliveryExportResult,
+    ReviewEvaluateRequest,
+    ReviewPlanRevisionRequest,
+    ReviewSessionLookup,
+    delivery_export_manifest as export_review_delivery_manifest,
+    delivery_manifest as build_review_delivery_manifest,
+    review_apply_revision as apply_creation_revision,
+    review_attach_assets as attach_creation_review_assets,
+    review_compare as compare_creation_revision,
+    review_delete as delete_creation_review,
+    review_evaluate as evaluate_creation_review,
+    review_export_handoff as build_review_export_handoff,
+    review_get as get_creation_review,
+    review_plan_revision as plan_creation_revision,
+    review_record_feedback as record_creation_review_feedback,
+    review_start as start_creation_review,
+    review_stop as stop_creation_review,
+)
+from .creation_review.models import (
+    CreationEvaluationReport,
+    CreationFeedback,
+    DeliveryManifest,
+    ExportHandoff,
+    ReviewSession,
+    ReviewSessionRequest,
+    RevisionComparison,
+    RevisionPass,
+    RevisionPlan,
+)
 from .creative import (
     PIANO_ROLL,
     ArrangementMarkerReceipt,
@@ -114,6 +126,17 @@ from .music_analysis import (
     analyze_tempo_and_key,
     transcribe_monophonic,
 )
+from .piano_roll import PianoRollNoteSnapshot, read_piano_roll_notes
+from .plugin_loading import (
+    PluginLoadRequest, PluginLoadResult, PluginMenuInventory,
+    list_available_plugins, load_plugin,
+)
+from .saved_project_render import (
+    SavedProjectRenderJob,
+    SavedProjectRenderRequest,
+    get_saved_project_render_jobs,
+    shutdown_saved_project_render_jobs,
+)
 from .readonly_inspector import ReadOnlyInspector
 from .mixing import (
     MIX_PLANS,
@@ -141,6 +164,62 @@ from .mixing import (
     run_mix_doctor,
 )
 from .performance import TrackBController, TrackBInspector
+from .creation_pipeline.models import CreationReadinessReport
+from .creation_pipeline.processing import ProcessingPlan, ProcessingRequest
+from .plugin_atlas_mcp import (
+    AtlasGetProductRequest,
+    AtlasInspectLoadedRequest,
+    AtlasInspectLoadedResponse,
+    AtlasProductResponse,
+    AtlasRecommendationResponse,
+    AtlasRecommendRequest,
+    AtlasSearchRequest,
+    AtlasSearchResponse,
+    get_atlas_product,
+    inspect_loaded_atlas,
+    recommend_atlas,
+    search_atlas,
+)
+from .production_runs import (
+    ApplyProcessingPlanOperation,
+    PRODUCTION_RUNS,
+    ProductionRunDelta,
+    ProductionRunLookup,
+    ProductionRunPlan,
+    ProductionRunRequest,
+    ProductionRunResult,
+    ProductionRunSummary,
+    ProductionRunValidation,
+    ProductionScope,
+    creation_readiness,
+    list_production_runs,
+    plan_live_processing,
+    validate_production_run,
+)
+from .sound_selection.executor import (
+    SoundFeedbackResult,
+    SoundPaletteLookup,
+    SoundSelectionApplyResult,
+)
+from .sound_selection.history import SoundHistoryResetResult, SoundHistoryStatus
+from .sound_selection.mcp import (
+    sound_selection_apply as apply_sound_selection,
+    sound_selection_create_variation as create_sound_selection_variation,
+    sound_selection_get as get_sound_selection,
+    sound_selection_history_reset as reset_sound_selection_history,
+    sound_selection_history_status as get_sound_selection_history_status,
+    sound_selection_inventory as get_sound_selection_inventory,
+    sound_selection_plan as plan_sound_selection,
+    sound_selection_record_feedback as record_sound_selection_feedback,
+)
+from .sound_selection.models import (
+    DrumPadMap,
+    SoundFeedbackRequest,
+    SoundInventory,
+    SoundPalettePlan,
+    SoundPaletteVariationPlan,
+    SoundSelectionRequest,
+)
 from .track_b_contracts import (
     ChannelList,
     EmptyPatternSearch,
@@ -173,6 +252,10 @@ from .track_b_contracts import (
     PluginTarget,
     PatternList,
     PluginPresetCount,
+    PluginPresetPage,
+    PluginCurrentPreset,
+    PluginPadMap,
+    ExpectedPluginPresetState,
     PlaylistTrackList,
     ProjectHistoryObservation,
     StepCellUpdate,
@@ -203,6 +286,7 @@ from .track_b_contracts import (
     VerifiedTargetedPluginDisplayWrite,
     VerifiedTargetedPluginOptionWrite,
     VerifiedTargetedPluginParameterWrite,
+    VerifiedPluginPresetSelection,
     VerifiedTempoWrite,
     VerifiedTimeSignatureNumeratorWrite,
 )
@@ -231,64 +315,126 @@ SessionFingerprintArg = Annotated[
         default=None,
         pattern=r"^[0-9a-f]{32}$",
         description=(
-            "Optional bridge-lifetime fingerprint from a recent read. The write "
-            "refuses if FL reloaded the bridge before mutation. This is a "
-            "concurrency guard, not authentication or project identity."
+            "Optional bridge/project-session fingerprint from a recent read. The write "
+            "refuses after bridge reload or a reported project load. This is a "
+            "concurrency guard, not authentication or a durable project identity."
+        ),
+    ),
+]
+
+# Sound Palette application is a workflow mutation whose service contract
+# always requires a live session token. Keep the generic bridge-write alias
+# optional for the lower-level setters that preserve their legacy call shape,
+# but make this high-level public mutation fail at MCP argument validation
+# rather than reaching the service with ``None``.
+RequiredSoundSelectionSessionFingerprintArg = Annotated[
+    str,
+    Field(
+        pattern=r"^[0-9a-f]{32}$",
+        description=(
+            "Required bridge/project-session fingerprint from a recent live read. The "
+            "palette application refuses after bridge reload or a reported project load. "
+            "This is a concurrency guard, not authentication or a durable project identity."
         ),
     ),
 ]
 
 
 INSTRUCTIONS = """\
-PostFader 0.20 is a local FL Studio 2026 production copilot with 90 supported
-tools and 8 live resources. It observes project, transport, mixer, Channel
-Rack, loaded plug-ins, patterns, Playlist tracks, history, presets, and step
-cells. Prefer the fl:// resources for initial context, then use focused reads
-before deciding on a mutation.
+PostFader is an FL Studio production connector with 149 tools and 8 live
+resources. Use focused project, channel, mixer, pattern and plug-in reads to
+understand the user's task, then carry it through with the relevant workflow.
+The connected AI makes creative decisions; PostFader executes and reports FL
+state. Prefer fl:// resources for initial context when the client exposes them.
 
-The bridge starts read-only. Only call fl_set_write_mode(enabled=true,
-confirm_user_present=true) after the present user explicitly asks to change the
-open project. The authorization is session-only. Direct setters are bounded,
-Master-protected, never automatically replayed after an ambiguous outcome, and
-read FL back on a later idle tick. Treat verified=false as the headline: the
-requested state was not proven. False or null undo evidence means Ctrl+Z may
-not recover the change. PostFader never saves the project.
+A request to create, edit, continue, finish, arrange, remix or mix authorizes
+supported changes within that task. Preserve the user's stated constraints and
+accepted material. Use postfader_execute_run for multi-stage work: it performs
+readiness checks and enables writes internally once. Do not ask separately to
+enable write mode, repeat authorization inside the run, or call validation and
+readiness tools again before execution. Use postfader_creation_readiness or
+postfader_validate_run when the user actually wants a diagnostic or a plan.
+For individual setters, enable fl_set_write_mode(enabled=true,
+confirm_user_present=true) once when needed; the user's request to edit is the
+confirmation. Analysis and ideas alone do not authorize project changes.
 
-fl_apply_verified_batch performs one preflight and ordered direct operations
-with per-item receipts. It is non-atomic: successful earlier items are not
-rolled back. mix_create_plan and mix_apply_plan keep recommendation and action
-separate and apply a stored plan at most once. Peak watches and mix plans live
-only in this MCP process.
+Proceed through warnings and supported alternatives within scope. Stop for a
+missing capability, changed target, unmet setup dependency or unknown mutation
+outcome. Report the concrete blocked operation and usable next step. Use
+postfader_continue_run to resume after the user's follow-up; keep completed
+receipts. postfader_stop_run prevents future operations. Runs and plans are
+saved locally across MCP restarts. Use postfader_list_runs to rediscover them
+and postfader_continue_run with delta.mode="resume" to continue a saved plan.
+Interrupted writes with unknown outcomes are never replayed. A run releases
+write mode it enabled when finished.
 
-Mix Doctor, gain staging, reference matching, masking recommendations,
-processing intents, plug-in profiles, and finish assessment use actual decoded
-bounces where audio evidence is required. Recommendations are bounded policy,
-not proof of artistic quality. The server cannot hear FL's live output; the
-user must export candidate audio before bounce analysis.
+Use fl_apply_verified_batch for ordered direct edits with one preflight and
+per-item receipts. Earlier successful edits remain if a later item fails.
+Never replay an ambiguous write automatically. Check verified/application_verified
+and describe partial results accurately. Undo availability is reported per
+operation. fl_undo and fl_redo are available; PostFader does not save projects.
+Protocol, live capabilities and session/target checks govern execution. Source
+SHA differences are installation diagnostics, not a reason to refuse a
+compatible operation or ask the user to verify hashes. Do not repeat whole
+project inspections between edits when a focused target read suffices.
 
-Composition tools generate deterministic chords, melody, bass, and drums.
-midi_export_type1 writes a local MIDI file, reopens it, and verifies its event
-content. Tempo/key estimation and monophonic transcription read caller-selected
-audio files and do not mutate FL.
+For instrument and preset decisions, use sound_selection_plan and
+sound_selection_apply, or keep palette planning/application inside the same
+Production Run. Apply takes the session_fingerprint from a live read. Keep user
+preferences, excluded sounds, locked roles and continuity in the request.
+Select the palette before writing notes; adapt register, articulation, density
+and polyphony to its evidence. Use sound_selection_create_variation for later
+sections. Atlas supplies offline product knowledge; only a live inventory
+establishes a loaded instrument or effect. Inspect presets and non-GM drum pad
+maps before addressing them. Loop Starter is a separate loop-based source.
 
-Piano Roll mutations use FL's separate .pyscript runtime. First prepare the
-bridge, manually run Postfader Apply once, and confirm that step. Automatic
-calls verify the target channel and pattern, but hotkey dispatch is not note
-readback: application_verified remains false. Section-marker names are read
-back, but marker times are not. Automation helpers verify the controlled value
-while explicitly leaving automation-point existence unknown.
+Musical direction supplies editable genre defaults when roles are omitted;
+explicit roles and preferences win. Read musical_direction and score reasons,
+then express the user's specific style through descriptors and role requests.
+On macOS, use plugins_list_available and plugins_load to add missing instruments
+or effects from FL's native Add menu. Match exact observed menu names, then use
+the verified new channel/slot for preset selection or processing. Menu presence
+does not prove licensing. Loading is a separate host tool, outside Run operations.
 
-Plug-in insertion/removal/reordering, per-slot bypass/wet control, Playlist
-clip CRUD, live audio buffers, rendering, project save, playback speed, and a
-generic raw FL API escape hatch are unavailable. A send must exist before its
-level can be set. Unprofiled plug-in parameters remain unsafe by default;
-prefer displayed-value or exact-option tools when their meaning is known.
+Use piano_roll_read_notes to inspect existing notes, timing, velocity and
+expression before composing around them. It opens the requested editor without
+enabling musical edits; pages use raw note offsets, including selected-only reads.
+Composition tools create chords, melody, bass and drums; midi_export_type1
+writes and checks a local Type-1 MIDI file. Piano Roll writing needs one setup:
+prepare piano_roll_bridge, have the user run Postfader Apply once in FL and
+confirm its receipt. Reuse that setup. Note writes check the selected target,
+script application and persistence. Missing receipts mean unknown outcome,
+not permission to retry. Step edits use the latest grid digest. Section marker
+names can be checked; their times and automation-point existence cannot.
 
-fl_get_selected_range intentionally leaves selection semantics and render
-inclusivity unknown. Step writes require the latest grid digest and preserve
-the published bounded call budget. This server requires FL Studio 26.1.3 build
-5336 or newer and MIDI scripting API 44 or newer.
+Use processing_plan/processing_apply_plan for focused loaded-effect work, or
+plan_processing/apply_processing_plan inside a complete Production Run.
+Prefer displayed values and exact options when the control's meaning is known.
+Goals and strength generate supported first-pass controls when none are supplied;
+explicit controls override those defaults. Review the bounce to refine settings.
+Unprofiled controls require runtime evidence; Atlas name matches alone do not
+establish parameter semantics. Explicitly target Master when requested.
+
+Use postfader_render_saved_project to render a saved .flp into a new WAV job
+directory, then postfader_render_get_job to retrieve the output and status.
+Only saved project state is included. output_ready means decoded audio is
+available; completed also means FL exited. Cancellation on macOS may leave
+the separate renderer running. Render jobs are process-local.
+Audio tools measure caller-selected exported files; FL's live output is not
+available. Review a draft with postfader_review_start, attach its bounce,
+evaluate, plan a revision and apply it in the same authorized task. Preserve
+producer feedback and locks for sound, notes, rhythm, register, processing,
+level, placement and role identity. Compare matching export settings after
+revision. Measurements support decisions; they do not establish artistic
+approval. Delivery manifests describe remaining export/import work.
+
+Current bridge limits: plug-in removal/reordering, per-slot bypass
+and wet control, Playlist clip CRUD, live audio capture, live-project rendering, project
+save and playback speed are unavailable. Explain these at the relevant step
+and use supported handoffs. Requires FL Studio 26.1.3 build 5336 or newer and
+MIDI scripting API 44 or newer.
 """
+
 
 READ_ONLY = ToolAnnotations(
     title="Read FL Studio state",
@@ -360,7 +506,7 @@ EPHEMERAL_MUTATING = ToolAnnotations(
 )
 
 WORKFLOW_STATE = ToolAnnotations(
-    title="Manage a process-local workflow",
+    title="Manage a workflow",
     readOnlyHint=False,
     destructiveHint=False,
     idempotentHint=False,
@@ -875,6 +1021,54 @@ async def plugins_scan_parameters(
 
 
 @mcp.tool(
+    name="plugins_atlas_search",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Search Plugin Atlas"}),
+)
+async def plugins_atlas_search(
+    request: AtlasSearchRequest,
+) -> AtlasSearchResponse:
+    """Search bundled static plug-in knowledge without contacting FL Studio."""
+    return await _mix(search_atlas, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_get_product",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get Plugin Atlas product"}),
+)
+async def plugins_atlas_get_product(
+    request: AtlasGetProductRequest,
+) -> AtlasProductResponse:
+    """Read one static Atlas product and its related descriptive records."""
+    return await _mix(get_atlas_product, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_recommend",
+    annotations=LOCAL_READ_ONLY.model_copy(
+        update={"title": "Recommend from Plugin Atlas"}
+    ),
+)
+async def plugins_atlas_recommend(
+    request: AtlasRecommendRequest,
+) -> AtlasRecommendationResponse:
+    """Rank static plug-in choices or stock alternatives without changing FL."""
+    return await _mix(recommend_atlas, request)
+
+
+@mcp.tool(
+    name="plugins_atlas_inspect_loaded",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Match loaded plug-ins to Plugin Atlas"}
+    ),
+)
+async def plugins_atlas_inspect_loaded(
+    request: AtlasInspectLoadedRequest,
+) -> AtlasInspectLoadedResponse:
+    """Match the target-aware live Track B inventory to static Atlas knowledge."""
+    return await _mix(inspect_loaded_atlas, request)
+
+
+@mcp.tool(
     name="copilot_capture_readonly_inspection",
     annotations=READ_ONLY.model_copy(update={"title": "Capture read-only inspection"}),
 )
@@ -931,8 +1125,8 @@ async def fl_set_write_mode(
         bool,
         Field(
             description=(
-                "Must be true to enable writes, after the present user explicitly "
-                "requested the capability change. Not required to disable writes."
+                "True asserts that the user requested project changes or write access "
+                "in this task. No separate mode request is needed. Not required to disable."
             )
         ),
     ] = False,
@@ -1526,10 +1720,14 @@ async def fl_set_plugin_param_display(
         Field(
             description=(
                 "The number the plug-in displays: 20 for '20 ms', -18 for "
-                "'-18.0 dB', 4000 for '4.0kHz'."
+                "'-18.0 dB'. With target_unit='Hz', use 4000 for '4.0kHz'."
             )
         ),
     ],
+    target_unit: Annotated[
+        str | None,
+        Field(default=None, description="Optional Hz, kHz, ms, seconds, dB, percent or ratio. Converts each display readback across unit prefixes. Omit for legacy first-number matching."),
+    ] = None,
     track_index: Annotated[
         int | None,
         Field(
@@ -1608,6 +1806,7 @@ async def fl_set_plugin_param_display(
             slot_index=slot_index,
             parameter=parameter,
             target_value=target_value,
+            **({"target_unit": target_unit} if target_unit is not None else {}),
             tolerance=tolerance,
             allow_master=allow_master,
             session_fingerprint=session_fingerprint,
@@ -1623,6 +1822,7 @@ async def fl_set_plugin_param_display(
         slot_index=slot_index,
         parameter=parameter,
         target_value=target_value,
+        **({"target_unit": target_unit} if target_unit is not None else {}),
         tolerance=tolerance,
         allow_master=allow_master,
         session_fingerprint=session_fingerprint,
@@ -2134,6 +2334,117 @@ async def fl_get_plugin_preset_count(
 ) -> PluginPresetCount:
     """Read FL's authoritative preset count for one loaded plug-in."""
     return await _performance_read("plugin_preset_count", target=target)
+
+
+@mcp.tool(
+    name="plugins_list_presets",
+    annotations=READ_ONLY.model_copy(update={"title": "List plug-in presets"}),
+)
+async def plugins_list_presets(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+    start: Annotated[int, Field(ge=0, description="First preset index to inspect.")] = 0,
+    limit: Annotated[
+        int,
+        Field(ge=1, le=256, description="Bounded number of preset names in this page."),
+    ] = 64,
+    include_current: Annotated[
+        bool,
+        Field(description="Also report FL's current preset identity."),
+    ] = True,
+    include_empty_names: Annotated[
+        bool,
+        Field(description="Retain blank preset-name rows in the returned page."),
+    ] = False,
+) -> PluginPresetPage:
+    """Read one deterministic preset page without changing the plug-in."""
+    return await _performance_read(
+        "list_plugin_presets",
+        target=target,
+        start=start,
+        limit=limit,
+        include_current=include_current,
+        include_empty_names=include_empty_names,
+    )
+
+
+@mcp.tool(
+    name="plugins_get_current_preset",
+    annotations=READ_ONLY.model_copy(update={"title": "Read current plug-in preset"}),
+)
+async def plugins_get_current_preset(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+) -> PluginCurrentPreset:
+    """Read FL's current preset name and an index only when it is unique."""
+    return await _performance_read("get_plugin_current_preset", target=target)
+
+
+@mcp.tool(
+    name="plugins_inspect_pad_map",
+    annotations=READ_ONLY.model_copy(update={"title": "Inspect a plug-in pad map"}),
+)
+async def plugins_inspect_pad_map(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+) -> PluginPadMap:
+    """Read generic pad, MIDI-note, color, empty, and mute observations."""
+    return await _performance_read("inspect_plugin_pad_map", target=target)
+
+
+@mcp.tool(
+    name="fl_select_plugin_preset",
+    annotations=MUTATING.model_copy(update={"title": "Select an exact plug-in preset"}),
+)
+async def fl_select_plugin_preset(
+    target: Annotated[
+        PluginTarget,
+        Field(description="Explicit mixer effect or global channel-generator target."),
+    ],
+    preset_name: Annotated[
+        str | None,
+        Field(default=None, min_length=1, max_length=256, description="Exact reported preset name."),
+    ] = None,
+    preset_index: Annotated[
+        int | None,
+        Field(default=None, ge=0, le=999_999, description="Exact reported preset index."),
+    ] = None,
+    expected_current: Annotated[
+        ExpectedPluginPresetState | None,
+        Field(default=None, description="Optional stale-read guard for the current preset."),
+    ] = None,
+    session_fingerprint: SessionFingerprintArg = None,
+    target_fingerprint: Annotated[
+        str | None,
+        Field(default=None, pattern=r"^[0-9a-f]{64}$", description="Observed target-identity guard."),
+    ] = None,
+    max_navigation_steps: Annotated[
+        int,
+        Field(default=64, ge=0, le=256, description="Bound on next/previous navigation."),
+    ] = 64,
+    settle_tick_limit: Annotated[
+        int,
+        Field(default=1, ge=1, le=8, description="Later idle ticks allowed for plug-in settling."),
+    ] = 1,
+) -> VerifiedPluginPresetSelection:
+    """Navigate to an exact preset and require later-idle-tick identity readback."""
+    return await _performance_write(
+        "select_plugin_preset",
+        target=target,
+        preset_name=preset_name,
+        preset_index=preset_index,
+        expected_current=expected_current,
+        session_fingerprint=session_fingerprint,
+        target_fingerprint=target_fingerprint,
+        max_navigation_steps=max_navigation_steps,
+        settle_tick_limit=settle_tick_limit,
+    )
 
 
 @mcp.tool(
@@ -2935,8 +3246,701 @@ async def mix_finish_assessment(
 
 
 # ---------------------------------------------------------------------------
+# Sound Selection: live inventory, deterministic palettes, and local history
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="sound_selection_inventory",
+    annotations=READ_ONLY.model_copy(update={"title": "Inventory available sounds"}),
+)
+async def sound_selection_inventory(
+    request: Annotated[
+        SoundSelectionRequest | None,
+        Field(default=None, description="Optional structured direction used to include the relevant target pool."),
+    ] = None,
+    only_used: Annotated[
+        bool,
+        Field(description="Limit mixer observations to used tracks; generators remain included."),
+    ] = False,
+    include_effects: Annotated[
+        bool | None,
+        Field(default=None, description="Include loaded effects; defaults from the request."),
+    ] = None,
+    preset_start: Annotated[int, Field(ge=0, description="First preset index per target.")] = 0,
+    preset_limit: Annotated[
+        int,
+        Field(ge=1, le=256, description="Maximum preset names per loaded target."),
+    ] = 64,
+    include_current: Annotated[bool, Field(description="Read current preset identities.")] = True,
+    include_empty_names: Annotated[bool, Field(description="Retain blank preset names.")] = False,
+    include_pad_maps: Annotated[bool, Field(description="Inspect generic generator pad maps.")] = True,
+    include_atlas: Annotated[bool, Field(description="Enrich loaded observations with local Plugin Atlas metadata.")] = True,
+) -> SoundInventory:
+    """Read a compact loaded sound pool; Atlas-only products remain recommendations."""
+    return await _mix(
+        get_sound_selection_inventory,
+        request,
+        only_used=only_used,
+        include_effects=include_effects,
+        preset_start=preset_start,
+        preset_limit=preset_limit,
+        include_current=include_current,
+        include_empty_names=include_empty_names,
+        include_pad_maps=include_pad_maps,
+        include_atlas=include_atlas,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_plan",
+    annotations=READ_ONLY.model_copy(update={"title": "Plan a coherent sound palette"}),
+)
+async def sound_selection_plan(
+    request: Annotated[
+        SoundSelectionRequest,
+        Field(description="Task-scoped roles, direction, preferences, exclusions, continuity, and history policy."),
+    ],
+) -> SoundPalettePlan:
+    """Choose deterministic loaded-target assignments without changing FL or history."""
+    return await _mix(plan_sound_selection, request)
+
+
+@mcp.tool(
+    name="sound_selection_get",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get a Sound Palette"}),
+)
+async def sound_selection_get(
+    palette_id: Annotated[
+        str,
+        Field(min_length=1, max_length=128, description="Process-local palette identifier."),
+    ],
+) -> SoundPaletteLookup:
+    """Look up one process-local palette without treating expiry as a server error."""
+    return await _mix(get_sound_selection, palette_id)
+
+
+@mcp.tool(
+    name="sound_selection_create_variation",
+    annotations=READ_ONLY.model_copy(update={"title": "Plan a Sound Palette variation"}),
+)
+async def sound_selection_create_variation(
+    palette_id: Annotated[str, Field(min_length=1, max_length=128)],
+    request: Annotated[
+        SoundSelectionRequest,
+        Field(description="Section-specific direction; anchors remain preserved by default."),
+    ],
+    section: Annotated[
+        str | None,
+        Field(default=None, min_length=1, max_length=128, description="Section receiving the delta."),
+    ] = None,
+    replace_roles: Annotated[
+        tuple[str, ...],
+        Field(default=(), max_length=128, description="Roles explicitly allowed to replace."),
+    ] = (),
+) -> SoundPaletteVariationPlan:
+    """Return a section delta instead of replacing the existing palette."""
+    return await _mix(
+        create_sound_selection_variation,
+        palette_id,
+        request,
+        section,
+        replace_roles,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_apply",
+    annotations=MUTATING.model_copy(update={"title": "Apply a Sound Palette"}),
+)
+async def sound_selection_apply(
+    palette: Annotated[
+        SoundPalettePlan | SoundPaletteVariationPlan | str,
+        Field(
+            description=(
+                "A validated palette plan, section variation, or its "
+                "process-local palette ID."
+            )
+        ),
+    ],
+    session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
+    authorized_to_modify: Annotated[
+        bool,
+        Field(description="True only when the current user explicitly authorized these project changes."),
+    ],
+    role_ids: Annotated[
+        tuple[str, ...],
+        Field(default=(), max_length=128, description="Optional bounded subset of palette roles."),
+    ] = (),
+    max_navigation_steps: Annotated[int, Field(default=64, ge=0, le=256)] = 64,
+    settle_tick_limit: Annotated[int, Field(default=1, ge=1, le=8)] = 1,
+    persist_history: Annotated[
+        bool | None,
+        Field(default=None, description="Override this palette's task-scoped history policy."),
+    ] = None,
+) -> SoundSelectionApplyResult:
+    """Apply exact presets in deterministic order and stop on unknown or unverified outcomes."""
+    return await _mix(
+        apply_sound_selection,
+        palette,
+        session_fingerprint,
+        authorized_to_modify,
+        role_ids=role_ids,
+        max_navigation_steps=max_navigation_steps,
+        settle_tick_limit=settle_tick_limit,
+        persist_history=persist_history,
+    )
+
+
+@mcp.tool(
+    name="sound_selection_record_feedback",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Record explicit Sound Selection feedback",
+            "open_world_hint": False,
+        }
+    ),
+)
+async def sound_selection_record_feedback(
+    request: Annotated[
+        SoundFeedbackRequest,
+        Field(description="Explicit accepted, rejected, or neutral palette feedback."),
+    ],
+) -> SoundFeedbackResult:
+    """Update bounded local ranking feedback; silence is never inferred."""
+    return await _mix(record_sound_selection_feedback, request)
+
+
+@mcp.tool(
+    name="sound_selection_history_status",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Inspect Sound Selection history"}),
+)
+async def sound_selection_history_status() -> SoundHistoryStatus:
+    """Report the local history path, health, schema, and bounded record counts."""
+    return await _mix(get_sound_selection_history_status)
+
+
+@mcp.tool(
+    name="sound_selection_history_reset",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Reset Sound Selection history",
+            "destructive_hint": True,
+            "idempotent_hint": True,
+            "open_world_hint": False,
+        }
+    ),
+)
+async def sound_selection_history_reset(
+    confirm: Annotated[
+        bool,
+        Field(description="Must be true after the user explicitly requested local history deletion."),
+    ],
+) -> SoundHistoryResetResult:
+    """Explicitly remove bounded local selection history; project state is unchanged."""
+    return await _mix(reset_sound_selection_history, confirm)
+
+
+# ---------------------------------------------------------------------------
+# Task-scoped Production Runs
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="postfader_creation_readiness",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Inspect creation readiness"}
+    ),
+)
+async def postfader_creation_readiness(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(description="Task-scoped creation objective and project constraints."),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed run plan whose complete setup needs are inspected."),
+    ],
+) -> CreationReadinessReport:
+    """Aggregate all detectable setup blockers without changing FL Studio."""
+    return await _mix(creation_readiness, request, plan)
+
+
+@mcp.tool(
+    name="processing_plan",
+    annotations=READ_ONLY.model_copy(
+        update={"title": "Plan semantic processing"}
+    ),
+)
+async def processing_plan(
+    request: Annotated[
+        ProcessingRequest,
+        Field(
+            description=(
+                "Restrained processing goals resolved only against effects that are "
+                "loaded, Atlas-matched, adapter-backed, and controllable."
+            )
+        ),
+    ],
+) -> ProcessingPlan:
+    """Plan loaded-effect processing without enabling writes or mutating FL."""
+    return await _mix(plan_live_processing, request)
+
+
+@mcp.tool(
+    name="processing_apply_plan",
+    annotations=MUTATING.model_copy(
+        update={"title": "Apply semantic processing plan"}
+    ),
+)
+async def processing_apply_plan(
+    plan: Annotated[
+        ProcessingPlan,
+        Field(description="Bounded semantic plan returned by processing_plan."),
+    ],
+    session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
+    authorized_to_modify: Annotated[
+        bool,
+        Field(
+            description=(
+                "True only when the current user explicitly authorized these "
+                "processing changes."
+            )
+        ),
+    ],
+) -> ProductionRunResult:
+    """Apply a semantic plan through one task-scoped verified Production Run."""
+    if (
+        plan.session_fingerprint is not None
+        and plan.session_fingerprint != session_fingerprint
+    ):
+        raise ValueError(
+            "session_fingerprint does not match the processing plan's captured session"
+        )
+    if any(
+        action.session_fingerprint is not None
+        and action.session_fingerprint != session_fingerprint
+        for action in plan.actions
+    ):
+        raise ValueError(
+            "session_fingerprint does not match a semantic action's captured session"
+        )
+    prepared = plan.model_copy(
+        update={
+            "session_fingerprint": session_fingerprint,
+            "actions": tuple(
+                (
+                    action
+                    if action.session_fingerprint is not None
+                    else action.model_copy(
+                        update={"session_fingerprint": session_fingerprint}
+                    )
+                )
+                for action in plan.actions
+            ),
+        }
+    )
+    request = ProductionRunRequest(
+        brief="Apply the selected loaded-effect processing plan.",
+        scope=ProductionScope(
+            kind="whole_project",
+            description="Processing targets in this plan.",
+        ),
+        allowed_changes=("plugin_parameters",),
+        completion_target=plan.completion_target.replace("_", " "),
+        interaction_policy="execute_once",
+        max_operations=1,
+        authorized_to_modify=authorized_to_modify,
+    )
+    run_plan = ProductionRunPlan(
+        plan_id=f"processing-{plan.plan_id}"[:64],
+        operations=(
+            ApplyProcessingPlanOperation(
+                operation_id="apply_processing",
+                plan=prepared,
+            ),
+        ),
+    )
+    return await _mix(PRODUCTION_RUNS.execute, request, run_plan)
+
+
+@mcp.tool(
+    name="postfader_validate_run",
+    annotations=READ_ONLY.model_copy(update={"title": "Validate a Production Run"}),
+)
+async def postfader_validate_run(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(
+            description=(
+                "Task-scoped objective, scope, preservation rules, allowed changes, "
+                "completion target, and authorization inferred from the user's request."
+            )
+        ),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed ordered Production Run plan to validate without mutation."),
+    ],
+) -> ProductionRunValidation:
+    """Validate a bounded Production Run and current capabilities without changing FL."""
+    return await _mix(validate_production_run, request, plan)
+
+
+@mcp.tool(
+    name="postfader_execute_run",
+    annotations=MUTATING.model_copy(update={"title": "Execute a Production Run"}),
+)
+async def postfader_execute_run(
+    request: Annotated[
+        ProductionRunRequest,
+        Field(
+            description=(
+                "Task-scoped request. Mutating plans require authorized_to_modify=true "
+                "because the present user explicitly asked to change the project."
+            )
+        ),
+    ],
+    plan: Annotated[
+        ProductionRunPlan,
+        Field(description="Closed bounded plan to validate completely, then execute in order."),
+    ],
+) -> ProductionRunResult:
+    """Create and execute one task-scoped run until its plan completes or blocks."""
+    return await _mix(PRODUCTION_RUNS.execute, request, plan)
+
+
+@mcp.tool(
+    name="postfader_list_runs",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "List retained Production Runs"}),
+)
+async def postfader_list_runs(
+    limit: Annotated[int, Field(ge=1, le=64, description="Maximum recent run summaries.")] = 64,
+) -> tuple[ProductionRunSummary, ...]:
+    """Find recent runs after an MCP restart without executing any operations."""
+    return await _mix(list_production_runs, limit=limit)
+
+
+@mcp.tool(
+    name="postfader_get_run",
+    annotations=READ_ONLY.model_copy(update={"title": "Get a Production Run"}),
+)
+async def postfader_get_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Production Run identifier retained in the local journal.",
+        ),
+    ],
+) -> ProductionRunLookup:
+    """Read a current or journaled run, its generated outputs and operation receipts."""
+    return await _mix(PRODUCTION_RUNS.get, run_id)
+
+
+@mcp.tool(
+    name="postfader_continue_run",
+    annotations=MUTATING.model_copy(update={"title": "Continue a Production Run"}),
+)
+async def postfader_continue_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Production Run identifier retained in the local journal.",
+        ),
+    ],
+    delta: Annotated[
+        ProductionRunDelta,
+        Field(
+            description=(
+                "Use mode=resume with no operations to continue the saved plan, append "
+                "operations, or replace only the unexecuted remainder; an optional "
+                "updated request may narrow scope or change task policy."
+            )
+        ),
+    ],
+) -> ProductionRunResult:
+    """Continue or replace only a run's unexecuted remainder after a follow-up."""
+    return await _mix(PRODUCTION_RUNS.continue_run, run_id, delta)
+
+
+@mcp.tool(
+    name="postfader_stop_run",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Stop a Production Run"}),
+)
+async def postfader_stop_run(
+    run_id: Annotated[
+        str,
+        Field(
+            pattern=r"^[0-9a-f]{32}$",
+            description="Production Run identifier retained in the local journal.",
+        ),
+    ],
+) -> ProductionRunResult:
+    """Stop future run operations without undoing completed project changes."""
+    return await _mix(PRODUCTION_RUNS.stop, run_id)
+
+
+# ---------------------------------------------------------------------------
+# Creation Review, Revision, and Delivery
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="postfader_review_start",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Start a Creation Review"}),
+)
+async def postfader_review_start(
+    request: Annotated[
+        ReviewSessionRequest,
+        Field(description="Task-scoped review policy linked to a completed Production Run."),
+    ],
+) -> ReviewSession:
+    """Start a bounded Review Session from one completed Production Run."""
+    return await _mix(start_creation_review, request)
+
+
+@mcp.tool(
+    name="postfader_review_attach_assets",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Attach Creation Review audio"}),
+)
+async def postfader_review_attach_assets(
+    request: Annotated[
+        ReviewAttachAssetsRequest,
+        Field(description="Explicit caller-selected full mix, reference, stem, or section paths."),
+    ],
+) -> ReviewSession:
+    """Validate and attach explicit audio assets without changing FL Studio."""
+    return await _mix(attach_creation_review_assets, request)
+
+
+@mcp.tool(
+    name="postfader_review_evaluate",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Evaluate a Creation Review bounce"}),
+)
+async def postfader_review_evaluate(
+    request: Annotated[
+        ReviewEvaluateRequest,
+        Field(description="Attached asset set and optional authoritative section ranges."),
+    ],
+) -> CreationEvaluationReport:
+    """Measure one bounce globally and by known section; apply zero FL mutations."""
+    return await _mix(evaluate_creation_review, request)
+
+
+@mcp.tool(
+    name="postfader_review_get",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get a Creation Review"}),
+)
+async def postfader_review_get(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Process-local or persisted Review Session identifier.",
+        ),
+    ],
+) -> ReviewSessionLookup:
+    """Read a Review Session, retained evidence, status, and exact next action."""
+    return await _mix(get_creation_review, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_compare",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Compare revision bounces"}),
+)
+async def postfader_review_compare(
+    request: Annotated[
+        ReviewCompareRequest,
+        Field(description="Distinct aligned before/after assets and their revision objective."),
+    ],
+) -> RevisionComparison:
+    """Compare before and after bounces without implying producer approval."""
+    return await _mix(compare_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_review_plan_revision",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Plan a Creation Review revision"}),
+)
+async def postfader_review_plan_revision(
+    request: Annotated[
+        ReviewPlanRevisionRequest,
+        Field(description="Strict revision request plus a closed traceable operation list."),
+    ],
+) -> RevisionPlan:
+    """Compile and validate one bounded RevisionPlan before any project mutation."""
+    return await _mix(plan_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_delivery_manifest",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Build a delivery manifest"}),
+)
+async def postfader_delivery_manifest(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session whose current delivery view should be built.",
+        ),
+    ],
+) -> DeliveryManifest:
+    """Build the final multi-dimensional delivery view without writing a file."""
+    return await _mix(build_review_delivery_manifest, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_export_handoff",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Build a review export handoff"}),
+)
+async def postfader_review_export_handoff(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session awaiting its next caller-exported bounce.",
+        ),
+    ],
+) -> ExportHandoff:
+    """Return one precise full-mix export request and only necessary stems."""
+    return await _mix(build_review_export_handoff, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_apply_revision",
+    annotations=MUTATING.model_copy(update={"title": "Apply one Creation Review revision"}),
+)
+async def postfader_review_apply_revision(
+    request: Annotated[
+        ReviewApplyRevisionRequest,
+        Field(description="Recorded RevisionPlan and present task-scoped authorization."),
+    ],
+) -> RevisionPass:
+    """Apply one bounded revision with one preflight and one write authorization."""
+    return await _mix(apply_creation_revision, request)
+
+
+@mcp.tool(
+    name="postfader_review_record_feedback",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={"title": "Record Creation Review feedback", "open_world_hint": False}
+    ),
+)
+async def postfader_review_record_feedback(
+    feedback: Annotated[
+        CreationFeedback,
+        Field(description="Explicit structured producer feedback and independent locks."),
+    ],
+) -> ReviewSession:
+    """Record explicit feedback; silence and measurements never grant approval."""
+    return await _mix(record_creation_review_feedback, feedback)
+
+
+@mcp.tool(
+    name="postfader_review_stop",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={"title": "Stop a Creation Review", "open_world_hint": False}
+    ),
+)
+async def postfader_review_stop(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session whose future work should stop.",
+        ),
+    ],
+) -> ReviewSession:
+    """Stop future review work without undoing completed project changes."""
+    return await _mix(stop_creation_review, review_session_id)
+
+
+@mcp.tool(
+    name="postfader_review_delete",
+    annotations=WORKFLOW_STATE.model_copy(
+        update={
+            "title": "Delete Creation Review metadata",
+            "destructive_hint": True,
+            "open_world_hint": False,
+        }
+    ),
+)
+async def postfader_review_delete(
+    review_session_id: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=128,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+            description="Review Session metadata to delete.",
+        ),
+    ],
+    confirm: Annotated[
+        bool,
+        Field(description="Must be true after an explicit request to delete review metadata."),
+    ],
+) -> ReviewDeleteResult:
+    """Delete one Review Session record without touching audio or the FL project."""
+    return await _mix(delete_creation_review, review_session_id, confirm=confirm)
+
+
+@mcp.tool(
+    name="postfader_delivery_export_manifest",
+    annotations=FILE_MUTATING.model_copy(update={"title": "Export a delivery manifest"}),
+)
+async def postfader_delivery_export_manifest(
+    request: Annotated[
+        ReviewDeliveryExportRequest,
+        Field(description="Create-only JSON/Markdown delivery export options."),
+    ],
+) -> ReviewDeliveryExportResult:
+    """Create local delivery files without overwriting or saving the FL project."""
+    return await _mix(export_review_delivery_manifest, request)
+
+
+# ---------------------------------------------------------------------------
 # Creative pack: composition, Piano Roll, MIDI, analysis, and arrangement
 # ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="plugins_list_available",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "List FL's available plugin menu entries"}),
+)
+async def plugins_list_available() -> PluginMenuInventory:
+    """Read the native Add menu on macOS; opens/closes the menu and changes focus.
+
+    Reports exact loadable favorite names and instrument/effect kinds. This is
+    menu availability, not proof of licensing or an exhaustive installed scan.
+    """
+    return await _mix(list_available_plugins)
+
+
+@mcp.tool(
+    name="plugins_load",
+    annotations=MUTATING.model_copy(update={"title": "Load a named instrument or mixer effect"}),
+)
+async def plugins_load(
+    request: Annotated[PluginLoadRequest, Field(description="Exact Add-menu name, kind and mixer destination for effects.")],
+) -> PluginLoadResult:
+    """Load one macOS Add-menu plugin, then identify its new channel or effect slot.
+
+    Use plugins_list_available first. The task request authorizes the addition;
+    effect loading temporarily enables bridge writes only to select its track.
+    Unknown outcomes must be inspected before any new load attempt. Does not
+    save the project; Windows insertion is not implemented by this adapter.
+    """
+    return await _mix(load_plugin, request)
 
 
 @mcp.tool(
@@ -2959,6 +3963,65 @@ async def piano_roll_bridge(
         action,
         confirm_user_ran_script=confirm_user_ran_script,
     )
+
+
+@mcp.tool(
+    name="piano_roll_read_notes",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Inspect existing Piano Roll notes"}),
+)
+async def piano_roll_read_notes(
+    channel_index: Annotated[int, Field(ge=0, description="Global Channel Rack target index.")],
+    pattern_number: Annotated[int, Field(ge=1, le=999, description="Pattern to inspect.")],
+    offset: Annotated[int, Field(ge=0, le=1_000_000, description="Raw score note offset.")] = 0,
+    limit: Annotated[int, Field(ge=1, le=2048, description="Raw note indices per page.")] = 512,
+    selected_only: Annotated[bool, Field(description="Filter selected notes within this raw page.")] = False,
+    session_fingerprint: Annotated[
+        str | None, Field(pattern=r"^[0-9a-f]{32}$", description="Optional expected bridge session.")
+    ] = None,
+) -> PianoRollNoteSnapshot:
+    """Open a score and read notes without changing notes or enabling musical writes.
+
+    Requires the existing one-time piano_roll_bridge setup. Follow next_offset
+    to page; selected_only may return an empty page with a non-null next_offset.
+    """
+    return await _mix(
+        read_piano_roll_notes, channel_index=channel_index, pattern_number=pattern_number,
+        offset=offset, limit=limit, selected_only=selected_only,
+        session_fingerprint=session_fingerprint,
+    )
+
+
+@mcp.tool(
+    name="postfader_render_saved_project",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Render a saved FL Studio project"}),
+)
+async def postfader_render_saved_project(
+    request: Annotated[SavedProjectRenderRequest, Field(description="Saved .flp and parent output directory for a new WAV job.")],
+) -> SavedProjectRenderJob:
+    """Start FL's command-line WAV exporter in a separate process; saved state only."""
+    return await _mix(get_saved_project_render_jobs().start, request)
+
+
+@mcp.tool(
+    name="postfader_render_get_job",
+    annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Inspect a saved-project render job"}),
+)
+async def postfader_render_get_job(
+    job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", description="Render job ID from this MCP process.")],
+) -> SavedProjectRenderJob:
+    """Get render progress and decoded WAV evidence; completed also requires FL exit."""
+    return await _mix(get_saved_project_render_jobs().status, job_id)
+
+
+@mcp.tool(
+    name="postfader_render_cancel",
+    annotations=WORKFLOW_STATE.model_copy(update={"title": "Cancel a saved-project render job"}),
+)
+async def postfader_render_cancel(
+    job_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$", description="Render job ID from this MCP process.")],
+) -> SavedProjectRenderJob:
+    """Cancel monitoring and its owned process; on macOS the renderer may remain open."""
+    return await _mix(get_saved_project_render_jobs().cancel, job_id)
 
 
 @mcp.tool(
@@ -3117,8 +4180,12 @@ async def compose_drums(
     seed: Annotated[int, Field(description="Deterministic variation seed.")] = 0,
     swing: Annotated[float, Field(ge=0.0, le=0.49, description="Delay offbeat eighths in beats.")] = 0.0,
     tempo_bpm: Annotated[float, Field(ge=10.0, le=522.0)] = 120.0,
+    drum_map: Annotated[
+        DrumPadMap | None,
+        Field(default=None, description="Selected semantic drum map; omit for explicit General MIDI fallback."),
+    ] = None,
 ) -> NoteSequence:
-    """Generate GM-mapped kick/snare/hat patterns without changing FL."""
+    """Generate mapped kick/snare/hat patterns without changing FL."""
     return await _mix(
         generate_drums,
         style=style,
@@ -3127,6 +4194,7 @@ async def compose_drums(
         seed=seed,
         swing=swing,
         tempo_bpm=tempo_bpm,
+        drum_map=drum_map,
     )
 
 
@@ -3268,9 +4336,9 @@ The generator keeps automatic local-file mode read-only by default. Select
 --transport midi and provide --midi-port only after configuring the same exact
 virtual endpoint in FL Studio. PostFader never installs a virtual MIDI driver.
 
-Writes start off. Ask the connected AI client to enable write mode for the
-current session; explicit user-present confirmation is required and FL Studio
-does not need to restart.
+Writes start off. Ask the connected AI to make your changes; a Production Run
+enables writes once for that task. Individual setters can use the session
+write-mode tool. FL Studio does not need to restart.
 
 Use postfader-doctor (or scripts/doctor.py from a checkout) for setup evidence.
 The supervised acceptance harnesses and native Windows bootstrap live in the
@@ -3289,7 +4357,10 @@ def main(argv: list[str] | None = None) -> int:
     """
     args = list(sys.argv[1:] if argv is None else argv)
     if not args:
-        mcp.run(transport="stdio")
+        try:
+            mcp.run(transport="stdio")
+        finally:
+            shutdown_saved_project_render_jobs()
         return 0
     if len(args) == 1 and args[0] in {"-h", "--help", "help"}:
         print(USAGE, end="")
