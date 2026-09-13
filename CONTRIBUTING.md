@@ -46,13 +46,15 @@ harmless or is intended only as test evidence. Prohibited content includes:
 - absolute home-directory paths, usernames, machine identifiers, process
   dumps, or unredacted logs;
 - credentials, tokens, cookies, private keys, and client-local configuration;
+- personal prompts, conversation transcripts, JSONL logs, and local run databases;
 - internal demo scripts, release plans, acceptance checklists, handoffs, status
   notes, and unreviewed validation records; and
 - generated caches, build products, or test output containing any of the
   above.
 
 Public test audio must be deterministic and generated entirely by
-`scripts/generate_audio_fixtures.py`. The expected fixture names and hashes are
+`scripts/generate_audio_fixtures.py` or
+`scripts/generate_creation_review_fixtures.py`. The expected fixture names and hashes are
 recorded under `tests/fixtures/`. Do not replace those files with recorded or
 copyrighted material.
 
@@ -185,7 +187,7 @@ run the complete safe suite.
 ## MCP surface changes
 
 The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the current public surface contains 90 tools and 8 resources. Preserve
+`fl-studio`, and the V10 surface contains 134 tools and 8 resources. Preserve
 existing names and response contracts unless a deliberate compatibility change
 has been discussed.
 

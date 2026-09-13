@@ -4,15 +4,17 @@ FL exposes Piano Roll notes only inside its separate ``.pyscript`` runtime.
 The controller-script API can select the target channel/pattern and focus the
 Piano Roll, but it cannot call a Piano Roll script or read the resulting score.
 This module keeps that boundary explicit: it generates a bounded script from
-typed data, targets FL through the live bridge, sends FL's documented
-run-last-script shortcut, and reports dispatch rather than fabricated
-readback.  Pure composition and MIDI export remain deterministic and fully
-verifiable on the host side.
+typed data, targets FL through the live bridge, and sends FL's documented
+run-last-script shortcut. Note writes are verified only when an authenticated
+script-runtime apply receipt and a second read-only persisted-score receipt
+agree; those receipts are never described as controller-API note access. Pure
+composition and MIDI export remain deterministic and verifiable on the host.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -25,7 +27,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -39,12 +41,20 @@ from .performance import (
     TrackBMutationGateway,
     TrackBReadGateway,
 )
+from .sound_selection.models import DrumPadMap
 from .track_b_contracts import (
+    SHA256_PATTERN,
     VerifiedPatternIdentityWrite,
     VerifiedPatternLengthWrite,
     VerifiedPatternSelectionWrite,
 )
-from .verified_writer import PROVENANCE_REFUSAL, WRITES_DISABLED_HELP, VerifiedWritesUnavailable
+from .verified_writer import (
+    WRITES_DISABLED_HELP,
+    VerifiedWritesUnavailable,
+)
+
+if TYPE_CHECKING:
+    from .creation_pipeline.sound_characteristics import SoundAwareCompositionProfile
 
 
 MAX_CREATIVE_NOTES = 4096
@@ -52,8 +62,19 @@ MAX_PIANO_ROLL_NOTES = 2048
 MAX_MIDI_TRACKS = 32
 MAX_SEQUENCE_BEATS = 4096.0
 PIANO_ROLL_SCRIPT_NAME = "Postfader_Apply.pyscript"
+PIANO_ROLL_RECEIPT_NAME = "Postfader_Apply.receipt.json"
 PIANO_ROLL_SCRIPTS_DIR_ENV = "POSTFADER_PIANO_ROLL_SCRIPTS_DIR"
 CREATIVE_ENGINE_VERSION = "postfader-creative-1"
+MAX_PIANO_ROLL_RECEIPT_BYTES = 8192
+MAX_PIANO_ROLL_SCORE_EVIDENCE_NOTES = 16384
+PIANO_ROLL_RECEIPT_WAIT_SECONDS = 2.0
+# Piano Roll control fields are persisted by FL on a 1/128 grid even though
+# the scripting API accepts arbitrary floats.  Runtime digests must identify
+# the persisted value, while note requests and receipt payloads retain their
+# original values and claims.  ``selected`` is intentionally not part of a
+# runtime signature: FL may clear that transient editor selection after the
+# script finishes without changing the musical note.
+PIANO_ROLL_CONTROL_RESOLUTION = 128
 
 # A single MCP process can serve concurrent creative requests. Keep the
 # destination check, atomic commit, and verification together so two
@@ -70,6 +91,22 @@ _PIANO_ROLL_DISPATCH_LOCK = threading.Lock()
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _session_precondition(value: str | None) -> str | None:
+    """Validate an optional bridge/project-session guard before any side effect."""
+
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or len(value) != 32
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(
+            "session_fingerprint must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
 
 
 class CreativeModel(ContractModel):
@@ -185,6 +222,19 @@ def make_sequence(
     )
 
 
+def _apply_sound_profile(
+    sequence: NoteSequence,
+    sound_profile: "SoundAwareCompositionProfile | None",
+) -> NoteSequence:
+    """Apply optional sound-aware rules without changing legacy callers."""
+
+    if sound_profile is None:
+        return sequence
+    from .creation_pipeline.composition_adaptation import adapt_note_sequence
+
+    return adapt_note_sequence(sequence, sound_profile).sequence
+
+
 # ---------------------------------------------------------------------------
 # Pitch collections and deterministic composition
 # ---------------------------------------------------------------------------
@@ -248,7 +298,9 @@ def resolve_root(root: str | int) -> int:
         raise ValueError("root must be a note name or pitch class")
     spelling = root.strip().upper().replace("♯", "#").replace("♭", "B")
     if spelling not in _ROOT_NAMES:
-        raise ValueError("root must be C, C#/Db, D, D#/Eb, E, F, F#/Gb, G, G#/Ab, A, A#/Bb, or B")
+        raise ValueError(
+            "root must be C, C#/Db, D, D#/Eb, E, F, F#/Gb, G, G#/Ab, A, A#/Bb, or B"
+        )
     return _ROOT_NAMES[spelling]
 
 
@@ -260,8 +312,12 @@ def resolve_pitch_collection(
         if not custom_intervals:
             raise ValueError("custom pitch collection needs custom_intervals")
         intervals = tuple(sorted(set(custom_intervals)))
-        if any(type(value) is not int or value < 0 or value > 11 for value in intervals):
-            raise ValueError("custom intervals must be unique pitch classes within 0..11")
+        if any(
+            type(value) is not int or value < 0 or value > 11 for value in intervals
+        ):
+            raise ValueError(
+                "custom intervals must be unique pitch classes within 0..11"
+            )
         if 0 not in intervals:
             raise ValueError("custom intervals must include root interval 0")
         return intervals
@@ -333,6 +389,7 @@ def compose_chord_progression(
     voicing: Literal["close", "open", "drop2"] = "close",
     velocity: float = 0.78,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= len(progression) <= 64:
         raise ValueError("progression must contain 1..64 chords")
@@ -345,7 +402,9 @@ def compose_chord_progression(
     root_pc = resolve_root(root)
     intervals = resolve_pitch_collection(collection, custom_intervals)
     if len(intervals) < 5:
-        raise ValueError("chord generation needs at least five pitch-collection degrees")
+        raise ValueError(
+            "chord generation needs at least five pitch-collection degrees"
+        )
     anchor = (octave + 1) * 12 + root_pc
     notes: list[CreativeNote] = []
     previous: list[int] | None = None
@@ -354,10 +413,15 @@ def compose_chord_progression(
         degrees = [degree - 1, degree + 1, degree + 3]
         if seventh:
             degrees.append(degree + 5)
-        pitches = [anchor + (_scale_pitch(0, intervals, item) - intervals[0]) for item in degrees]
+        pitches = [
+            anchor + (_scale_pitch(0, intervals, item) - intervals[0])
+            for item in degrees
+        ]
         if voicing == "open" and len(pitches) >= 3:
             pitches[1] += 12
-        voiced = _voice_chord(pitches, previous, max(0, anchor - 24), min(131, anchor + 31))
+        voiced = _voice_chord(
+            pitches, previous, max(0, anchor - 24), min(131, anchor + 31)
+        )
         if voicing == "drop2" and len(voiced) >= 4:
             voiced[-2] -= 12
             voiced.sort()
@@ -372,12 +436,15 @@ def compose_chord_progression(
                     velocity=velocity,
                 )
             )
-    return make_sequence(
-        name="Chord progression " + "-".join(progression),
-        generator="chord_progression",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name="Chord progression " + "-".join(progression),
+            generator="chord_progression",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 
@@ -394,6 +461,7 @@ def compose_melody(
     contour: Literal["balanced", "rising", "falling", "arch", "wave"] = "balanced",
     seed: int = 0,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= bars <= 64 or not 1 <= beats_per_bar <= 16:
         raise ValueError("bars and beats_per_bar must be within 1..64 and 1..16")
@@ -455,14 +523,17 @@ def compose_melody(
             )
         )
         last_end = start + duration
-    return make_sequence(
-        name=f"{collection} melody",
-        generator="melody",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        numerator=beats_per_bar,
-        seed=seed,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name=f"{collection} melody",
+            generator="melody",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            numerator=beats_per_bar,
+            seed=seed,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 
@@ -477,6 +548,7 @@ def compose_bassline(
     style: Literal["roots", "eighths", "octaves", "walking"] = "roots",
     seed: int = 0,
     tempo_bpm: float = 120.0,
+    sound_profile: "SoundAwareCompositionProfile | None" = None,
 ) -> NoteSequence:
     if not 1 <= len(progression) <= 64:
         raise ValueError("progression must contain 1..64 chords")
@@ -506,7 +578,9 @@ def compose_bassline(
                 for offset in range(int(round(beats_per_chord * 2)))
             ]
         else:
-            next_degree, _ = _roman_degree(progression[(chord_index + 1) % len(progression)])
+            next_degree, _ = _roman_degree(
+                progression[(chord_index + 1) % len(progression)]
+            )
             next_root = anchor + _scale_pitch(0, intervals, next_degree - 1)
             steps = max(1, int(round(beats_per_chord)))
             events = []
@@ -518,7 +592,11 @@ def compose_bassline(
                     for pitch in range(target - 3, target + 4)
                     if (pitch - root_pc) % 12 in intervals
                 ]
-                pitch = min(candidates, key=lambda item: abs(item - target)) if candidates else chord_root
+                pitch = (
+                    min(candidates, key=lambda item: abs(item - target))
+                    if candidates
+                    else chord_root
+                )
                 if offset not in (0, steps - 1) and rng.random() < 0.2:
                     pitch += rng.choice((-12, 12))
                 events.append((float(offset), 0.88, pitch))
@@ -532,13 +610,16 @@ def compose_bassline(
                         velocity=round(0.72 + rng.uniform(-0.06, 0.06), 4),
                     )
                 )
-    return make_sequence(
-        name=f"{style} bassline",
-        generator="bassline",
-        notes=notes,
-        tempo_bpm=tempo_bpm,
-        seed=seed,
-        pitch_collection=[(root_pc + value) % 12 for value in intervals],
+    return _apply_sound_profile(
+        make_sequence(
+            name=f"{style} bassline",
+            generator="bassline",
+            notes=notes,
+            tempo_bpm=tempo_bpm,
+            seed=seed,
+            pitch_collection=[(root_pc + value) % 12 for value in intervals],
+        ),
+        sound_profile,
     )
 
 
@@ -550,11 +631,56 @@ def compose_drums(
     seed: int = 0,
     swing: float = 0.0,
     tempo_bpm: float = 120.0,
+    drum_map: DrumPadMap | None = None,
 ) -> NoteSequence:
     if not 1 <= bars <= 64 or not 1 <= beats_per_bar <= 16:
         raise ValueError("bars and beats_per_bar must be within 1..64 and 1..16")
     if not 0.0 <= swing <= 0.49:
         raise ValueError("swing must be within 0..0.49 beats")
+
+    def normalise_role(role: str) -> str:
+        return "_".join(role.strip().casefold().replace("-", "_").split())
+
+    # General MIDI remains an explicit, backwards-compatible fallback for
+    # callers that do not have a loaded instrument map. Once a map is supplied,
+    # however, every role used by this style must be mapped: falling back to a
+    # GM pitch would make a successful-looking sequence address the wrong pad.
+    required_roles = ["kick", "snare", "closed_hat"]
+    if style == "house":
+        required_roles.append("open_hat")
+    if drum_map is not None:
+        if not isinstance(drum_map, DrumPadMap):
+            raise TypeError("drum_map must be a DrumPadMap or None")
+        mappings = {
+            normalise_role(mapping.role): mapping
+            for mapping in drum_map.mappings
+        }
+        declared_missing = {
+            normalise_role(role) for role in drum_map.missing_roles
+        }
+        missing_roles = tuple(
+            role
+            for role in required_roles
+            if normalise_role(role) in declared_missing
+            or normalise_role(role) not in mappings
+        )
+        if missing_roles:
+            raise ValueError(
+                "supplied drum_map is missing required semantic role(s): "
+                + ", ".join(missing_roles)
+            )
+        role_pitches = {
+            role: mappings[normalise_role(role)].midi_note
+            for role in required_roles
+        }
+    else:
+        role_pitches = {
+            "kick": 36,
+            "snare": 38 if style != "trap" else 39,
+            "closed_hat": 42,
+            "open_hat": 46,
+        }
+
     rng = random.Random(seed)
     notes: list[CreativeNote] = []
 
@@ -575,41 +701,58 @@ def compose_drums(
         base = bar * beats_per_bar
         if style in {"house", "pop"}:
             for beat in range(beats_per_bar):
-                hit(36, base + beat, 0.92 + rng.uniform(-0.04, 0.04))
+                hit(role_pitches["kick"], base + beat, 0.92 + rng.uniform(-0.04, 0.04))
             for beat in (1, 3):
                 if beat < beats_per_bar:
-                    hit(38, base + beat, 0.84 + rng.uniform(-0.04, 0.04))
+                    hit(role_pitches["snare"], base + beat, 0.84 + rng.uniform(-0.04, 0.04))
             for step in range(beats_per_bar * 2):
-                hit(42, base + step * 0.5, 0.58 + (0.10 if step % 2 else 0.0))
+                hit(
+                    role_pitches["closed_hat"],
+                    base + step * 0.5,
+                    0.58 + (0.10 if step % 2 else 0.0),
+                )
             if style == "house":
                 for beat in range(beats_per_bar):
-                    hit(46, base + beat + 0.5, 0.62)
+                    hit(role_pitches["open_hat"], base + beat + 0.5, 0.62)
         elif style in {"hiphop", "trap"}:
             for beat in (0.0, 2.5 if style == "hiphop" else 2.75):
                 if beat < beats_per_bar:
-                    hit(36, base + beat, 0.94)
+                    hit(role_pitches["kick"], base + beat, 0.94)
             for beat in (1.0, 3.0):
                 if beat < beats_per_bar:
-                    hit(38 if style == "hiphop" else 39, base + beat, 0.86)
+                    hit(role_pitches["snare"], base + beat, 0.86)
             division = 0.5 if style == "hiphop" else 0.25
             for step in range(int(beats_per_bar / division)):
                 if style == "trap" and rng.random() < 0.12:
                     continue
-                hit(42, base + step * division, 0.48 + rng.uniform(-0.06, 0.12), 0.08)
+                hit(
+                    role_pitches["closed_hat"],
+                    base + step * division,
+                    0.48 + rng.uniform(-0.06, 0.12),
+                    0.08,
+                )
             if style == "trap" and rng.random() < 0.65:
                 for offset in (3.5, 3.75, 3.875):
                     if offset < beats_per_bar:
-                        hit(42, base + offset, 0.56, 0.05)
+                        hit(role_pitches["closed_hat"], base + offset, 0.56, 0.05)
         else:  # dnb
             for beat in (0.0, 2.75):
                 if beat < beats_per_bar:
-                    hit(36, base + beat, 0.96)
+                    hit(role_pitches["kick"], base + beat, 0.96)
             for beat in (1.0, 3.0):
                 if beat < beats_per_bar:
-                    hit(38, base + beat, 0.90)
+                    hit(role_pitches["snare"], base + beat, 0.90)
             for step in range(beats_per_bar * 4):
                 if rng.random() > 0.12:
-                    hit(42, base + step * 0.25, 0.45 + rng.uniform(-0.08, 0.12), 0.07)
+                    hit(
+                        role_pitches["closed_hat"],
+                        base + step * 0.25,
+                        0.45 + rng.uniform(-0.08, 0.12),
+                        0.07,
+                    )
+    warnings = () if drum_map is not None else (
+        "Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed.",
+    )
     return make_sequence(
         name=f"{style} drums",
         generator="drums",
@@ -617,7 +760,7 @@ def compose_drums(
         tempo_bpm=tempo_bpm,
         numerator=beats_per_bar,
         seed=seed,
-        warnings=["Uses General MIDI drum note numbers; map them to the loaded drum instrument as needed."],
+        warnings=warnings,
     )
 
 
@@ -670,7 +813,9 @@ def _meta(kind: int, payload: bytes) -> bytes:
 def _track_chunk(events: Sequence[tuple[int, int, bytes]]) -> bytes:
     body = bytearray()
     previous = 0
-    for absolute, order, event in sorted(events, key=lambda item: (item[0], item[1], item[2])):
+    for absolute, order, event in sorted(
+        events, key=lambda item: (item[0], item[1], item[2])
+    ):
         if absolute < previous:
             raise ValueError("MIDI events are not monotonic")
         body.extend(_vlq(absolute - previous))
@@ -718,7 +863,9 @@ def _midi_bytes(
             duration = max(1, int(round(note.duration_beats * ppq)))
             end = start + duration
             velocity = max(1, min(127, int(round(note.velocity * 127.0))))
-            events.append((start, 2, bytes((0x90 | spec.channel, note.pitch, velocity))))
+            events.append(
+                (start, 2, bytes((0x90 | spec.channel, note.pitch, velocity)))
+            )
             events.append((end, 1, bytes((0x80 | spec.channel, note.pitch, 0))))
             note_count += 1
         chunks.append(_track_chunk(events))
@@ -747,9 +894,9 @@ def _inspect_midi(data: bytes) -> tuple[int, int, int, int]:
     note_ons = 0
     parsed_tracks = 0
     for _ in range(track_count):
-        if data[offset:offset + 4] != b"MTrk" or offset + 8 > len(data):
+        if data[offset : offset + 4] != b"MTrk" or offset + 8 > len(data):
             raise ValueError("written file has a malformed MIDI track chunk")
-        length = struct.unpack(">I", data[offset + 4:offset + 8])[0]
+        length = struct.unpack(">I", data[offset + 4 : offset + 8])[0]
         pos = offset + 8
         end = pos + length
         if end > len(data):
@@ -816,7 +963,9 @@ def export_type1_midi(
         raise ValueError("MIDI output parent directory does not exist")
     initially_existed = target.exists()
     if initially_existed and not overwrite:
-        raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
+        raise FileExistsError(
+            "MIDI output already exists; pass overwrite=true explicitly"
+        )
     if initially_existed and not target.is_file():
         raise ValueError("MIDI output target exists but is not a regular file")
     data, expected_notes = _midi_bytes(
@@ -832,14 +981,20 @@ def export_type1_midi(
         # destination while this request was building its bytes.
         existed = target.exists()
         if existed and not overwrite:
-            raise FileExistsError("MIDI output already exists; pass overwrite=true explicitly")
+            raise FileExistsError(
+                "MIDI output already exists; pass overwrite=true explicitly"
+            )
         if existed and not target.is_file():
             raise ValueError("MIDI output target exists but is not a regular file")
 
         temporary_name: str | None = None
         try:
             with tempfile.NamedTemporaryFile(
-                mode="wb", prefix=".postfader-midi-", suffix=".tmp", dir=target.parent, delete=False
+                mode="wb",
+                prefix=".postfader-midi-",
+                suffix=".tmp",
+                dir=target.parent,
+                delete=False,
             ) as handle:
                 temporary_name = handle.name
                 handle.write(data)
@@ -875,9 +1030,7 @@ def export_type1_midi(
     readback_digest = hashlib.sha256(readback).hexdigest()
     midi_format, track_count, observed_ppq, observed_notes = _inspect_midi(readback)
     header_verified = (
-        midi_format == 1
-        and track_count == len(tracks) + 1
-        and observed_ppq == ppq
+        midi_format == 1 and track_count == len(tracks) + 1 and observed_ppq == ppq
     )
     note_events_verified = observed_notes == expected_notes
     return MidiExportReceipt(
@@ -893,7 +1046,9 @@ def export_type1_midi(
         readback_sha256=readback_digest,
         header_verified=header_verified,
         note_events_verified=note_events_verified,
-        verified=(digest == readback_digest and header_verified and note_events_verified),
+        verified=(
+            digest == readback_digest and header_verified and note_events_verified
+        ),
         overwritten_existing_file=existed,
     )
 
@@ -925,6 +1080,7 @@ class PianoRollBridgeStatus(CreativeModel):
 class PianoRollTargetReceipt(CreativeModel):
     command: Literal["creative.prepare_piano_roll"]
     channel_index: int = Field(ge=0)
+    target_fingerprint: str | None = Field(default=None, pattern=SHA256_PATTERN)
     pattern_number: int = Field(ge=1, le=999)
     before_channel_indices: list[int]
     after_channel_indices: list[int]
@@ -948,6 +1104,72 @@ class HotkeyDispatch(CreativeModel):
     error: str | None = Field(default=None, max_length=512)
 
 
+class PianoRollScriptRuntimeEvidence(CreativeModel):
+    """Bounded evidence emitted from FL's isolated Piano Roll script runtime."""
+
+    evidence_scope: Literal["fl_piano_roll_script_runtime"] = (
+        "fl_piano_roll_script_runtime"
+    )
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    operation: Literal["write_notes"]
+    mode: Literal["append", "replace"]
+    requested_note_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    expected_added_note_count: int = Field(ge=1, le=MAX_PIANO_ROLL_NOTES)
+    ppq: int = Field(ge=1, le=1_000_000)
+    before_note_count: int | None = Field(default=None, ge=0, le=1_000_000)
+    score_note_count: int = Field(ge=0, le=1_000_000)
+    added_note_digest_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    score_digest_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    script_completed: bool
+    postcondition_verified: bool
+    error: str | None = Field(default=None, max_length=512)
+    receipt_path: str
+    receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    receipt_authentication_verified: Literal[True] = True
+    persistence_check_completed: bool = False
+    persistence_check_verified: bool = False
+    verification_receipt_path: str | None = None
+    verification_receipt_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+
+    @model_validator(mode="after")
+    def validate_persistence_evidence(self) -> "PianoRollScriptRuntimeEvidence":
+        if self.persistence_check_verified and not self.persistence_check_completed:
+            raise ValueError(
+                "a verified persistence check must also be marked completed"
+            )
+        if bool(self.verification_receipt_path) != bool(
+            self.verification_receipt_sha256
+        ):
+            raise ValueError(
+                "persistence receipt path and digest must appear together"
+            )
+        return self
+
+
+class _PianoRollPersistenceReceipt(CreativeModel):
+    request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    operation: Literal["verify_write_notes"]
+    ppq: int = Field(ge=1, le=1_000_000)
+    expected_score_note_count: int = Field(ge=0, le=MAX_PIANO_ROLL_SCORE_EVIDENCE_NOTES)
+    observed_score_note_count: int = Field(ge=0, le=1_000_000)
+    expected_score_digest_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_score_digest_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    persistence_check_completed: bool
+    persistence_check_verified: bool
+    error: str | None = Field(default=None, max_length=512)
+    receipt_path: str
+    receipt_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    receipt_authentication_verified: Literal[True] = True
+
+
 class PianoRollDispatch(CreativeModel):
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     requested_at: datetime
@@ -956,23 +1178,62 @@ class PianoRollDispatch(CreativeModel):
     mode: str | None = None
     script_path: str
     script_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    requested_note_count: int | None = Field(default=None, ge=0, le=MAX_PIANO_ROLL_NOTES)
+    requested_note_count: int | None = Field(
+        default=None, ge=0, le=MAX_PIANO_ROLL_NOTES
+    )
     requested_note_digest: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     target: PianoRollTargetReceipt | None = None
     trigger: HotkeyDispatch | None = None
+    verification_target: PianoRollTargetReceipt | None = None
+    verification_trigger: HotkeyDispatch | None = None
+    verification_script_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
     status: Literal[
         "prepared_for_manual_run",
         "hotkey_dispatched_unverified",
         "hotkey_not_dispatched",
+        "script_runtime_verified",
     ]
-    application_verified: Literal[False] = False
+    application_verified: bool = False
+    script_runtime_evidence: PianoRollScriptRuntimeEvidence | None = None
     authoritative_note_readback_available: Literal[False] = False
     project_saved: Literal[False] = False
     warnings: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_runtime_verification(self) -> "PianoRollDispatch":
+        evidence = self.script_runtime_evidence
+        if evidence is not None and (
+            evidence.request_id != self.request_id
+            or evidence.operation != self.operation
+            or evidence.mode != self.mode
+            or evidence.requested_note_digest != self.requested_note_digest
+            or evidence.expected_added_note_count != self.requested_note_count
+        ):
+            raise ValueError(
+                "Piano Roll script-runtime evidence must match this dispatch"
+            )
+        verified = (
+            self.status == "script_runtime_verified"
+            and evidence is not None
+            and evidence.script_completed
+            and evidence.postcondition_verified
+            and evidence.persistence_check_completed
+            and evidence.persistence_check_verified
+        )
+        if self.application_verified != verified:
+            raise ValueError(
+                "application_verified must match authenticated Piano Roll "
+                "script-runtime evidence"
+            )
+        return self
+
 
 class PianoRollTransform(CreativeModel):
-    operation: Literal["quantize", "transpose", "humanize", "duplicate", "delete", "clear"]
+    operation: Literal[
+        "quantize", "transpose", "humanize", "duplicate", "delete", "clear"
+    ]
     scope: Literal["selected", "all"] = "selected"
     grid_beats: float | None = Field(default=None, gt=0.0, le=16.0)
     quantize_lengths: bool = False
@@ -989,7 +1250,11 @@ class PianoRollTransform(CreativeModel):
             raise ValueError("quantize needs grid_beats")
         if self.operation == "transpose" and self.semitones is None:
             raise ValueError("transpose needs semitones")
-        if self.operation == "humanize" and self.timing_beats is None and self.velocity_amount is None:
+        if (
+            self.operation == "humanize"
+            and self.timing_beats is None
+            and self.velocity_amount is None
+        ):
             raise ValueError("humanize needs timing_beats and/or velocity_amount")
         if self.operation == "duplicate" and self.offset_beats is None:
             raise ValueError("duplicate needs offset_beats")
@@ -1015,10 +1280,7 @@ def piano_roll_scripts_directory() -> Path:
             )
         return path.resolve()
     return (
-        fl_studio_user_data_dir()
-        / "Settings"
-        / "Piano roll scripts"
-        / "Postfader"
+        fl_studio_user_data_dir() / "Settings" / "Piano roll scripts" / "Postfader"
     ).resolve()
 
 
@@ -1028,7 +1290,11 @@ def _atomic_text(path: Path, content: str) -> str:
     temporary_name: str | None = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="wb", prefix=".postfader-pyscript-", suffix=".tmp", dir=path.parent, delete=False
+            mode="wb",
+            prefix=".postfader-pyscript-",
+            suffix=".tmp",
+            dir=path.parent,
+            delete=False,
         ) as handle:
             temporary_name = handle.name
             handle.write(encoded)
@@ -1045,16 +1311,52 @@ def _atomic_text(path: Path, content: str) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-_BOOTSTRAP_SCRIPT = '''# Script.Name = "Postfader Apply"
+def _bootstrap_script(
+    *, request_id: str, receipt_path: Path, receipt_secret: str
+) -> str:
+    return f"""# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED. Run once from the Piano Roll Scripts menu, then use the
 # run-last-script shortcut for subsequent PostFader requests.
-import flpianoroll as flp
+import hashlib
+import hmac
+import json
+import os
 POSTFADER_BOOTSTRAP = True
-'''
+REQUEST_ID = {request_id!r}
+RECEIPT_PATH = {ascii(os.fspath(receipt_path))}
+RECEIPT_SECRET = {receipt_secret!r}
+payload = {{
+    "request_id": REQUEST_ID,
+    "operation": "arm_piano_roll_bridge",
+    "script_loaded": True,
+}}
+canonical = json.dumps(
+    payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+).encode("ascii")
+signature = hmac.new(
+    bytes.fromhex(RECEIPT_SECRET), canonical, hashlib.sha256
+).hexdigest()
+encoded = json.dumps(
+    {{"payload": payload, "hmac_sha256": signature}},
+    sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+)
+with open(RECEIPT_PATH, "xb") as handle:
+    handle.write(encoded.encode("ascii"))
+    handle.flush()
+    os.fsync(handle.fileno())
+"""
 
 
-def _notes_script(notes: Sequence[CreativeNote], mode: Literal["append", "replace"], request_id: str) -> str:
+def _notes_script(
+    notes: Sequence[CreativeNote],
+    mode: Literal["append", "replace"],
+    request_id: str,
+    *,
+    requested_note_digest: str,
+    receipt_path: Path,
+    receipt_secret: str,
+) -> str:
     rows = [
         [
             note.pitch,
@@ -1076,20 +1378,85 @@ def _notes_script(notes: Sequence[CreativeNote], mode: Literal["append", "replac
     # close to Python syntax, but its ``true``/``false``/``null`` literals are
     # invalid Python and fail before the script can dispatch any notes.
     literal = repr(rows)
-    return f'''# Script.Name = "Postfader Apply"
+    return f"""# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED by PostFader. Request {request_id}.
+import hashlib
+import hmac
+import json
+import os
 import flpianoroll as flp
 MODE = {mode!r}
 NOTES = {literal}
+REQUEST_ID = {request_id!r}
+REQUESTED_NOTE_DIGEST = {requested_note_digest!r}
+RECEIPT_PATH = {ascii(os.fspath(receipt_path))}
+RECEIPT_SECRET = {receipt_secret!r}
+MAX_SCORE_NOTES = {MAX_PIANO_ROLL_SCORE_EVIDENCE_NOTES}
+PIANO_ROLL_CONTROL_RESOLUTION = {PIANO_ROLL_CONTROL_RESOLUTION}
+
+def _canonical_control(value):
+    return round(float(value) * PIANO_ROLL_CONTROL_RESOLUTION) / PIANO_ROLL_CONTROL_RESOLUTION
+
+def _signature(note):
+    return (
+        int(note.number), int(note.time), int(note.length),
+        _canonical_control(note.velocity), _canonical_control(note.pan),
+        _canonical_control(note.release), int(note.color), int(note.pitchofs),
+        bool(note.slide), bool(note.porta), bool(note.muted),
+    )
+
+def _digest(signatures):
+    encoded = json.dumps(
+        sorted(signatures), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+def _emit(payload):
+    encoded_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    signature = hmac.new(
+        bytes.fromhex(RECEIPT_SECRET), encoded_payload, hashlib.sha256
+    ).hexdigest()
+    envelope = {{"payload": payload, "hmac_sha256": signature}}
+    encoded = json.dumps(
+        envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    with open(RECEIPT_PATH, "xb") as handle:
+        handle.write(encoded.encode("ascii"))
+        handle.flush()
+        os.fsync(handle.fileno())
 
 def _run():
     score = flp.score
+    before = []
+    if MODE == "append":
+        if score.noteCount > MAX_SCORE_NOTES - len(NOTES):
+            _emit({{
+                "request_id": REQUEST_ID,
+                "operation": "write_notes",
+                "mode": MODE,
+                "requested_note_digest": REQUESTED_NOTE_DIGEST,
+                "expected_added_note_count": len(NOTES),
+                "ppq": int(score.PPQ),
+                "before_note_count": int(score.noteCount),
+                "score_note_count": int(score.noteCount),
+                "added_note_digest_sha256": None,
+                "score_digest_sha256": None,
+                "script_completed": False,
+                "postcondition_verified": False,
+                "error": "The target score is too large for bounded append verification.",
+            }})
+            return
+        before = [_signature(score.getNote(index)) for index in range(score.noteCount)]
     if MODE == "replace":
         try:
             score.clearNotes(True)
         except TypeError:
             score.clearNotes()
+    added = []
     for row in NOTES:
         note = flp.Note()
         note.number = int(row[0])
@@ -1104,15 +1471,583 @@ def _run():
         note.porta = bool(row[9])
         note.muted = bool(row[10])
         note.selected = bool(row[11])
+        added.append(_signature(note))
         score.addNote(note)
+    after = [_signature(score.getNote(index)) for index in range(score.noteCount)]
+    expected = added if MODE == "replace" else before + added
+    verified = len(after) == len(expected) and sorted(after) == sorted(expected)
+    _emit({{
+        "request_id": REQUEST_ID,
+        "operation": "write_notes",
+        "mode": MODE,
+        "requested_note_digest": REQUESTED_NOTE_DIGEST,
+        "expected_added_note_count": len(NOTES),
+        "ppq": int(score.PPQ),
+        "before_note_count": len(before) if MODE == "append" else None,
+        "score_note_count": len(after),
+        "added_note_digest_sha256": _digest(added),
+        "score_digest_sha256": _digest(after),
+        "script_completed": True,
+        "postcondition_verified": verified,
+        "error": None if verified else "The post-apply score did not match the requested mutation.",
+    }})
 
-_run()
-'''
+try:
+    _run()
+except Exception as error:
+    try:
+        count = int(flp.score.noteCount)
+        _emit({{
+            "request_id": REQUEST_ID,
+            "operation": "write_notes",
+            "mode": MODE,
+            "requested_note_digest": REQUESTED_NOTE_DIGEST,
+            "expected_added_note_count": len(NOTES),
+            "ppq": int(flp.score.PPQ),
+            "before_note_count": None,
+            "score_note_count": count,
+            "added_note_digest_sha256": None,
+            "score_digest_sha256": None,
+            "script_completed": False,
+            "postcondition_verified": False,
+            "error": (type(error).__name__ + ": " + str(error))[:512],
+        }})
+    finally:
+        raise
+"""
+
+
+def _persistence_script(
+    *,
+    request_id: str,
+    expected_score_note_count: int,
+    expected_score_digest: str,
+    receipt_path: Path,
+    receipt_secret: str,
+) -> str:
+    return f"""# Script.Name = "Postfader Apply"
+# Script.Category = "Postfader"
+# AUTO-GENERATED read-only verifier for PostFader request {request_id}.
+import hashlib
+import hmac
+import json
+import os
+import flpianoroll as flp
+REQUEST_ID = {request_id!r}
+EXPECTED_SCORE_NOTE_COUNT = {expected_score_note_count}
+EXPECTED_SCORE_DIGEST = {expected_score_digest!r}
+RECEIPT_PATH = {ascii(os.fspath(receipt_path))}
+RECEIPT_SECRET = {receipt_secret!r}
+MAX_SCORE_NOTES = {MAX_PIANO_ROLL_SCORE_EVIDENCE_NOTES}
+PIANO_ROLL_CONTROL_RESOLUTION = {PIANO_ROLL_CONTROL_RESOLUTION}
+
+def _canonical_control(value):
+    return round(float(value) * PIANO_ROLL_CONTROL_RESOLUTION) / PIANO_ROLL_CONTROL_RESOLUTION
+
+def _signature(note):
+    return (
+        int(note.number), int(note.time), int(note.length),
+        _canonical_control(note.velocity), _canonical_control(note.pan),
+        _canonical_control(note.release), int(note.color), int(note.pitchofs),
+        bool(note.slide), bool(note.porta), bool(note.muted),
+    )
+
+def _digest(signatures):
+    encoded = json.dumps(
+        sorted(signatures), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+def _emit(payload):
+    encoded_payload = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("ascii")
+    signature = hmac.new(
+        bytes.fromhex(RECEIPT_SECRET), encoded_payload, hashlib.sha256
+    ).hexdigest()
+    envelope = {{"payload": payload, "hmac_sha256": signature}}
+    encoded = json.dumps(
+        envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
+    with open(RECEIPT_PATH, "xb") as handle:
+        handle.write(encoded.encode("ascii"))
+        handle.flush()
+        os.fsync(handle.fileno())
+
+def _run():
+    score = flp.score
+    count = int(score.noteCount)
+    if count > MAX_SCORE_NOTES:
+        _emit({{
+            "request_id": REQUEST_ID,
+            "operation": "verify_write_notes",
+            "ppq": int(score.PPQ),
+            "expected_score_note_count": EXPECTED_SCORE_NOTE_COUNT,
+            "observed_score_note_count": count,
+            "expected_score_digest_sha256": EXPECTED_SCORE_DIGEST,
+            "observed_score_digest_sha256": None,
+            "persistence_check_completed": False,
+            "persistence_check_verified": False,
+            "error": "The target score is too large for bounded persistence verification.",
+        }})
+        return
+    observed = [_signature(score.getNote(index)) for index in range(count)]
+    observed_digest = _digest(observed)
+    verified = (
+        count == EXPECTED_SCORE_NOTE_COUNT
+        and observed_digest == EXPECTED_SCORE_DIGEST
+    )
+    _emit({{
+        "request_id": REQUEST_ID,
+        "operation": "verify_write_notes",
+        "ppq": int(score.PPQ),
+        "expected_score_note_count": EXPECTED_SCORE_NOTE_COUNT,
+        "observed_score_note_count": count,
+        "expected_score_digest_sha256": EXPECTED_SCORE_DIGEST,
+        "observed_score_digest_sha256": observed_digest,
+        "persistence_check_completed": True,
+        "persistence_check_verified": verified,
+        "error": None if verified else "The persisted score does not match the apply receipt.",
+    }})
+
+try:
+    _run()
+except Exception as error:
+    try:
+        _emit({{
+            "request_id": REQUEST_ID,
+            "operation": "verify_write_notes",
+            "ppq": int(flp.score.PPQ),
+            "expected_score_note_count": EXPECTED_SCORE_NOTE_COUNT,
+            "observed_score_note_count": int(flp.score.noteCount),
+            "expected_score_digest_sha256": EXPECTED_SCORE_DIGEST,
+            "observed_score_digest_sha256": None,
+            "persistence_check_completed": False,
+            "persistence_check_verified": False,
+            "error": (type(error).__name__ + ": " + str(error))[:512],
+        }})
+    finally:
+        raise
+"""
+
+
+def _piano_roll_receipt_path(
+    script_path: Path,
+    request_id: str,
+    *,
+    phase: Literal["arm", "apply", "verify", "inspect"] = "apply",
+) -> Path:
+    directory = script_path.parent / ".postfader-acks"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        directory.chmod(0o700)
+    except OSError:
+        pass
+    receipts = sorted(
+        (
+            item
+            for item in directory.glob("*.json")
+            if len(item.name) >= 32
+            and all(
+                character in "0123456789abcdef" for character in item.name[:32]
+            )
+        ),
+        key=lambda item: (item.stat().st_mtime_ns, item.name),
+    )
+    for stale in receipts[:-31]:
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
+    path = directory / f"{request_id}-{phase}.json"
+    for candidate in (path, Path(os.fspath(path) + ".tmp")):
+        try:
+            candidate.unlink()
+        except FileNotFoundError:
+            pass
+    return path
+
+
+def _canonical_piano_roll_control(value: float) -> float:
+    """Canonicalize a Piano Roll control to FL's persisted 1/128 grid."""
+
+    return round(float(value) * PIANO_ROLL_CONTROL_RESOLUTION) / PIANO_ROLL_CONTROL_RESOLUTION
+
+
+def _runtime_note_digest(
+    notes: Sequence[CreativeNote], *, ppq: int
+) -> str:
+    signatures = [
+        (
+            int(note.pitch),
+            max(0, int(round(float(note.start_beats) * ppq))),
+            max(1, int(round(float(note.duration_beats) * ppq))),
+            _canonical_piano_roll_control(note.velocity),
+            _canonical_piano_roll_control(note.pan),
+            _canonical_piano_roll_control(note.release),
+            int(note.color),
+            int(note.pitch_offset_tenths),
+            bool(note.slide),
+            bool(note.portamento),
+            bool(note.muted),
+        )
+        for note in notes
+    ]
+    encoded = json.dumps(
+        sorted(signatures),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("ascii")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _read_arm_receipt(
+    path: Path, *, receipt_secret: str, request_id: str
+) -> tuple[bool, str | None]:
+    try:
+        size = path.stat().st_size
+        if size < 2 or size > MAX_PIANO_ROLL_RECEIPT_BYTES:
+            raise ValueError("arming receipt size is outside its bounded range")
+        encoded = path.read_bytes()
+        if len(encoded) != size:
+            raise ValueError("arming receipt changed while it was read")
+        def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate arming receipt key {key!r}")
+                result[key] = value
+            return result
+
+        envelope = json.loads(
+            encoded.decode("ascii"), object_pairs_hook=reject_duplicate_keys
+        )
+        if not isinstance(envelope, dict) or set(envelope) != {
+            "payload",
+            "hmac_sha256",
+        }:
+            raise ValueError("arming receipt envelope fields are invalid")
+        payload = envelope["payload"]
+        signature = envelope["hmac_sha256"]
+        if not isinstance(payload, dict) or set(payload) != {
+            "request_id",
+            "operation",
+            "script_loaded",
+        }:
+            raise ValueError("arming receipt payload fields are invalid")
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+        expected_signature = hmac.new(
+            bytes.fromhex(receipt_secret), canonical, hashlib.sha256
+        ).hexdigest()
+        if not isinstance(signature, str) or not hmac.compare_digest(
+            signature, expected_signature
+        ):
+            raise ValueError("arming receipt authentication failed")
+        if payload != {
+            "request_id": request_id,
+            "operation": "arm_piano_roll_bridge",
+            "script_loaded": True,
+        }:
+            raise ValueError("arming receipt does not match this setup request")
+        return True, None
+    except Exception as exc:
+        return False, f"Piano Roll arming proof was rejected: {exc}"[:512]
+
+
+def _await_arm_receipt(
+    path: Path, *, receipt_secret: str, request_id: str
+) -> tuple[bool, str | None]:
+    deadline = time.monotonic() + PIANO_ROLL_RECEIPT_WAIT_SECONDS
+    last_error: str | None = None
+    while True:
+        if path.is_file():
+            verified, error = _read_arm_receipt(
+                path, receipt_secret=receipt_secret, request_id=request_id
+            )
+            if verified:
+                return True, None
+            if error is not None:
+                last_error = error
+        if time.monotonic() >= deadline:
+            return (
+                False,
+                last_error or "FL did not emit Piano Roll script arming proof.",
+            )
+        time.sleep(0.025)
+
+
+def _read_piano_roll_receipt(
+    path: Path,
+    *,
+    receipt_secret: str,
+    request_id: str,
+    requested_note_digest: str,
+    notes: Sequence[CreativeNote],
+    mode: Literal["append", "replace"],
+) -> tuple[PianoRollScriptRuntimeEvidence | None, str | None]:
+    try:
+        size = path.stat().st_size
+        if size < 2 or size > MAX_PIANO_ROLL_RECEIPT_BYTES:
+            raise ValueError("receipt size is outside its bounded range")
+        encoded = path.read_bytes()
+        if len(encoded) != size:
+            raise ValueError("receipt changed while it was read")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate receipt key {key!r}")
+                result[key] = value
+            return result
+
+        envelope = json.loads(
+            encoded.decode("ascii"), object_pairs_hook=reject_duplicate_keys
+        )
+        if not isinstance(envelope, dict) or set(envelope) != {
+            "payload",
+            "hmac_sha256",
+        }:
+            raise ValueError("receipt envelope fields are invalid")
+        payload = envelope["payload"]
+        signature = envelope["hmac_sha256"]
+        if not isinstance(payload, dict) or not isinstance(signature, str):
+            raise ValueError("receipt envelope types are invalid")
+        expected_payload_fields = {
+            "request_id",
+            "operation",
+            "mode",
+            "requested_note_digest",
+            "expected_added_note_count",
+            "ppq",
+            "before_note_count",
+            "score_note_count",
+            "added_note_digest_sha256",
+            "score_digest_sha256",
+            "script_completed",
+            "postcondition_verified",
+            "error",
+        }
+        if set(payload) != expected_payload_fields:
+            raise ValueError("receipt payload fields are invalid")
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+        expected_signature = hmac.new(
+            bytes.fromhex(receipt_secret), canonical, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected_signature):
+            raise ValueError("receipt authentication failed")
+        if payload["request_id"] != request_id:
+            raise ValueError("receipt request id does not match")
+        if payload["operation"] != "write_notes" or payload["mode"] != mode:
+            raise ValueError("receipt operation does not match")
+        if payload["requested_note_digest"] != requested_note_digest:
+            raise ValueError("receipt request digest does not match")
+        if payload["expected_added_note_count"] != len(notes):
+            raise ValueError("receipt requested note count does not match")
+        ppq = payload["ppq"]
+        if type(ppq) is not int or not 1 <= ppq <= 1_000_000:
+            raise ValueError("receipt PPQ is outside its bounded range")
+        runtime_digest = _runtime_note_digest(notes, ppq=ppq)
+        if (
+            payload["script_completed"]
+            and payload["added_note_digest_sha256"] != runtime_digest
+        ):
+            raise ValueError("receipt applied-note rows do not match the request")
+        if payload["postcondition_verified"]:
+            before_count = payload["before_note_count"]
+            score_count = payload["score_note_count"]
+            if mode == "replace":
+                counts_match = before_count is None and score_count == len(notes)
+            else:
+                counts_match = (
+                    type(before_count) is int
+                    and score_count == before_count + len(notes)
+                )
+            if not counts_match:
+                raise ValueError("receipt score counts do not match the operation")
+            if payload["error"] is not None:
+                raise ValueError("verified receipt contains an error")
+        evidence = PianoRollScriptRuntimeEvidence.model_validate(
+            {
+                **payload,
+                "receipt_path": os.fspath(path),
+                "receipt_sha256": hashlib.sha256(encoded).hexdigest(),
+                "receipt_authentication_verified": True,
+            }
+        )
+        return evidence, None
+    except Exception as exc:
+        return None, f"Piano Roll script receipt was rejected: {exc}"[:512]
+
+
+def _await_piano_roll_receipt(
+    path: Path,
+    *,
+    receipt_secret: str,
+    request_id: str,
+    requested_note_digest: str,
+    notes: Sequence[CreativeNote],
+    mode: Literal["append", "replace"],
+) -> tuple[PianoRollScriptRuntimeEvidence | None, str | None]:
+    deadline = time.monotonic() + PIANO_ROLL_RECEIPT_WAIT_SECONDS
+    last_error: str | None = None
+    while True:
+        if path.is_file():
+            evidence, error = _read_piano_roll_receipt(
+                path,
+                receipt_secret=receipt_secret,
+                request_id=request_id,
+                requested_note_digest=requested_note_digest,
+                notes=notes,
+                mode=mode,
+            )
+            if evidence is not None:
+                return evidence, None
+            if error is not None:
+                last_error = error
+        if time.monotonic() >= deadline:
+            return (
+                None,
+                last_error
+                or "FL did not emit a Piano Roll script-runtime receipt.",
+            )
+        time.sleep(0.025)
+
+
+def _read_persistence_receipt(
+    path: Path,
+    *,
+    receipt_secret: str,
+    request_id: str,
+    expected_score_note_count: int,
+    expected_score_digest: str,
+    expected_ppq: int,
+) -> tuple[_PianoRollPersistenceReceipt | None, str | None]:
+    try:
+        size = path.stat().st_size
+        if size < 2 or size > MAX_PIANO_ROLL_RECEIPT_BYTES:
+            raise ValueError("receipt size is outside its bounded range")
+        encoded = path.read_bytes()
+        if len(encoded) != size:
+            raise ValueError("receipt changed while it was read")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate receipt key {key!r}")
+                result[key] = value
+            return result
+
+        envelope = json.loads(
+            encoded.decode("ascii"), object_pairs_hook=reject_duplicate_keys
+        )
+        if not isinstance(envelope, dict) or set(envelope) != {
+            "payload",
+            "hmac_sha256",
+        }:
+            raise ValueError("receipt envelope fields are invalid")
+        payload = envelope["payload"]
+        signature = envelope["hmac_sha256"]
+        if not isinstance(payload, dict) or not isinstance(signature, str):
+            raise ValueError("receipt envelope types are invalid")
+        if set(payload) != {
+            "request_id",
+            "operation",
+            "ppq",
+            "expected_score_note_count",
+            "observed_score_note_count",
+            "expected_score_digest_sha256",
+            "observed_score_digest_sha256",
+            "persistence_check_completed",
+            "persistence_check_verified",
+            "error",
+        }:
+            raise ValueError("receipt payload fields are invalid")
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode("ascii")
+        expected_signature = hmac.new(
+            bytes.fromhex(receipt_secret), canonical, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected_signature):
+            raise ValueError("receipt authentication failed")
+        if (
+            payload["request_id"] != request_id
+            or payload["operation"] != "verify_write_notes"
+        ):
+            raise ValueError("receipt request identity does not match")
+        if (
+            payload["expected_score_note_count"] != expected_score_note_count
+            or payload["expected_score_digest_sha256"] != expected_score_digest
+            or payload["ppq"] != expected_ppq
+        ):
+            raise ValueError("receipt persistence precondition does not match")
+        if payload["persistence_check_verified"]:
+            if (
+                not payload["persistence_check_completed"]
+                or payload["observed_score_note_count"]
+                != expected_score_note_count
+                or payload["observed_score_digest_sha256"]
+                != expected_score_digest
+                or payload["error"] is not None
+            ):
+                raise ValueError("verified persistence receipt is inconsistent")
+        receipt = _PianoRollPersistenceReceipt.model_validate(
+            {
+                **payload,
+                "receipt_path": os.fspath(path),
+                "receipt_sha256": hashlib.sha256(encoded).hexdigest(),
+                "receipt_authentication_verified": True,
+            }
+        )
+        return receipt, None
+    except Exception as exc:
+        return None, f"Piano Roll persistence receipt was rejected: {exc}"[:512]
+
+
+def _await_persistence_receipt(
+    path: Path,
+    *,
+    receipt_secret: str,
+    request_id: str,
+    expected_score_note_count: int,
+    expected_score_digest: str,
+    expected_ppq: int,
+) -> tuple[_PianoRollPersistenceReceipt | None, str | None]:
+    deadline = time.monotonic() + PIANO_ROLL_RECEIPT_WAIT_SECONDS
+    last_error: str | None = None
+    while True:
+        if path.is_file():
+            receipt, error = _read_persistence_receipt(
+                path,
+                receipt_secret=receipt_secret,
+                request_id=request_id,
+                expected_score_note_count=expected_score_note_count,
+                expected_score_digest=expected_score_digest,
+                expected_ppq=expected_ppq,
+            )
+            if receipt is not None:
+                return receipt, None
+            if error is not None:
+                last_error = error
+        if time.monotonic() >= deadline:
+            return (
+                None,
+                last_error or "FL did not emit a Piano Roll persistence receipt.",
+            )
+        time.sleep(0.025)
 
 
 def _transform_script(request: PianoRollTransform, request_id: str) -> str:
     payload = repr(request.model_dump(mode="python"))
-    return f'''# Script.Name = "Postfader Apply"
+    return f"""# Script.Name = "Postfader Apply"
 # Script.Category = "Postfader"
 # AUTO-GENERATED by PostFader. Request {request_id}.
 import flpianoroll as flp
@@ -1194,7 +2129,7 @@ def _run():
         score.deleteNote(index)
 
 _run()
-'''
+"""
 
 
 class _PianoRollRegistry:
@@ -1206,6 +2141,9 @@ class _PianoRollRegistry:
         self._last_count: int | None = None
         self._last_digest: str | None = None
         self._last_operation: str | None = None
+        self._arm_request_id: str | None = None
+        self._arm_receipt_secret: str | None = None
+        self._arm_receipt_path: Path | None = None
 
     def status(self) -> PianoRollBridgeStatus:
         path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
@@ -1253,16 +2191,49 @@ class _PianoRollRegistry:
             with self._lock:
                 if action == "prepare":
                     path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-                    _atomic_text(path, _BOOTSTRAP_SCRIPT)
+                    request_id = os.urandom(16).hex()
+                    receipt_secret = os.urandom(32).hex()
+                    receipt_path = _piano_roll_receipt_path(
+                        path, request_id, phase="arm"
+                    )
+                    script = _bootstrap_script(
+                        request_id=request_id,
+                        receipt_path=receipt_path,
+                        receipt_secret=receipt_secret,
+                    )
+                    _atomic_text(path, script)
                     self._prepared = True
                     self._armed = False
+                    self._arm_request_id = request_id
+                    self._arm_receipt_secret = receipt_secret
+                    self._arm_receipt_path = receipt_path
                 else:
                     if not confirm_user_ran_script:
-                        raise ValueError("confirm requires confirm_user_ran_script=true")
+                        raise ValueError(
+                            "confirm requires confirm_user_ran_script=true"
+                        )
                     path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
                     if not self._prepared or not path.is_file():
                         raise ValueError(
                             "prepare the PostFader Piano Roll script before confirming it"
+                        )
+                    if (
+                        self._arm_request_id is None
+                        or self._arm_receipt_secret is None
+                        or self._arm_receipt_path is None
+                    ):
+                        raise ValueError(
+                            "prepare a fresh PostFader Piano Roll arming request"
+                        )
+                    verified, error = _await_arm_receipt(
+                        self._arm_receipt_path,
+                        receipt_secret=self._arm_receipt_secret,
+                        request_id=self._arm_request_id,
+                    )
+                    if not verified:
+                        raise ValueError(
+                            error
+                            or "FL did not return Piano Roll script arming proof"
                         )
                     self._armed = True
             return self.status()
@@ -1294,47 +2265,92 @@ class _PianoRollRegistry:
 PIANO_ROLL = _PianoRollRegistry()
 
 
-def _target_piano_roll(channel_index: int, pattern_number: int) -> PianoRollTargetReceipt:
+def _target_fingerprint_precondition(value: str | None) -> str | None:
+    """Validate an optional target identity guard before any bridge call."""
+
+    if value is None:
+        return None
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(
+            "target_fingerprint must be exactly 64 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def _target_piano_roll(
+    channel_index: int,
+    pattern_number: int,
+    *,
+    session_fingerprint: str | None = None,
+    target_fingerprint: str | None = None,
+    navigation_only: bool = False,
+) -> PianoRollTargetReceipt:
     if type(channel_index) is not int or channel_index < 0:
         raise ValueError("channel_index must be a non-negative global index")
     if type(pattern_number) is not int or not 1 <= pattern_number <= 999:
         raise ValueError("pattern_number must be within 1..999")
-    client = get_client()
-    ping = client.ping()
-    if not isinstance(ping, dict):
-        raise ValueError("FL bridge returned a malformed Piano Roll handshake")
-    connection = connection_from_ping(ping, getattr(client, "transport", "unknown"))
-    if not connection.connected or not connection.compatible:
-        raise IncompatibleFLStudio(connection.error or connection.compatibility_reason)
-    if not connection.verified_writes_enabled:
-        raise VerifiedWritesUnavailable(
-            WRITES_DISABLED_HELP.format(
-                mode=connection.bridge_mode,
-                enabled=connection.verified_writes_enabled,
-            )
+    expected_target = _target_fingerprint_precondition(target_fingerprint)
+    if navigation_only:
+        expected_session = _session_precondition(session_fingerprint)
+        client = get_client()
+        ping = client.ping()
+        if not isinstance(ping, dict):
+            raise ValueError("FL bridge returned a malformed editor handshake")
+        connection = connection_from_ping(ping, getattr(client, "transport", "unknown"))
+        if not connection.connected or not connection.compatible:
+            raise IncompatibleFLStudio(connection.error or connection.compatibility_reason)
+        if ping.get("piano_roll_navigation") is not True:
+            raise ValueError("Install and reload the current bridge to enable Piano Roll inspection without project writes.")
+        session = connection.session_fingerprint
+        if session is None or (expected_session is not None and expected_session != session):
+            raise ValueError("Piano Roll inspection session changed; read the current project before continuing")
+    else:
+        client, _ping, session = _writable_preflight(
+            session_fingerprint=session_fingerprint
         )
-    if not connection.bridge_provenance_verified:
-        raise VerifiedWritesUnavailable(PROVENANCE_REFUSAL.format(status=connection.bridge_provenance))
-    if connection.session_fingerprint is None:
-        raise VerifiedWritesUnavailable("Piano Roll targeting requires a bridge session fingerprint")
-    raw = client.call(
-        "creative.prepare_piano_roll",
-        channel=channel_index,
-        pattern=pattern_number,
-        index_scope="global",
-        session_fingerprint=connection.session_fingerprint,
-    )
-    return PianoRollTargetReceipt.model_validate(raw)
+    arguments: dict[str, Any] = {
+        "channel": channel_index,
+        "pattern": pattern_number,
+        "index_scope": "global",
+        "session_fingerprint": session,
+    }
+    if expected_target is not None:
+        arguments["target_fingerprint"] = expected_target
+    raw = client.call("creative.prepare_piano_roll", **arguments)
+    receipt = PianoRollTargetReceipt.model_validate(raw)
+    if (
+        expected_target is not None
+        and receipt.target_fingerprint != expected_target
+    ):
+        raise ValueError(
+            "Piano Roll target fingerprint proof did not match the requested target"
+        )
+    return receipt
 
 
 def _trigger_piano_roll_shortcut() -> HotkeyDispatch:
     kind = _platform_label()
+    if os.environ.get("FL_BRIDGE_SANDBOXED") == "1":
+        return HotkeyDispatch(
+            platform=kind,
+            shortcut="Cmd+Opt+Y" if kind == "macos" else "Ctrl+Alt+Y",
+            fl_window_found=False,
+            fl_window_focused=False,
+            hotkey_dispatched=False,
+            error="Desktop shortcuts are disabled in the offline test environment.",
+        )
     if kind == "macos":
-        script = '''tell application "FL Studio" to activate
-delay 0.3
-tell application "System Events"
-  keystroke "y" using {command down, option down}
-end tell'''
+        script = """tell application "System Events"
+  tell process "FL Studio"
+    set frontmost to true
+    delay 0.4
+    keystroke "y" using {command down, option down}
+  end tell
+end tell"""
         try:
             completed = subprocess.run(
                 ["osascript", "-e", script],
@@ -1368,7 +2384,9 @@ end tell'''
 
             user32 = ctypes.windll.user32
             found = {"window": 0}
-            callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
+            callback_type = ctypes.WINFUNCTYPE(
+                ctypes.c_bool, wintypes.HWND, wintypes.LPARAM
+            )
 
             def inspect_window(window: int, _parameter: int) -> bool:
                 if not user32.IsWindowVisible(window):
@@ -1447,16 +2465,28 @@ def write_piano_roll_notes(
     pattern_number: int,
     mode: Literal["append", "replace"] = "append",
     auto_trigger: bool = True,
+    session_fingerprint: str | None = None,
+    target_fingerprint: str | None = None,
 ) -> PianoRollDispatch:
     if not 1 <= len(notes) <= MAX_PIANO_ROLL_NOTES:
         raise ValueError(f"notes must contain 1..{MAX_PIANO_ROLL_NOTES} entries")
     if mode not in {"append", "replace"}:
         raise ValueError("mode must be append or replace")
+    expected_target = _target_fingerprint_precondition(target_fingerprint)
     request_id = os.urandom(16).hex()
     digest = note_digest(notes)
-    script = _notes_script(notes, mode, request_id)
+    receipt_secret = os.urandom(32).hex()
     with _PIANO_ROLL_DISPATCH_LOCK:
         path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+        receipt_path = _piano_roll_receipt_path(path, request_id)
+        script = _notes_script(
+            notes,
+            mode,
+            request_id,
+            requested_note_digest=digest,
+            receipt_path=receipt_path,
+            receipt_secret=receipt_secret,
+        )
         target = None
         if auto_trigger:
             # Refuse before touching the generated integration file or FL
@@ -1465,7 +2495,35 @@ def write_piano_roll_notes(
             # serialized operation so a later request cannot retarget FL while
             # this request's fixed script is being written or dispatched.
             PIANO_ROLL.require_armed()
-            target = _target_piano_roll(channel_index, pattern_number)
+            if session_fingerprint is None:
+                if expected_target is None:
+                    target = _target_piano_roll(channel_index, pattern_number)
+                else:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        target_fingerprint=expected_target,
+                    )
+            else:
+                if expected_target is None:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                    )
+                else:
+                    target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                        target_fingerprint=expected_target,
+                    )
+        elif session_fingerprint is not None:
+            # Manual preparation still writes the integration script. When a
+            # caller supplies a session guard, prove it before that file write
+            # so a stale request cannot leave behind a script for another FL
+            # session.
+            _writable_preflight(session_fingerprint=session_fingerprint)
         script_digest = _atomic_text(path, script)
         PIANO_ROLL.record(
             request_id=request_id,
@@ -1490,7 +2548,139 @@ def write_piano_roll_notes(
                 ],
             )
         trigger = _trigger_piano_roll_shortcut()
-        status = "hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched"
+        evidence = None
+        receipt_error = None
+        verification_target = None
+        verification_trigger = None
+        verification_script_digest = None
+        if trigger.hotkey_dispatched and path.is_file():
+            evidence, receipt_error = _await_piano_roll_receipt(
+                receipt_path,
+                receipt_secret=receipt_secret,
+                request_id=request_id,
+                requested_note_digest=digest,
+                notes=notes,
+                mode=mode,
+            )
+        elif trigger.hotkey_dispatched:
+            receipt_error = "The generated Piano Roll script file is unavailable."
+        apply_verified = bool(
+            evidence is not None
+            and evidence.script_completed
+            and evidence.postcondition_verified
+        )
+        if apply_verified and evidence is not None:
+            try:
+                expected_score_digest = evidence.score_digest_sha256
+                if expected_score_digest is None:
+                    raise ValueError("apply receipt omitted the score digest")
+                verification_receipt_path = _piano_roll_receipt_path(
+                    path, request_id, phase="verify"
+                )
+                verification_script = _persistence_script(
+                    request_id=request_id,
+                    expected_score_note_count=evidence.score_note_count,
+                    expected_score_digest=expected_score_digest,
+                    receipt_path=verification_receipt_path,
+                    receipt_secret=receipt_secret,
+                )
+                verification_script_digest = _atomic_text(
+                    path, verification_script
+                )
+                if session_fingerprint is None:
+                    if expected_target is None:
+                        verification_target = _target_piano_roll(
+                            channel_index, pattern_number
+                        )
+                    else:
+                        verification_target = _target_piano_roll(
+                            channel_index,
+                            pattern_number,
+                            target_fingerprint=expected_target,
+                        )
+                elif expected_target is None:
+                    verification_target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                    )
+                else:
+                    verification_target = _target_piano_roll(
+                        channel_index,
+                        pattern_number,
+                        session_fingerprint=session_fingerprint,
+                        target_fingerprint=expected_target,
+                    )
+                verification_trigger = _trigger_piano_roll_shortcut()
+                if verification_trigger.hotkey_dispatched and path.is_file():
+                    persistence, persistence_error = (
+                        _await_persistence_receipt(
+                            verification_receipt_path,
+                            receipt_secret=receipt_secret,
+                            request_id=request_id,
+                            expected_score_note_count=evidence.score_note_count,
+                            expected_score_digest=expected_score_digest,
+                            expected_ppq=evidence.ppq,
+                        )
+                    )
+                    if persistence is not None:
+                        evidence = evidence.model_copy(
+                            update={
+                                "persistence_check_completed": (
+                                    persistence.persistence_check_completed
+                                ),
+                                "persistence_check_verified": (
+                                    persistence.persistence_check_verified
+                                ),
+                                "verification_receipt_path": (
+                                    persistence.receipt_path
+                                ),
+                                "verification_receipt_sha256": (
+                                    persistence.receipt_sha256
+                                ),
+                            }
+                        )
+                    receipt_error = persistence_error or (
+                        persistence.error if persistence is not None else None
+                    )
+                else:
+                    receipt_error = (
+                        "The read-only Piano Roll persistence check was not dispatched."
+                    )
+            except Exception as exc:
+                receipt_error = (
+                    "The read-only Piano Roll persistence check failed: "
+                    f"{type(exc).__name__}: {exc}"
+                )[:512]
+        verified = bool(
+            evidence is not None
+            and evidence.script_completed
+            and evidence.postcondition_verified
+            and evidence.persistence_check_completed
+            and evidence.persistence_check_verified
+        )
+        if verified:
+            status = "script_runtime_verified"
+            warnings = [
+                "FL's Piano Roll script runtime reported an authenticated exact score postcondition, then a second read-only invocation matched the persisted score.",
+                "This is Piano Roll script-runtime readback, not controller-API note access.",
+            ]
+        else:
+            status = (
+                "hotkey_dispatched_unverified"
+                if trigger.hotkey_dispatched
+                else "hotkey_not_dispatched"
+            )
+            warnings = [
+                "A dispatched shortcut alone proves only focus and key delivery, not note application.",
+                receipt_error
+                or (
+                    evidence.error
+                    if evidence is not None and evidence.error
+                    else "The Piano Roll script-runtime postcondition was not verified."
+                ),
+                "Do not issue another Piano Roll mutation after an unverified result.",
+            ]
         return PianoRollDispatch(
             requested_at=_now(),
             request_id=request_id,
@@ -1502,11 +2692,13 @@ def write_piano_roll_notes(
             requested_note_digest=digest,
             target=target,
             trigger=trigger,
+            verification_target=verification_target,
+            verification_trigger=verification_trigger,
+            verification_script_sha256=verification_script_digest,
             status=status,
-            warnings=[
-                "A dispatched shortcut proves only focus and key delivery, not note application.",
-                "Do not issue another Piano Roll mutation until the user or FL UI confirms this one landed.",
-            ],
+            application_verified=verified,
+            script_runtime_evidence=evidence,
+            warnings=warnings,
         )
 
 
@@ -1516,6 +2708,7 @@ def transform_piano_roll(
     channel_index: int,
     pattern_number: int,
     auto_trigger: bool = True,
+    session_fingerprint: str | None = None,
 ) -> PianoRollDispatch:
     request_id = os.urandom(16).hex()
     script = _transform_script(request, request_id)
@@ -1528,7 +2721,16 @@ def transform_piano_roll(
             # The target, fixed script, registry record, and hotkey remain one
             # serialized operation for the same reason as note writes above.
             PIANO_ROLL.require_armed()
-            target = _target_piano_roll(channel_index, pattern_number)
+            if session_fingerprint is None:
+                target = _target_piano_roll(channel_index, pattern_number)
+            else:
+                target = _target_piano_roll(
+                    channel_index,
+                    pattern_number,
+                    session_fingerprint=session_fingerprint,
+                )
+        elif session_fingerprint is not None:
+            _writable_preflight(session_fingerprint=session_fingerprint)
         script_digest = _atomic_text(path, script)
         PIANO_ROLL.record(
             request_id=request_id,
@@ -1560,7 +2762,9 @@ def transform_piano_roll(
             script_sha256=script_digest,
             target=target,
             trigger=trigger,
-            status="hotkey_dispatched_unverified" if trigger.hotkey_dispatched else "hotkey_not_dispatched",
+            status="hotkey_dispatched_unverified"
+            if trigger.hotkey_dispatched
+            else "hotkey_not_dispatched",
             warnings=[
                 "Transform execution is focus-sensitive and has no controller-API score readback.",
                 "The generated script uses FL's live score object; inspect the Piano Roll before another mutation.",
@@ -1627,9 +2831,9 @@ class AutomationRecordReceipt(CreativeModel):
     song_position_before_ticks: int | None = None
     song_position_after_ticks: int | None = None
     automation_event_recorded: None = None
-    automation_event_verification: Literal[
+    automation_event_verification: Literal["unavailable_no_public_point_getter"] = (
         "unavailable_no_public_point_getter"
-    ] = "unavailable_no_public_point_getter"
+    )
     verified: Literal[False] = False
     undo_point_created: bool | None = None
     session_fingerprint: str = Field(pattern=r"^[0-9a-f]{32}$")
@@ -1663,7 +2867,11 @@ class PatternPreparation(CreativeModel):
     @model_validator(mode="after")
     def validate_ordered_outcome(self) -> "PatternPreparation":
         if self.outcome == "selection_unverified":
-            valid = not self.selection.verified and self.identity is None and self.length is None
+            valid = (
+                not self.selection.verified
+                and self.identity is None
+                and self.length is None
+            )
         elif self.outcome == "identity_unverified":
             valid = (
                 self.selection.verified
@@ -1715,7 +2923,10 @@ class _PinnedClient:
         return result
 
 
-def _writable_preflight() -> tuple[Any, dict[str, Any], str]:
+def _writable_preflight(
+    *, session_fingerprint: str | None = None
+) -> tuple[Any, dict[str, Any], str]:
+    expected_session = _session_precondition(session_fingerprint)
     client = get_client()
     ping = client.ping()
     if not isinstance(ping, dict):
@@ -1730,11 +2941,16 @@ def _writable_preflight() -> tuple[Any, dict[str, Any], str]:
                 enabled=connection.verified_writes_enabled,
             )
         )
-    if not connection.bridge_provenance_verified:
-        raise VerifiedWritesUnavailable(PROVENANCE_REFUSAL.format(status=connection.bridge_provenance))
     session = connection.session_fingerprint
     if session is None:
-        raise VerifiedWritesUnavailable("creative workflow requires a bridge session fingerprint")
+        raise VerifiedWritesUnavailable(
+            "creative workflow requires a bridge session fingerprint"
+        )
+    if expected_session is not None and expected_session != session:
+        raise VerifiedWritesUnavailable(
+            "creative workflow session precondition failed before mutation; "
+            "FL Studio reloaded the bridge or the project session changed"
+        )
     return client, ping, session
 
 
@@ -1744,6 +2960,8 @@ def prepare_empty_pattern(
     length_beats: int = 16,
     color: int | None = None,
     start_pattern_number: int = 1,
+    expected_pattern_number: int | None = None,
+    session_fingerprint: str | None = None,
 ) -> PatternPreparation:
     if not isinstance(name, str) or not name or len(name) > 64:
         raise ValueError("name must contain 1..64 characters")
@@ -1751,17 +2969,29 @@ def prepare_empty_pattern(
         raise ValueError("length_beats must be within 1..4096")
     if type(start_pattern_number) is not int or not 1 <= start_pattern_number <= 999:
         raise ValueError("start_pattern_number must be within 1..999")
+    if expected_pattern_number is not None and (
+        type(expected_pattern_number) is not int
+        or not start_pattern_number <= expected_pattern_number <= 999
+    ):
+        raise ValueError(
+            "expected_pattern_number must be within start_pattern_number..999"
+        )
     if color is not None and (
         type(color) is not int or color < 0 or color > 0xFFFFFFFF
     ):
         raise ValueError("color must be an unsigned 32-bit FL color")
-    client, ping, session = _writable_preflight()
+    client, ping, session = _writable_preflight(session_fingerprint=session_fingerprint)
     pinned = _PinnedClient(client, ping)
     inspector = TrackBInspector(TrackBReadGateway(pinned))
     found = inspector.find_empty_pattern(start_pattern_number=start_pattern_number)
     pattern = found.empty_pattern_number
     if pattern is None:
         raise ValueError("FL reported no empty pattern in the bounded search range")
+    if expected_pattern_number is not None and pattern != expected_pattern_number:
+        raise ValueError(
+            f"pattern {expected_pattern_number} is no longer the first empty pattern "
+            f"at or after {start_pattern_number}; FL reported pattern {pattern}"
+        )
     controller = TrackBController(TrackBMutationGateway(pinned))
     selection = controller.select_pattern(
         pattern_number=pattern,
@@ -1822,10 +3052,16 @@ def prepare_empty_pattern(
     )
 
 
-def add_section_markers(markers: Sequence[SectionMarker]) -> ArrangementMarkerReceipt:
+def add_section_markers(
+    markers: Sequence[SectionMarker],
+    *,
+    session_fingerprint: str | None = None,
+) -> ArrangementMarkerReceipt:
     if not 1 <= len(markers) <= 32:
         raise ValueError("markers must contain 1..32 section markers")
-    client, _ping, session = _writable_preflight()
+    client, _ping, session = _writable_preflight(
+        session_fingerprint=session_fingerprint
+    )
     project = client.call("project.info")
     if not isinstance(project, dict):
         raise ValueError("FL bridge returned a malformed project observation")
@@ -1848,9 +3084,13 @@ def add_section_markers(markers: Sequence[SectionMarker]) -> ArrangementMarkerRe
             raise ValueError(
                 f"marker {marker.name!r} beat_offset must be below the live {numerator}-beat bar"
             )
-        ticks = int(round((marker.bar_number - 1) * pulses_per_bar + marker.beat_offset * ppq))
+        ticks = int(
+            round((marker.bar_number - 1) * pulses_per_bar + marker.beat_offset * ppq)
+        )
         if ticks > 0x7FFFFFFF:
-            raise ValueError("section marker time exceeds FL's bounded integer timeline")
+            raise ValueError(
+                "section marker time exceeds FL's bounded integer timeline"
+            )
         requests.append({"time_ticks": ticks, "name": marker.name})
     raw = client.call(
         "arrangement.add_markers",
@@ -1884,6 +3124,7 @@ def record_automation_value(
     value_normalized: float,
     allow_master: bool = False,
     expected_before: float | None = None,
+    session_fingerprint: str | None = None,
 ) -> AutomationRecordReceipt:
     if target_kind not in {"mixer", "channel"}:
         raise ValueError("target_kind must be mixer or channel")
@@ -1893,7 +3134,9 @@ def record_automation_value(
         raise ValueError("channel automation supports volume and pan only")
     if property not in {"volume", "pan", "stereo_separation"}:
         raise ValueError("unsupported automation property")
-    if isinstance(value_normalized, bool) or not isinstance(value_normalized, (int, float)):
+    if isinstance(value_normalized, bool) or not isinstance(
+        value_normalized, (int, float)
+    ):
         raise ValueError("value_normalized must be numeric")
     value = float(value_normalized)
     if not math.isfinite(value) or not 0.0 <= value <= 1.0:
@@ -1904,8 +3147,12 @@ def record_automation_value(
         or not math.isfinite(float(expected_before))
         or not 0.0 <= float(expected_before) <= 1.0
     ):
-        raise ValueError("expected_before must be null or a normalized number within 0..1")
-    client, _ping, session = _writable_preflight()
+        raise ValueError(
+            "expected_before must be null or a normalized number within 0..1"
+        )
+    client, _ping, session = _writable_preflight(
+        session_fingerprint=session_fingerprint
+    )
     arguments: dict[str, Any] = {
         "target_kind": target_kind,
         "target_index": target_index,

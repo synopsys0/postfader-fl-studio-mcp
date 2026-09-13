@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import email.parser
 import json
 import tarfile
@@ -13,7 +14,7 @@ from pathlib import Path, PurePosixPath
 try:
     import tomllib
 except ImportError:  # pragma: no cover
-    import tomli as tomllib
+    import tomli as tomllib  # pyright: ignore[reportMissingImports]
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,16 +25,50 @@ V013_REQUIRED_RUNTIME_MODULES = {
     "fl_studio_mcp/evidence.py",
     "fl_studio_mcp/host_config.py",
 }
+ATLAS_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas"
+ATLAS_DATA_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+ATLAS_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_PACKAGE_ROOT.rglob("*.py")
+}
+ATLAS_RUNTIME_MODULES.add("fl_studio_mcp/plugin_atlas_data/__init__.py")
+ATLAS_DATA_FILES = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_DATA_ROOT.rglob("*.json")
+}
+SOUND_SELECTION_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "sound_selection"
+SOUND_SELECTION_DATA_ROOT = SOUND_SELECTION_PACKAGE_ROOT / "data"
+SOUND_SELECTION_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.py")
+}
+SOUND_SELECTION_DATA_FILES = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_DATA_ROOT.rglob("*.json")
+}
+CREATION_PIPELINE_ROOT = ROOT / "fl_studio_mcp" / "creation_pipeline"
+CREATION_PIPELINE_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_PIPELINE_ROOT.rglob("*.py")
+}
+CREATION_REVIEW_ROOT = ROOT / "fl_studio_mcp" / "creation_review"
+CREATION_REVIEW_RUNTIME_MODULES = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_REVIEW_ROOT.rglob("*.py")
+}
 RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
-} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"}
+} | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES | CREATION_REVIEW_RUNTIME_MODULES
+EXPECTED_TOOL_COUNT = 134
+EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
     "postfader = fl_studio_mcp.cli:main",
     "postfader-install-bridge = fl_studio_mcp.bridge_install:main",
     "postfader-doctor = fl_studio_mcp.diagnostics:main",
     "postfader-plugin-report = fl_studio_mcp.plugin_report:main",
+    "postfader-plugin-atlas = fl_studio_mcp.plugin_atlas.cli:main",
     "postfader-setup = fl_studio_mcp.setup_wizard:main",
 }
 WHEEL_FORBIDDEN_PARTS = {
@@ -51,11 +86,27 @@ SDIST_REQUIRED_SUFFIXES = (
     "/SECURITY.md",
     "/CONTRIBUTING.md",
     "/docs/plugin-matrix.md",
+    "/docs/architecture.md",
+    "/docs/creation-pipeline.md",
+    "/docs/creation-review.md",
+    "/docs/distribution.md",
+    "/docs/fl-constraints.md",
+    "/docs/plugin-atlas.md",
+    "/docs/plugin-support.md",
+    "/docs/production-runs.md",
+    "/docs/releases/dev-v10.md",
+    "/docs/setup.md",
+    "/docs/sound-selection.md",
+    "/docs/tool-contracts.md",
     "/tests/fixtures/write-scenario-v1.json",
     "/scripts/install.ps1",
     "/scripts/launch_fl_studio.ps1",
     "/scripts/generate_mcp_config.py",
     "/scripts/live_read_acceptance.py",
+    "/scripts/live_sound_selection_acceptance.py",
+    "/scripts/live_creation_acceptance.py",
+    "/scripts/live_creation_review_acceptance.py",
+    "/scripts/generate_creation_review_fixtures.py",
     "/scripts/live_write_acceptance.py",
     "/scripts/live_note_acceptance.py",
     "/scripts/verify_distribution.py",
@@ -119,6 +170,14 @@ def inspect_wheel(wheel: Path, version: str) -> list[str]:
             for required in sorted(RUNTIME_MODULES):
                 if required not in names:
                     failures.append("wheel is missing %s" % required)
+            for required in sorted(ATLAS_DATA_FILES):
+                if required not in names:
+                    failures.append("wheel is missing Atlas data %s" % required)
+            for required in sorted(SOUND_SELECTION_DATA_FILES):
+                if required not in names:
+                    failures.append(
+                        "wheel is missing Sound Selection data %s" % required
+                    )
 
             bridge_name = "fl_studio_mcp/_bridge/device_UniversalBridge.py"
             if bridge_name in names and any(
@@ -148,6 +207,14 @@ def inspect_sdist(sdist: Path) -> list[str]:
             for suffix in SDIST_REQUIRED_SUFFIXES:
                 if not any(name.endswith(suffix) for name in names):
                     failures.append("sdist is missing %s" % suffix.lstrip("/"))
+            for required in sorted(
+                RUNTIME_MODULES
+                | ATLAS_DATA_FILES
+                | SOUND_SELECTION_DATA_FILES
+            ):
+                suffix = "/" + required
+                if not any(name.endswith(suffix) for name in names):
+                    failures.append("sdist is missing %s" % required)
 
             readmes = sorted(
                 name
@@ -190,9 +257,40 @@ def version_failures(version: str) -> list[str]:
         namespace,
     )
     versions.append(namespace.get("__version__"))
+    failures: list[str] = []
     if any(value != version for value in versions):
-        return ["public version declarations disagree: %r" % versions]
-    return []
+        failures.append("public version declarations disagree: %r" % versions)
+    tools = manifest.get("tools")
+    if not isinstance(tools, list) or len(tools) != EXPECTED_TOOL_COUNT:
+        failures.append(
+            "manifest tool count is not %d: %s"
+            % (
+                EXPECTED_TOOL_COUNT,
+                len(tools) if isinstance(tools, list) else "invalid",
+            )
+        )
+    server_tree = ast.parse(
+        (ROOT / "fl_studio_mcp" / "mcp_server.py").read_text(encoding="utf-8")
+    )
+    resource_count = sum(
+        1
+        for node in ast.walk(server_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "resource"
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == "mcp"
+            for decorator in node.decorator_list
+        )
+    )
+    if resource_count != EXPECTED_RESOURCE_COUNT:
+        failures.append(
+            "registered resource count is not %d: %d"
+            % (EXPECTED_RESOURCE_COUNT, resource_count)
+        )
+    return failures
 
 
 def main(argv=None) -> int:

@@ -1,14 +1,17 @@
 # Tool and command reference
 
-PostFader exposes 90 MCP tools and 8 MCP resources. The MCP layer is the supported
+PostFader exposes 134 MCP tools and 8 MCP resources on the V10 release. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
-and non-finite numbers. The surface contains 36 read-only tools, 39 directly
-guarded FL setters, 8 specialized mutating workflows, 6 non-destructive
-workflow/dispatch tools, and one session-mode control. `fl_set_write_mode` is a
-destructive capability change but an idempotent, session-only absolute state.
+and non-finite numbers. Tool annotations distinguish read-only inspection,
+directly guarded FL setters, non-destructive workflow/dispatch, and destructive
+controls; the 13 Creation Review tools are documented in their own section
+below.
+`fl_set_write_mode` changes the session write capability;
+`sound_selection_history_reset` deletes only the bounded local history after
+explicit confirmation.
 
 ## Inspection tools
 
@@ -23,6 +26,10 @@ destructive capability change but an idempotent, session-only absolute state.
 | `plugins_scan_loaded_plugins` | Inventory effects loaded on observed mixer tracks; optionally include Channel Rack generators with explicit target kinds. |
 | `plugins_inspect_parameter_map` | Read a bounded page of one mixer effect or Channel Rack generator's exposed parameters. |
 | `plugins_scan_parameters` | Walk a bounded parameter range for either plug-in target and return named or display-bearing controls without VST padding. |
+| `plugins_atlas_search` | Search the bundled, offline product catalogue by text and bounded static filters. |
+| `plugins_atlas_get_product` | Read one bundled product by exact ID with related vendor, adapter, evidence, and stock-alternative records. |
+| `plugins_atlas_recommend` | Rank bundled products or explicit stock alternatives from bounded production criteria. |
+| `plugins_atlas_inspect_loaded` | Match the current target-aware loaded-plug-in inventory to Atlas records without asserting ownership or control proof. |
 | `copilot_capture_readonly_inspection` | Capture project, mixer, and bounded plug-in previews under one observation ID. |
 | `fl_list_channels` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
 | `fl_get_step_sequence` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |
@@ -31,6 +38,64 @@ destructive capability change but an idempotent, session-only absolute state.
 | `fl_list_playlist_tracks` | List every one-based Playlist track and its controllable identity/state. |
 | `fl_get_project_history` | Read undo/redo bounds, current position, history hint, and dirty state. |
 | `fl_get_plugin_preset_count` | Read FL's authoritative preset count for one explicit effect or generator target. |
+| `plugins_list_presets` | Read one bounded, deterministic page of exact preset index/name records, current identity, duplicate names, blank names, and partial/truncated status. |
+| `plugins_get_current_preset` | Read the current preset name and a preset index only when FL resolves it uniquely. |
+| `plugins_inspect_pad_map` | Read a generic target's reported pad count, MIDI/semitone notes, colors, empty/muted flags, and semitone names where exposed. |
+
+## Sound Selection tools
+
+Sound Selection plans a coherent palette from the currently loaded target pool.
+The connected AI turns natural-language direction into a strict
+`SoundSelectionRequest`; PostFader does not embed an LLM. User preferences,
+exclusions, stock-only direction, locked roles, section scope, and required
+drum mappings are hard constraints. The default `balanced` policy preserves
+identity sounds within a song and uses bounded local history only to separate
+similarly suitable candidates. Planning does not mutate FL or usage history.
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `sound_selection_inventory` | Read a compact inventory of loaded Channel Rack generators and optional mixer effects, bounded preset pages, current presets, pad maps, target fingerprints, current palette/locks, Atlas matches, and Atlas-known products not observed as loaded. |
+| `sound_selection_plan` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. No FL or history changes. |
+| `sound_selection_get` | Look up process-local palette state and immutable apply receipts by palette ID. Expiry or another process returns an availability-honest result. |
+| `sound_selection_create_variation` | Plan a section-scoped delta from an existing palette. Anchors remain unchanged unless explicitly replaced; the result is read-only. |
+| `sound_selection_history_status` | Read the local history path, schema/health, record counts, and configured bounds. |
+| `sound_selection_apply` | Authorized mutating workflow that requires the current 32-character lowercase `session_fingerprint`, revalidates the session and loaded targets, applies exact assignments in deterministic order, and stops on the first unknown/unverified result. Earlier receipts remain immutable. |
+| `sound_selection_record_feedback` | Store an explicit accepted, rejected, or neutral local verdict when persistence is enabled. Silence is never inferred as acceptance. It does not mutate FL. |
+| `sound_selection_history_reset` | Explicitly remove the local Sound Selection history after `confirm=true`; project state is unchanged and the removed file is not recoverable by PostFader. |
+
+Sound Selection uses the same discriminated Track B target as parameter tools:
+`mixer_effect` addresses a mixer track and slot, while `channel_generator`
+addresses a global Channel Rack generator. Atlas product matches never prove
+installation, ownership, loaded state, or control. An unprofiled loaded target
+can still participate with lower semantic confidence.
+
+`source_strategy="instrument_pool"` is the default and excludes Loop Starter.
+Loop Starter rerolling is available only for an explicit Loop Starter request;
+FL does not expose authoritative selected-loop identity, so that result is
+dispatch-only rather than a verified sound selection.
+
+## Creation readiness and semantic processing
+
+These focused tools support inspection and debugging. A normal end-to-end
+creation request should use one `postfader_execute_run`; it invokes the same
+readiness service internally and carries one context through the phases.
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `postfader_creation_readiness` | Zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope. Returns blockers together with a reusable bounded context snapshot. |
+| `processing_plan` | Read-only effect coverage and semantic plan from loaded, Atlas-matched, adapter-backed, runtime-observed controls. |
+| `processing_apply_plan` | One explicitly authorized processing run using existing verified setters and later-tick readback; missing/unresolved controls remain visible. |
+
+Creation plans can include `plan_sound_palette`,
+`apply_sound_palette`, `inspect_drum_map`, deterministic generators,
+`adapt_note_sequence`, Piano Roll writes, `plan_processing`, and
+`apply_processing_plan`. Sound-aware adaptation carries characteristic
+provenance/confidence and records register, envelope, articulation, density,
+and polyphony decisions. The run's `timing_report` is local diagnostic data,
+not telemetry. Its `creation_outcome` separates technical execution,
+arrangement delivery, processing, audible quality, and manual handoff;
+`audible_quality.status="not_evaluated"` is the default until user or bounce
+evidence exists.
 
 ## Live resources
 
@@ -81,11 +146,10 @@ restarting FL Studio. Its arguments are:
 | Argument | Meaning |
 | --- | --- |
 | `enabled` | Absolute session state: `true` enables the bounded write surface; `false` locks it. |
-| `confirm_user_present` | Must be literal `true` when enabling, after the present user explicitly requested the capability change. It defaults to `false` and is not required when disabling. |
+| `confirm_user_present` | Must be literal `true` when enabling, after the user requested project changes or session write access; no separate mode request is needed. It defaults to `false` and is not required when disabling. |
 
-Before enabling, the host requires a compatible running bridge, a matching
-stamped source hash, runtime-control support, and a valid live session
-fingerprint. The bridge checks that fingerprint and confirmation again. The
+Before enabling, the host requires a compatible running bridge, runtime-control
+support, and a valid live session fingerprint. Source stamps are diagnostic. The bridge checks that fingerprint and confirmation again. The
 host then performs a second handshake and reports success only if that new
 handshake confirms `bridge_mode="write_test"`,
 `verified_writes_enabled=true`, and `write_mode_origin="runtime_request"`.
@@ -101,17 +165,22 @@ used for that FL process.
 ## Write tools
 
 State writes are available only when the live bridge reports
-`verified_writes_enabled: true` and its stamped source SHA-256 matches the
-bridge packaged with the server. Each tool changes one target, yields to a
+`verified_writes_enabled: true`, its protocol is compatible, and it supplies
+a valid live session fingerprint. Source-hash differences are advisory. Each tool changes one target, yields to a
 later FL Studio idle tick, reads the target back, and returns a verdict. There
-is no per-write MCP confirmation round-trip and no automatic rollback. Ask the
-client to enable the session first with `fl_set_write_mode`.
+is no per-write MCP confirmation round-trip and no automatic rollback. For direct setters, the client can enable the session with `fl_set_write_mode`
+under the existing edit request. Production Runs manage the transition.
 
-Every state tool accepts an optional bridge-lifetime `session_fingerprint` and
-a typed `expected_before`, except `fl_set_step_sequence`, whose required
-`expected_digest` is its stronger state guard. The bridge checks supplied
-guards immediately before undo and mutation. Omitting them preserves the 0.11
-call shape; supplying them makes stale decisions fail closed.
+Every direct state-write tool accepts an optional current-project-epoch
+`session_fingerprint` and a typed `expected_before`, except
+`fl_set_step_sequence`, whose required `expected_digest` is its stronger state
+guard. The bridge checks supplied guards immediately before undo and mutation.
+Omitting them preserves the 0.11 call shape; supplying them makes stale
+decisions fail closed. The high-level `sound_selection_apply` workflow is the
+exception: its public MCP contract requires `session_fingerprint` because the
+palette service cannot apply without a live session token. The token rotates
+on script reload and project-load transitions; loading also disables writes
+and abandons pending operations instead of carrying them into the next project.
 
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
@@ -131,12 +200,41 @@ call shape; supplying them makes stale decisions fail closed.
 | `fl_set_plugin_param` | explicit mixer-effect or channel-generator target, or legacy mixer track/slot; parameter index; normalized value 0–1; optional `allow_master` for Master effects | `plugin.set_param` |
 | `fl_set_plugin_param_display` | same target forms; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` for Master effects | `plugin.set_param_display` |
 | `fl_set_plugin_param_option` | same target forms; parameter index or text; option text; optional sweep resolution and `allow_master` for Master effects | `plugin.set_param_option` |
+| `fl_select_plugin_preset` | explicit target plus exact `preset_name` and/or `preset_index`; optional current/session/target guards and bounded navigation/settling limits | `plugin.select_preset` |
 
-The three plug-in reads and three plug-in setters also accept an explicit
+The parameter reads and three plug-in setters also accept an explicit
 discriminated target. `mixer_effect` names `track_index`, slot 0–9, and optional
 Master authorization. `channel_generator` names a global `channel_index`; the
 bridge uses FL's separate `slotIndex=-1` form internally. A call may use that
 target or the legacy mixer track/slot pair, never both.
+
+### Preset identity and navigation
+
+`plugins_list_presets` reads a page with `start` and `limit` (1–256), and never
+enumerates an unbounded catalog in one response. It reports FL's authoritative
+count, index/name rows, current name/index/status, duplicate names, blank
+indices, `partial`, `truncated`, and a deterministic continuation position.
+`plugins_get_current_preset` reports the current name and only a uniquely
+resolved index. A count-only `fl_get_plugin_preset_count` result does not prove
+current identity.
+
+`fl_select_plugin_preset` resolves the requested exact name/index against live
+state, refuses an ambiguous duplicate-name request unless an index is supplied,
+and uses the shortest next/previous path when the current index is known.
+Without a known index it uses a bounded fallback search. The bridge yields over
+later FL idle ticks, allows bounded settling, and returns success only after
+exact current-preset readback matches the request. It reports before/after
+identity, direction, step count, target/session guards, and `undo_point_created`
+as the value FL exposed (`true`, `false`, or `null`). Dispatch alone is never
+success. An unstable identity, stale guard, navigation limit, or unknown
+transport outcome stops the operation; it is never automatically replayed,
+rolled back, or silently redirected to another preset.
+
+`plugins_inspect_pad_map` is a read-only generic pad observation. Sound
+Selection uses its notes and reported names to build semantic drum maps and
+does not assume General MIDI. `compose_drums` can consume the resulting typed
+map; its General MIDI notes remain an explicit fallback only when no map is
+provided. Missing required drum roles block before note writing.
 
 ### Transport, Channel Rack, and sequencer state
 
@@ -265,6 +363,15 @@ plug-in displays, such as milliseconds, decibels, or hertz. The normalized
 curve is not assumed. The parameter can be addressed by index or by text
 matched against its name and display string.
 
+Supply optional `target_unit` to keep the numeric request stable across display
+prefix changes: `target_value=3000, target_unit="Hz"` also matches `3.0kHz`.
+Supported units are Hz/kHz, ms/seconds, dB, percent and ratio. The solver converts
+every later observation into the requested unit; receipts report `requested_unit`.
+Omitting the unit preserves the older numeric-display behavior. Unit-bearing
+calls require the bridge's `plugin_display_units` capability, so an older
+bridge cannot silently ignore the unit. Semantic recipes forward their units
+through the same setter.
+
 `fl_set_plugin_param_option` handles controls that display words, such as a
 key, scale, mode, or input type. FL Studio cannot list an enumeration, so the
 tool sweeps normalized values while recording the displayed options. **This
@@ -327,6 +434,116 @@ application is a distinct destructive, non-idempotent tool. Plan state is
 `failed` when no batch receipt can be returned. Both terminal failure states
 require a fresh plan rather than an automatic retry.
 
+## Production Runs
+
+Production Runs are bounded orchestration records, retained in a local journal, for one
+task-scoped request. The connected AI translates the user's objective into a
+typed request and a closed ordered plan; PostFader validates scope,
+preservation rules, dependencies, references, live capabilities, and session
+state before applying any operation. An MCP restart preserves their plan and
+receipts; continuation still requires fresh live context.
+
+| Tool | Purpose |
+| --- | --- |
+| `postfader_creation_readiness` | Aggregate all detectable creation blockers and limitations without enabling writes or changing FL Studio. |
+| `postfader_validate_run` | Read-only structural and live-capability validation. Returns the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers without enabling writes. |
+| `postfader_execute_run` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
+| `postfader_list_runs` | List up to 64 recent local run summaries across MCP restarts. |
+| `postfader_get_run` | Read current or journaled run state, generated outputs, receipts, blockers, and concise summary. |
+| `postfader_continue_run` | Resume the saved plan with `mode="resume"`, append operations, or replace only the unexecuted remainder. Completed receipts are immutable, and the FL session and project checkpoint must still match. |
+| `postfader_stop_run` | Stop future operations. It does not undo completed changes or claim rollback. |
+
+The MVP operation union includes deterministic chord, melody, bass, and drum
+generation; exact pattern preparation or selection; Piano Roll writes and
+supported transforms; section markers; supported automation values; and the
+existing closed verified batch. Note-sequence references may point only to an
+earlier compatible generator output. All plans and histories are bounded.
+
+Creation plans add typed sound-palette and processing references to that same
+union. A complete mutating run uses one readiness preflight, one task-scoped
+authorization, one in-memory write-mode enable, and one verified shutdown.
+The phases are `preflight`, `palette`, `composition`, `note_application`,
+`processing`, and `finalization`; omitted work is marked skipped. A dry
+composition result reports `not_requested` or `dry_by_design`, while missing
+effect coverage reports `dry_missing_effects` or a partial state. No result
+claims that a preset or mix was heard, and no run saves automatically. See
+[Production Runs](production-runs.md) and [Creation Pipeline](creation-pipeline.md).
+
+Runs survive MCP restarts in a lazy local SQLite journal. Interrupted operations
+retain unknown outcomes and cannot be replayed. A Production Run never renders
+the live project, inserts plug-ins, creates Playlist clips,
+saves the FL Studio project, retries an ambiguous mutation, or claims an
+automatic rollback. See [Production Runs](production-runs.md) for examples and
+current limitations.
+
+## Creation Review, revision, and delivery
+
+Creation Review is a bounded continuation of one completed Production Run. It
+keeps the source-run snapshot and its receipts immutable, evaluates explicit
+caller-selected bounces, records producer feedback and independent locks,
+compiles one closed revision plan, and prepares comparison and delivery
+evidence. The public surface contains 13 dedicated MCP tools:
+
+| Tool | Purpose and boundary |
+| --- | --- |
+| `postfader_review_start` | Open a Review Session from one completed Production Run. The request carries the review brief, scope, preservation rules, feedback, revision budget, evaluation policy, and opt-in persistence settings; it does not change FL Studio. |
+| `postfader_review_attach_assets` | Validate and attach an explicit full mix, before/after bounce, reference, synchronized stem, or section bounce. Paths must be caller-selected regular audio files; attaching never changes FL Studio. |
+| `postfader_review_evaluate` | Measure one attached asset set globally and against the known section map, with optional tempo, time signature, and export offset. It reports findings and limitations and applies zero FL mutations. |
+| `postfader_review_get` | Read a process-local or persisted Review Session, retained evidence, status, blockers, and exact next action. |
+| `postfader_review_compare` | Compare distinct before and after asset IDs when their digests, channels, duration, offsets, and section alignment are usable. An `after_full_mix` must reference its recorded revision pass; recording comparison advances that pass from `attached` to `compared`. Technical improvements and regressions remain separate from user approval. |
+| `postfader_review_plan_revision` | Compile and validate one closed, ordered `RevisionPlan` against findings/feedback, preserved elements, locks, source digests, live targets, scope, and risk limits. The plan binds to a canonical `RevisionRequest` digest; `authorized_to_modify` is excluded and must be asserted afresh at apply. Planning never mutates FL Studio. |
+| `postfader_delivery_manifest` | Build the current read-only delivery view, including independent technical, arrangement, processing, audible-quality, approval, and manual-handoff states. It writes no file or project. |
+| `postfader_review_export_handoff` | Return one exact next full-mix export request and only the stems needed to resolve an identified uncertainty. It does not render or discover arbitrary files. |
+| `postfader_review_apply_revision` | Apply one recorded revision through the existing Production Run executor. A clear modification request uses one readiness preflight and one task-scoped authorization; stale or unknown outcomes stop without replay or rollback. If FL mutation completes but session persistence fails afterward, the result is blocked with a process-local receipt and no replay. |
+| `postfader_review_record_feedback` | Store explicit structured producer feedback and any accepted-element locks. Silence, measurements, and model interpretation never become approval. |
+| `postfader_review_stop` | Stop future work for one Review Session without undoing completed FL changes or rewriting receipts. |
+| `postfader_review_delete` | Delete one Review Session's local metadata after `confirm=true`; audio files and the FL Studio project are untouched. The deleted metadata is not recoverable by PostFader. |
+| `postfader_delivery_export_manifest` | Create-only export of the delivery view as JSON and/or Markdown. Existing files are never overwritten; the result includes the logical manifest digest and exact artifact SHA-256 hashes, and newly created companions are cleaned up if the paired write fails. The FL Studio project is never saved. |
+
+The table intentionally names `postfader_delivery_manifest` once as a delivery
+view tool; the 13-tool count is the 11 `postfader_review_*` tools, that one
+delivery-view tool, and `postfader_delivery_export_manifest`.
+
+Opt-in Review persistence is bounded versioned local JSON at
+`<FL Studio user-data>/Settings/PostFader/creation-review-sessions-v1.json`,
+unless `POSTFADER_CREATION_REVIEW_PATH` (or its compatibility alias) supplies
+another absolute path. The request defaults to three revision passes (hard cap
+eight); the store caps 64 sessions, 256 assets, 256 findings per evaluation, 32
+evaluations, 64 comparisons, 32 delivery manifests, and a 16 MiB serialized
+document. A private per-path advisory lock serializes writers across MCP
+processes, and deterministic pruning keeps findings referenced by retained
+plans or passes ahead of lower-ranked unreferenced findings. Durable and
+delivery serializers remove credentials, prompts, transcripts, encoded or raw
+audio, cloud identifiers, and arbitrary private paths; `persist_asset_paths=true`
+permits only canonical attached `ReviewAudioAsset.path` fields. The public
+delete tool requires explicit confirmation; store reset/repair is also explicit
+and never automatic. A persistence failure after a verified FL mutation
+returns a blocked process-local receipt and must not be replayed.
+
+### Creation Review operations inside a Production Run
+
+The same workflow is available to a typed Production Run through a closed set
+of 9 review operations. Their names are distinct from the 13 top-level MCP
+tools and can be linked with the run's typed output references:
+
+| Operation | Result and boundary |
+| --- | --- |
+| `start_review_session` | Snapshot one completed source run into a bounded Review Session and expose retained authoritative sections as typed `section_definition` items; read-only local state. |
+| `attach_review_assets` | Validate and retain explicit audio asset metadata for the referenced Review Session; no FL mutation. |
+| `evaluate_creation` | Analyze the selected bounce and known sections, returning an evaluation report and findings; no FL mutation. |
+| `record_creation_feedback` | Retain explicit producer feedback and any feedback locks; no FL mutation. |
+| `plan_creation_revision` | Compile a closed revision plan with traceable findings, feedback, dependencies, expected movements, and manual actions; no FL mutation. |
+| `apply_creation_revision` | Apply the recorded plan through the existing Production Run writers with one preflight and authorization boundary; mutating and verification-gated. |
+| `compare_revision_bounces` | Compare distinct before/after assets and expose objective results, improvements, regressions, and insufficient evidence; no FL mutation. |
+| `create_playlist_handoff` | Create a precise manual Playlist placement/delta handoff; Playlist clip placement remains outside the public API. |
+| `create_delivery_manifest` | Assemble the final multi-dimensional delivery manifest; it does not render, save, or write project state. |
+
+Review operations are bounded by the source request's pass, asset, finding,
+feedback, and operation limits. A run can retain review outputs as typed
+references (`review_session`, `evaluation_report`, `finding`, `feedback_lock`,
+`section_definition`, `revision_plan`, `revision_pass`,
+`revision_comparison`, `playlist_handoff`, and `delivery_manifest`).
+
 ## Creative, MIDI, arrangement, and automation tools
 
 ### Deterministic composition and offline analysis
@@ -345,20 +562,64 @@ Composition returns a deterministic SHA-256 note digest and does not touch FL.
 Tempo/key and transcription results include confidence and limitations; they
 are estimates, not project metadata.
 
+### Native plugin loading
+
+| Tool | Purpose |
+| --- | --- |
+| `plugins_list_available` | Read the macOS native Add menu and return names, instrument/effect kinds and menu paths. Opens/closes the menu and changes focus; it is not annotated as a read-only tool. |
+| `plugins_load` | Add one named instrument to the Channel Rack or one effect to `track_index`, then verify the new channel/slot through the bridge. Master requires explicit `allow_master`. |
+
+Loading requires macOS Accessibility access and the observed English menu
+structure. Availability covers Add-menu favorites, not all installed products
+or license ownership. No hash approval is required. The task request authorizes
+the addition; effect loading selects its mixer destination with temporary
+write mode when needed. A `loaded` receipt includes new-instance evidence;
+`unknown_outcome` must be inspected before any further load attempt. Existing
+instances must remain unchanged, and no dispatched click is retried. The
+adapter does not save the project or claim an undo point.
+
+### Saved-project WAV rendering
+
+| Tool | Purpose |
+| --- | --- |
+| `postfader_render_saved_project` | Start a background WAV export from an existing `.flp` using FL's documented command-line exporter. Takes a parent output directory and creates a fresh per-job directory. |
+| `postfader_render_get_job` | Return job state and fully decoded WAV metadata. `output_ready` means the file is readable; `completed` additionally requires successful application exit. |
+| `postfader_render_cancel` | Cancel the owned render process or waiter. On macOS the separate FL renderer may remain running, which the result reports explicitly. |
+
+Rendering includes only the project saved on disk. It launches a separate FL
+instance on macOS and an owned executable on Windows; no existing FL process is
+terminated. Jobs are process-local, with one monitored job at a time and 32
+retained terminal records. `POSTFADER_FL_STUDIO_PATH` or the request's
+`fl_studio_path` can select the installation. Export uses FL's saved/default
+settings; the tool does not promise sample rate, bit depth, stems or a live
+Playlist selection. See Image-Line's [command-line export documentation](https://www.image-line.com/fl-studio-learning/fl-studio-online-manual/html/fformats_save_export.htm).
+
 ### Piano Roll bridge
+
+`piano_roll_read_notes` returns a bounded page of existing notes with raw ticks,
+PPQ, beat timing, pitch, velocity, pan, release, color, pitch offset, slide,
+portamento, mute and selection flags. It selects the requested channel/pattern
+and opens the editor without enabling musical writes. It uses the same one-time
+script setup as note application and requires the current bridge's navigation
+capability. A changed target or missing receipt returns no attributed notes.
+Pages advance by raw score indices; even an empty `selected_only` page may have
+a `next_offset`. Each page is a fresh observation, not an atomic whole-score dump.
 
 | Tool | Purpose |
 | --- | --- |
 | `piano_roll_bridge` | Inspect setup, atomically prepare the bootstrap script, or confirm the user's one manual run for this process. |
+| `piano_roll_read_notes` | Inspect up to 2,048 raw note indices per page through the script runtime; no musical write mode is required. |
 | `piano_roll_write_notes` | Prepare append/replace note content and optionally target FL plus dispatch the run-last-script shortcut. |
 | `piano_roll_transform` | Quantize, transpose, humanize, duplicate, delete, or clear selected/all live score notes. |
 
 Automatic Piano Roll use requires the one-time prepare/manual-run/confirm
 handshake. The normal bridge proves channel selection, pattern selection, and
-Piano Roll visibility before dispatch. FL exposes no controller-side note
-readback, so `application_verified=false` even when
-`hotkey_dispatched=true`. `auto_trigger=false` writes the generated script for
-manual execution without touching the live project.
+Piano Roll visibility before dispatch. `hotkey_dispatched=true` alone leaves
+application unverified. Note writes can set `application_verified=true` after
+matching application and persistence receipts from the separate script runtime;
+transforms remain dispatch-only. Neither path claims controller-side score
+readback. `auto_trigger=false` writes the generated script for manual execution
+without changing notes in the live project.
 
 ### Arrangement and automation
 
@@ -378,7 +639,7 @@ cannot expose the fact needed to prove the whole requested outcome.
 | `WriteModeConfirmationRequired` | Enabling was requested without literal `confirm_user_present=true` from an explicit present-user request. |
 | `WriteModeUnavailable` | Provenance, runtime-control support, session identity, command metadata, or the post-transition handshake did not safely prove the requested capability state. |
 | `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface. Ask the client to call `fl_set_write_mode(enabled=true, confirm_user_present=true)`. |
-| `TrackBMutationsUnavailable` | A Track B mutation is disabled, the bridge provenance does not match, or a supplied session changed before dispatch. |
+| `TrackBMutationsUnavailable` | A Track B mutation is disabled, the live session is missing, or a supplied session changed before dispatch. |
 | `IncompatibleFLStudio` | The live handshake failed the FL Studio version, program-title, MIDI API, or bridge-protocol gate. |
 | `ValueError` | A value is out of range, a multi-field call names no field to change, a route/current-pattern/digest/precondition is invalid, a plug-in selector is ambiguous, or mixer track 0 lacks explicit authorization. |
 | Argument validation | An unknown, misspelled, or incorrectly typed MCP argument was rejected by the strict schema. |
@@ -433,6 +694,7 @@ The MCP server maps its tools to these local protocol commands.
 | `patterns.list`, `patterns.find_empty` | optional bounded starting pattern | Pattern inventory or first FL-reported empty pattern. |
 | `playlist.list` | none | One-based Playlist track identity and state. |
 | `sequencer.get` | explicit current pattern and global channel | Absolute bounded cells and canonical digest. |
+| `creative.piano_roll_target` | none | Current selected channel indices, pattern, editor visibility, and session fingerprint. |
 
 ### Verified writes
 
@@ -440,7 +702,12 @@ The direct state commands use the same names shown in the write-tool tables.
 Mixer sources and mixer-effect targets refuse Master unless `allow_master` is
 true. Every direct state command reports an undo observation, later-tick
 readback, and `project_saved: false`. `channel.trigger_note` is dispatch-only.
-`creative.prepare_piano_roll`, `arrangement.add_markers`, and
-`automation.record_value` publish their narrower evidence rather than
-borrowing the direct-write guarantee. A command disabled by the active mode is
-absent from `available`; it is not merely rejected inside its handler.
+`arrangement.add_markers` and `automation.record_value` publish their narrower
+evidence rather than borrowing the direct-write guarantee. A command disabled
+by the active mode is absent from `available`; it is not merely rejected
+inside its handler.
+
+`creative.prepare_piano_roll` is transient editor navigation and remains
+available while musical writes are disabled. It selects a global channel and
+pattern, opens the editor, and reports the resulting target. It does not read
+or write notes; those operations use the separate script runtime.

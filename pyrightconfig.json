@@ -4,9 +4,22 @@
     "fl_studio_mcp/client_config.py",
     "fl_studio_mcp/bridge_install.py",
     "fl_studio_mcp/contracts.py",
+    "fl_studio_mcp/file_fingerprints.py",
     "fl_studio_mcp/evidence.py",
     "fl_studio_mcp/workflows.py",
-    "scripts/build_release_bundles.py"
+    "fl_studio_mcp/plugin_atlas",
+    "fl_studio_mcp/plugin_atlas_mcp.py",
+    "fl_studio_mcp/sound_selection",
+    "fl_studio_mcp/creation_pipeline",
+    "fl_studio_mcp/creation_review",
+    "fl_studio_mcp/production_runs.py",
+    "fl_studio_mcp/production_run_persistence.py",
+    "fl_studio_mcp/piano_roll.py",
+    "fl_studio_mcp/saved_project_render.py",
+    "fl_studio_mcp/plugin_loading.py",
+    "scripts/build_release_bundles.py",
+    "scripts/generate_creation_review_fixtures.py",
+    "scripts/live_creation_review_acceptance.py"
   ],
   "exclude": [
     "fl_studio_mcp/_bridge",

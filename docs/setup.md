@@ -64,8 +64,8 @@ postfader setup
 ```
 
 For Codex, the release also provides dedicated
-`PostFader-v0.20.0-Codex-Windows.zip` and
-`PostFader-v0.20.0-Codex-macOS.zip` packages. Their launchers run the same base
+`PostFader-v10.0.0-Codex-Windows.zip` and
+`PostFader-v10.0.0-Codex-macOS.zip` packages. Their launchers run the same base
 installation, preselect `codex-toml`, and request a separate confirmation
 before registering the resolved server through the Codex CLI. The equivalent
 command for a source or Python installation is:
@@ -114,6 +114,9 @@ same version; start FL Studio and reload `Universal Bridge`; only then
 reconnect the MCP client. Mixed versions fail closed. Command protocol 2
 describes the bridge command API, while MIDI wire protocol 2 separately
 describes the bounded SysEx framing and must match before the first request.
+Sound Selection is additive to the existing setup: there is no extra mode or
+plug-in installation step. Load the generator/effect pool you want available
+in FL Studio before asking the connected AI to plan a palette.
 
 ## 3. Configure FL Studio and the virtual endpoint
 
@@ -159,6 +162,71 @@ writes can then target the requested channel and pattern and dispatch FL's
 run-last-script shortcut. They report focus and key dispatch, never fabricated
 note readback; inspect the Piano Roll before issuing another mutation. Set
 `auto_trigger=false` to generate the script for manual execution instead.
+
+### Armed-ready creation fixtures
+
+Before asking the connected AI for a complete creation request, make a blank,
+disposable project ready for the whole run:
+
+- load the intended generator pool, including a drum-capable generator whose
+  reported map contains kick, snare, and closed-hat roles;
+- leave at least one empty pattern available (the maintainer harness uses
+  Pattern 1); and
+- complete the Postfader Apply prepare/manual-run/confirm handshake in the
+  current MCP process.
+
+The composition acceptance fixture has no loaded effects and should report an
+honest dry processing state. The production fixture adds supported stock
+effects with existing adapters so effect coverage and semantic processing can
+be observed. Readiness aggregates missing setup actions before a run and does
+not ask for confirmation at each phase.
+
+The maintainer-only harness can preview both plans without contacting MCP or
+FL Studio:
+
+```bash
+python scripts/live_creation_acceptance.py --plan --scenario composition
+python scripts/live_creation_acceptance.py --plan --scenario production
+```
+
+For live evidence, provide `--confirm-user-present`,
+`--confirm-disposable-project`, and `--confirm-safe-to-edit`, plus a new
+`--output` path outside this repository. The harness performs one bounded
+Production Run and labels its timing/acceptance targets as unclaimed until a
+real run records them; it never saves the project or claims audible quality.
+
+### Creation Review setup and persistence
+
+Creation Review needs no second bridge, plug-in, or client installation. First
+complete a Production Run in the same connected MCP process, export a bounce
+from FL Studio, and give the connected AI the explicit absolute path. The AI
+can then call `postfader_review_start`, `postfader_review_attach_assets`, and
+`postfader_review_evaluate`; attach a reference or synchronized stem only when
+the requested finding needs that evidence. Review never captures FL's live
+audio and never renders or saves the live project. For an already-saved FLP,
+use the separate V10 saved-project rendering tools described below;
+that export excludes unsaved changes.
+
+Review Sessions are process-local by default. Set `persist_session=true` when
+the review must survive a process restart. The default local store is:
+
+```text
+<FL Studio user-data>/Settings/PostFader/creation-review-sessions-v1.json
+```
+
+`POSTFADER_CREATION_REVIEW_PATH` (or its compatibility alias
+`POSTFADER_CREATION_REVIEW_SESSIONS_PATH`) may point to another absolute JSON
+path. Persistence is atomic, bounded, and schema-versioned. Asset paths are
+omitted by default; hashes, labels, findings, feedback, revision receipts, and
+delivery metadata may remain. Audio bytes, prompts, transcripts, credentials,
+and cloud identifiers are never stored. Keep the store on a local, user-only
+directory and back it up yourself if the review record matters.
+
+After a revision, export the new bounce with the same range, sample rate,
+channels, normalization, and tail policy before calling
+`postfader_review_compare`. Use `postfader_delivery_manifest` to inspect the
+final handoff and `postfader_delivery_export_manifest` to create new JSON or
+Markdown files. These manifests are create-only and do not save FL Studio.
 
 ## 4. Generate client configuration
 
@@ -294,16 +362,19 @@ success.
 ## 6. Read-only and write-mode operation
 
 The normal FL launch is read-only. Start FL Studio normally, connect the AI
-client, and ask it:
+client, and ask for the work you want:
 
 ```text
-Enable write mode for this session.
+Build a bassline and drums, keeping my existing lead.
 ```
 
+A Production Run enables writes once for that task. You can also explicitly
+ask to enable write mode when working through individual controls.
+
 The client calls `fl_set_write_mode(enabled=true,
-confirm_user_present=true)`. Enabling requires that explicit present-user
-request, matching bridge provenance, runtime-control support, and the current
-session fingerprint. A second handshake must then confirm all of:
+confirm_user_present=true)` under the user's edit request. Enabling requires
+compatible protocol, runtime-control support, and the current session
+fingerprint. A second handshake must then confirm all of:
 
 - `bridge_mode="write_test"`;
 - `verified_writes_enabled=true`; and
@@ -313,6 +384,14 @@ No project value is changed or saved by the mode transition, and FL Studio
 does not restart. Ask the client to disable write mode when finished. A normal
 new FL process starts read-only, and a bridge reload also resets to the process
 startup default.
+
+For Sound Selection, begin with `sound_selection_inventory` or a read-only
+Production Run plan. Exact preset choices are available only for targets loaded
+in the current project; Atlas knowledge may recommend an unloaded product but
+cannot load it. Review the palette and its verification receipts before saving
+the project manually in FL Studio. Sound Selection keeps its optional bounded
+local usage history under the FL Studio user-data directory; it does not store
+prompts, audio, project files, or client transcripts.
 
 The Windows launcher remains useful for finding FL Studio and starting it
 normally:
@@ -362,13 +441,94 @@ by the doctor. PostFader refuses ambiguity before lock/open.
 reported PID is local ownership evidence, not authentication.
 
 **Writes are refused.** Check the live handshake. It must report
-`runtime_write_mode_control=true` and matching bridge provenance. Ask the
-connected client to enable write mode and approve its capability-change prompt.
+`runtime_write_mode_control=true` and a compatible protocol. The connected
+client can enable write mode under your edit request. A different source stamp
+is diagnostic and does not prevent a compatible write.
 Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
 `write_mode_origin=runtime_request`.
 
 **A write is unverified.** Do not retry automatically. Inspect before/after,
 verification detail, warnings, and the project itself.
+
+**Creation readiness is blocked.** Call `postfader_creation_readiness` (or
+inspect the `readiness_report` in the run result). It returns all detectable
+actions together, such as arming Postfader Apply, loading a generator with
+required drum roles, or leaving an empty pattern. Complete those actions in
+the disposable FL project, then submit a compatible run; do not repeatedly
+retry individual note operations.
+
+**Creation reports dry or partial processing.** Confirm that the requested
+effect is loaded on the intended mixer track, matches an available Atlas
+adapter, and exposes the observed control. Missing effects and unresolved
+controls are honest readiness limitations, not silent substitutions or
+audible-quality failures.
+
+**A Review Session cannot be found.** Review state is process-local unless it
+was started with `persist_session=true`; reconnect the client to the process
+that owns the session or use the configured local store. A persisted review
+does not make a completed Production Run itself permanent, so keep the source
+run and its matching package process available for a revision.
+
+**A review asset is rejected.** Supply an absolute path to a regular supported
+audio file selected by the user. Check that it is not a directory or unsafe
+symlink, is below the size/duration limits, and has not changed since its
+digest was captured. Use the exact asset IDs returned by
+`postfader_review_attach_assets` for later evaluation and comparison.
+
+**Evaluation has weak or missing evidence.** Provide authoritative section
+ranges when the source run has no usable section map. A full mix cannot prove
+which channel caused a problem; attach synchronized vocal/instrumental or
+role-specific stems only for that attribution. A reference is directional
+evidence, not a copy target.
+
+**A revision plan is blocked or stale.** Read the Review Session and the plan
+blockers. Re-evaluate the current asset set, preserve accepted-element locks,
+and build a fresh plan when a session fingerprint, note digest, palette target,
+effect control, section, or finding has changed. Never replay an unverified or
+unknown mutation.
+
+**Before/after comparison reports no deltas.** Confirm that the two asset IDs
+are distinct, their files have distinct digests, and both exports use matching
+start range, channels, sample rate, normalization, tail, and declared offset.
+Duration similarity alone is not synchronization proof; fix the export or
+provide an explicit offset before comparing.
+
+**Delivery export refuses an existing file or directory.** Delivery artifacts
+are create-only. Choose a new output directory or filename and inspect the
+read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
+manifest and will not save the FL Studio project.
+
+## V10 host workflows
+
+These tools are included in V10. Upgrade the
+server and bridge together before using them.
+
+- **Read existing notes:** prepare and arm the Piano Roll script once per MCP
+  process, then call `piano_roll_read_notes` with the channel, pattern, offset,
+  and limit. It selects the target and opens the editor; it does not alter note
+  content. Each page is a fresh observation. A missing or stale target receipt
+  returns no attributed notes.
+- **Load a plug-in on macOS:** grant macOS Accessibility access to the launching
+  host when using the native-menu adapter. `plugins_list_available` reads the
+  current English Add-menu favorites; `plugins_load` adds one exact named
+  instrument or effect. Effects need a mixer destination; Master requires
+  explicit permission. Windows loading and plug-in removal/reordering are not
+  implemented. Stop after an unknown outcome and inspect the session.
+- **Recover a run:** `postfader_list_runs` and `postfader_get_run` read the local
+  journal. Explicit continuation revalidates the saved plan, current targets,
+  and authorization. Unknown in-flight operations remain blocked. Keep the
+  SQLite journal and its companion files private; they retain production data.
+- **Render saved state:** select an existing absolute `.flp` path and a parent
+  output directory with `postfader_render_saved_project`. Optionally set
+  `POSTFADER_FL_STUDIO_PATH`. Poll `postfader_render_get_job`; `output_ready`
+  proves decoded WAV availability, while `completed` also requires successful
+  FL process exit. Cancellation may leave the separate macOS FL instance
+  running, as reported in the response. Unsaved edits are excluded. Do not
+  infer stem, sample-rate, bit-depth, or Playlist-selection control from this tool.
+
+The new note-read and render paths have deterministic coverage; live FL Studio
+acceptance remains pending. See the [contracts](tool-contracts.md) and
+[V10 release notes](releases/v10.0.0.md) before relying on them.
 
 ## Environment variables
 
@@ -382,7 +542,10 @@ verification detail, warnings, and the project itself.
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |
 | `FL_BRIDGE_MAILBOX` | Test-only file-mailbox transport directory. |
+| `POSTFADER_PRODUCTION_RUN_PATH` | Optional local SQLite journal path; defaults to `Settings/PostFader/production-runs-v1.sqlite3` under FL user data. |
+| `POSTFADER_FL_STUDIO_PATH` | Optional absolute FL `.app` bundle (macOS) or `.exe` (Windows) for saved-project rendering. |
 | `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` | Optional absolute override for the generated Piano Roll script directory. Otherwise it follows `FL_STUDIO_USER_DATA_DIR`. |
+| `POSTFADER_CREATION_REVIEW_PATH` | Optional absolute override for the schema-versioned Creation Review session store. Persistence is opt-in. |
 
 ## 8. Hermetic tests
 

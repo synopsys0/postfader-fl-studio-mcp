@@ -11,17 +11,55 @@ from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ATLAS_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas"
+ATLAS_DATA_ROOT = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
+ATLAS_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_PACKAGE_ROOT.rglob("*.py")
+}
+ATLAS_REQUIRED.update(
+    path.relative_to(ROOT).as_posix()
+    for path in ATLAS_DATA_ROOT.rglob("*.json")
+)
+ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_data/__init__.py")
+ATLAS_REQUIRED.add("fl_studio_mcp/plugin_atlas_mcp.py")
+SOUND_SELECTION_PACKAGE_ROOT = ROOT / "fl_studio_mcp" / "sound_selection"
+SOUND_SELECTION_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.py")
+}
+SOUND_SELECTION_REQUIRED.update(
+    path.relative_to(ROOT).as_posix()
+    for path in SOUND_SELECTION_PACKAGE_ROOT.rglob("*.json")
+)
+CREATION_PIPELINE_ROOT = ROOT / "fl_studio_mcp" / "creation_pipeline"
+CREATION_PIPELINE_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_PIPELINE_ROOT.rglob("*.py")
+}
+CREATION_REVIEW_ROOT = ROOT / "fl_studio_mcp" / "creation_review"
+CREATION_REVIEW_REQUIRED = {
+    path.relative_to(ROOT).as_posix()
+    for path in CREATION_REVIEW_ROOT.rglob("*.py")
+}
 REQUIRED = {
     "manifest.json",
     "mcpb_entry.py",
     "pyproject.toml",
     "fl_studio_mcp/mcp_server.py",
+    "fl_studio_mcp/file_fingerprints.py",
+    "fl_studio_mcp/piano_roll.py",
+    "fl_studio_mcp/production_run_persistence.py",
+    "fl_studio_mcp/saved_project_render.py",
+    "fl_studio_mcp/plugin_loading.py",
     "fl_studio_mcp/_bridge/device_UniversalBridge.py",
-}
+} | ATLAS_REQUIRED | SOUND_SELECTION_REQUIRED | CREATION_PIPELINE_REQUIRED | CREATION_REVIEW_REQUIRED
 FORBIDDEN_PARTS = {
     ".git",
     ".github",
     ".private",
+    ".codex",
+    ".claude",
     ".venv",
     "__pycache__",
     "tests",
@@ -31,6 +69,11 @@ FORBIDDEN_PARTS = {
 }
 FORBIDDEN_NAMES = {".mcp.json", ".env", ".DS_Store"}
 FORBIDDEN_SUFFIXES = {
+    ".jsonl",
+    ".log",
+    ".sqlite",
+    ".sqlite3",
+    ".db",
     ".aif",
     ".aiff",
     ".flac",
@@ -75,6 +118,7 @@ def inspect_bundle(bundle: Path) -> list[str]:
                 lowered_name in FORBIDDEN_NAMES
                 or lowered_name.startswith(".env.")
                 or path.suffix.lower() in FORBIDDEN_SUFFIXES
+                or path.suffix.lower().startswith((".sqlite-", ".sqlite3-", ".db-"))
             ):
                 leaked.append(name)
         if leaked:

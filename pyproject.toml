@@ -1,6 +1,6 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "0.20.0"
+version = "10.0.0"
 description = "AI copilot for FL Studio project control, mix analysis, plug-ins, composition, and arrangement"
 readme = "README.md"
 license = "Apache-2.0"
@@ -27,7 +27,10 @@ dependencies = [
     "mcp>=2.0.0,<2.1",
     "jsonschema>=4.20,<5",
     "numpy>=1.24,<3",
-    "scipy>=1.10,<2",
+    # SciPy 1.15's PROPACK wheel fails to load on recent macOS dyld; the
+    # fixed newer releases require Python >=3.11. Keep 3.10 installs working.
+    "scipy>=1.10,<1.15; sys_platform == 'darwin' and python_version < '3.11'",
+    "scipy>=1.10,<2; sys_platform != 'darwin' or python_version >= '3.11'",
     "soundfile>=0.12,<1",
     "pyloudnorm>=0.1.1,<1",
     "python-rtmidi>=1.5,<2",
@@ -40,6 +43,7 @@ postfader = "fl_studio_mcp.cli:main"
 postfader-install-bridge = "fl_studio_mcp.bridge_install:main"
 postfader-doctor = "fl_studio_mcp.diagnostics:main"
 postfader-plugin-report = "fl_studio_mcp.plugin_report:main"
+postfader-plugin-atlas = "fl_studio_mcp.plugin_atlas.cli:main"
 postfader-setup = "fl_studio_mcp.setup_wizard:main"
 
 [project.optional-dependencies]
@@ -67,7 +71,24 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["fl_studio_mcp", "fl_studio_mcp._bridge"]
+include-package-data = false
+packages = [
+    "fl_studio_mcp",
+    "fl_studio_mcp._bridge",
+    "fl_studio_mcp.creation_pipeline",
+    "fl_studio_mcp.creation_review",
+    "fl_studio_mcp.plugin_atlas",
+    "fl_studio_mcp.plugin_atlas_data",
+    "fl_studio_mcp.sound_selection",
+    "fl_studio_mcp.sound_selection.data",
+]
+
+[tool.setuptools.package-data]
+# Atlas knowledge is deliberately data, not Python constants.  Keep every
+# machine-readable shard in the installed wheel; the loader resolves the
+# manifest's relative paths through importlib.resources.
+"fl_studio_mcp.plugin_atlas_data" = ["*.json", "**/*.json"]
+"fl_studio_mcp.sound_selection.data" = ["*.json", "**/*.json"]
 
 # The bridge directory intentionally has no __init__.py and no runtime module
 # imports it: the controller body is executable only inside FL Studio. List the

@@ -2,10 +2,15 @@
 
 
 class Plugin:
-    def __init__(self, name, params):
+    def __init__(self, name, params, presets=None, pads=None):
         self.name = name
         self.param_names = [p for p, _ in params]
         self.values = [v for _, v in params]
+        self.presets = list(
+            ["Preset %d" % i for i in range(12)] if presets is None else presets
+        )
+        self.current_preset = 0
+        self.pads = list(pads or [])
 
 
 class Track:
@@ -44,6 +49,10 @@ class Track:
 class Channel:
     def __init__(self, name, target_fx=0):
         self.name = name
+        self.generator_plugin = Plugin(
+            name,
+            [("Volume", 0.8), ("Pan", 0.5)],
+        )
         self.volume = 0.78
         self.pan = 0.0
         self.pitch = 0.0
@@ -190,8 +199,8 @@ def reset():
     # A VST reporting far more parameter slots than it has controls, most of
     # them padding, and whose first real control has no name at all -- only a
     # display string. Both shapes are common in third-party VSTs.
-    vst = Plugin("Vocal Tuner VST",
-                 [("", 0.0), ("Scale", 0.07), ("Key", 0.45), ("Tune Speed", 0.87)]
+    vst = Plugin("Example Padded VST",
+                 [("", 0.0), ("Scale", 0.07), ("Key", 0.45), ("Response Time", 0.87)]
                  + [("", 0.0)] * 236)
     vst.displays = ["Auto mode", "Chromatic", "F", "5 ms"] + ["0.0000000"] * 236
     TRACKS[5].slots[0] = vst
@@ -219,14 +228,14 @@ def reset():
     # An enumerated control, the shape a musical Key or Scale selector has:
     # the display is text, so there is no number to search on and no way to ask
     # FL what the options are. They can only be found by moving the control.
-    tuner = Plugin("Pitch Tuner", [("Key", 0.0), ("Scale", 0.0), ("Mix", 0.5)])
-    tuner.enums = {
+    enumerated = Plugin("Example Enumerated Effect", [("Key", 0.0), ("Scale", 0.0), ("Mix", 0.5)])
+    enumerated.enums = {
         0: ["C", "C#", "D", "D#", "E", "F",
             "F#", "G", "G#", "A", "A#", "B"],
         1: ["Chromatic", "Major", "Minor"],
     }
-    TRACKS[9].slots[0] = tuner
-    TRACKS[9].name = "Tuner Bus"
+    TRACKS[9].slots[0] = enumerated
+    TRACKS[9].name = "Enumeration Bus"
 
     CHANNELS = [Channel("Vox Take 1", 3), Channel("Kick", 4), Channel("Sytrus Lead", 5)]
     CHANNELS[0].selected = True

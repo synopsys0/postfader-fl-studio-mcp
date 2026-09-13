@@ -1,0 +1,92 @@
+{
+  "base_duration_seconds": 4,
+  "channels": 2,
+  "files": {
+    "clean_baseline.wav": {
+      "bytes": 256044,
+      "sha256": "19a3a8a80a036174c36f3e7561954ee1b41c7215805e8c43d6f2c4307e5c7a0d"
+    },
+    "clipped_candidate.wav": {
+      "bytes": 256044,
+      "sha256": "9ed74e8c73e9129a12edb902b4232662b35e9f224ce559da8b61b1e83ac3e66a"
+    },
+    "duration_mismatch.wav": {
+      "bytes": 192044,
+      "sha256": "1d18934bd370ce3bda5d0f20c78f02b17e2d2575af60876b8583ea205da7e0a5"
+    },
+    "improved_contrast_with_regression.wav": {
+      "bytes": 256044,
+      "sha256": "9c6966aae228b9284d5da290efb41ae56ea46af5016be6c6c9d380c65ba53038"
+    },
+    "low_mid_heavy_candidate.wav": {
+      "bytes": 256044,
+      "sha256": "d05392f8eb227ab101421b54457ea15c3288fb925061022c068101d85c019bd8"
+    },
+    "masking_instrumental_stem.wav": {
+      "bytes": 256044,
+      "sha256": "2b9ca8ea9d27c10929d21e7a9e504347fe09da427cad62d55af6f12158944ad9"
+    },
+    "masking_vocal_stem.wav": {
+      "bytes": 256044,
+      "sha256": "db0013545d4177cb6bc344b36af76d31a200ba134cf8e65dd9ac4ecaa47cceec"
+    },
+    "offset_candidate.wav": {
+      "bytes": 256044,
+      "sha256": "012329ebacdfdb5889bee99f6f8f85f33cf89f49e75d1fef54ecc788f878d3b6"
+    },
+    "overly_bright_candidate.wav": {
+      "bytes": 256044,
+      "sha256": "9b229ce2e2501cc6de5445075f2f689dd47295a7da45c2fdcc8d88e6066a3f03"
+    },
+    "silence_tail.wav": {
+      "bytes": 256044,
+      "sha256": "e743d2f97d7ffae81baacbc9b52c1214218f376b9ff6043dacc65f11f72d9f46"
+    },
+    "weak_drop_contrast.wav": {
+      "bytes": 256044,
+      "sha256": "7517fbdca6ae7c26d2ce0b2e37b65068e912ad7827e5bec099ae10423ea3f88c"
+    }
+  },
+  "generator": "scripts/generate_creation_review_fixtures.py",
+  "known_properties": {
+    "clipped_candidate.wav": [
+      "sample_clipping"
+    ],
+    "duration_mismatch.wav": [
+      "one_second_shorter"
+    ],
+    "improved_contrast_with_regression.wav": [
+      "stronger_build_to_drop_energy_change",
+      "worse_stereo_correlation"
+    ],
+    "low_mid_heavy_candidate.wav": [
+      "increased_low_mid_share"
+    ],
+    "masking_instrumental_stem.wav": [
+      "synchronized_overlap_source"
+    ],
+    "masking_vocal_stem.wav": [
+      "synchronized_overlap_source"
+    ],
+    "offset_candidate.wav": [
+      "quarter_second_lead_offset"
+    ],
+    "overly_bright_candidate.wav": [
+      "increased_high_frequency_share"
+    ],
+    "silence_tail.wav": [
+      "sustained_decay_tail"
+    ],
+    "weak_drop_contrast.wav": [
+      "weak_build_to_drop_energy_change"
+    ]
+  },
+  "sample_rate_hz": 16000,
+  "sample_width_bytes": 2,
+  "schema_version": "1.0",
+  "structural_fixture": {
+    "bytes": 2893,
+    "name": "creation-review-structural-v1.json",
+    "sha256": "859e500c6c49af77ea7925c5e41e403257ffd4487e109d5f425f0890846477a5"
+  }
+}

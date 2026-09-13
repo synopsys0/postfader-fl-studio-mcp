@@ -10,6 +10,9 @@ coverage-artifacts/
 htmlcov/
 *.egg-info/
 .claude/
+.codex/
+.mypy_cache/
+.ruff_cache/
 .idea/
 .vscode/
 build/
@@ -31,6 +34,16 @@ renders/
 *.p12
 *.pfx
 
+# Local conversations, diagnostics, and persistent production journals.
+*.jsonl
+*.log
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
 # User projects and media never belong in this source repository. The only
 # media exceptions are deterministic, hash-pinned synthetic test fixtures.
 *.flp
@@ -48,3 +61,4 @@ renders/
 *.ogg
 *.oga
 !tests/fixtures/audio/*.wav
+!tests/fixtures/creation_review/*.wav

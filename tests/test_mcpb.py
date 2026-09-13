@@ -13,6 +13,7 @@ import zipfile
 from pathlib import Path
 from unittest import mock
 
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
@@ -25,6 +26,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import build_mcpb  # noqa: E402
 from build_mcpb import MCPB_NPM_PACKAGE  # noqa: E402
+from check_mcpb_bundle import REQUIRED as MCPB_REQUIRED  # noqa: E402
 from check_mcpb_bundle import inspect_bundle  # noqa: E402
 from sync_mcpb_manifest import discover_tools  # noqa: E402
 
@@ -100,7 +102,30 @@ class MCPBPackagingTests(unittest.TestCase):
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
         self.assertGreaterEqual(len(names), 75)
-        self.assertLessEqual(len(names), 90)
+        self.assertEqual(len(names), 134)
+        self.assertEqual(
+            {
+                name
+                for name in names
+                if name.startswith("postfader_review_")
+                or name.startswith("postfader_delivery_")
+            },
+            {
+                "postfader_review_start",
+                "postfader_review_attach_assets",
+                "postfader_review_evaluate",
+                "postfader_review_get",
+                "postfader_review_compare",
+                "postfader_review_plan_revision",
+                "postfader_review_export_handoff",
+                "postfader_review_apply_revision",
+                "postfader_review_record_feedback",
+                "postfader_review_stop",
+                "postfader_review_delete",
+                "postfader_delivery_manifest",
+                "postfader_delivery_export_manifest",
+            },
+        )
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"
@@ -139,6 +164,42 @@ class MCPBPackagingTests(unittest.TestCase):
     def test_manifest_does_not_enable_fl_write_mode(self) -> None:
         encoded = json.dumps(self.manifest)
         self.assertNotIn("FL_BRIDGE_ENABLE_WRITES", encoded)
+
+    def test_bundle_checker_requires_the_complete_plugin_atlas_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/plugin_atlas/__init__.py",
+                "fl_studio_mcp/plugin_atlas_data/__init__.py",
+                "fl_studio_mcp/plugin_atlas_mcp.py",
+            }
+            <= MCPB_REQUIRED
+        )
+        self.assertIn(
+            "fl_studio_mcp/plugin_atlas_data/manifests/atlas.json",
+            MCPB_REQUIRED,
+        )
+
+    def test_bundle_checker_requires_the_complete_sound_selection_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/sound_selection/__init__.py",
+                "fl_studio_mcp/sound_selection/models.py",
+                "fl_studio_mcp/sound_selection/data/__init__.py",
+                "fl_studio_mcp/sound_selection/data/descriptors-v1.json",
+            }
+            <= MCPB_REQUIRED
+        )
+
+    def test_bundle_checker_requires_the_complete_creation_review_payload(self) -> None:
+        self.assertTrue(
+            {
+                "fl_studio_mcp/creation_review/__init__.py",
+                "fl_studio_mcp/creation_review/models.py",
+                "fl_studio_mcp/creation_review/mcp.py",
+                "fl_studio_mcp/creation_review/persistence.py",
+            }
+            <= MCPB_REQUIRED
+        )
 
     def test_bundle_entry_point_exists(self) -> None:
         self.assertTrue((ROOT / "mcpb_entry.py").is_file())
@@ -212,6 +273,12 @@ class MCPBPackagingTests(unittest.TestCase):
             ".git/",
             ".github/",
             ".private/",
+            ".codex/",
+            ".claude/",
+            "*.jsonl",
+            "*.log",
+            "*.sqlite3",
+            "*.sqlite3-*",
             ".mcp.json",
             ".env",
             "tests/",
@@ -223,6 +290,11 @@ class MCPBPackagingTests(unittest.TestCase):
             self.assertIn(required, patterns)
 
     def test_forged_bundle_with_private_member_is_rejected(self) -> None:
+        private_members = (
+            ".private/host-report.md", ".codex/config.toml",
+            ".claude/settings.json", "conversation.jsonl", "session.log",
+            "production.sqlite3", "production.sqlite3-wal", "run.db-shm",
+        )
         with tempfile.TemporaryDirectory(prefix="postfader-forged-mcpb-") as raw:
             bundle = Path(raw) / "forged.mcpb"
             with zipfile.ZipFile(bundle, "w") as archive:
@@ -239,9 +311,12 @@ class MCPBPackagingTests(unittest.TestCase):
                     "manifest.json",
                     (ROOT / "manifest.json").read_text(encoding="utf-8"),
                 )
-                archive.writestr(".private/host-report.md", "must not ship")
+                for member in private_members:
+                    archive.writestr(member, "must not ship")
             failures = inspect_bundle(bundle)
-        self.assertTrue(any(".private/host-report.md" in item for item in failures))
+        for member in private_members:
+            with self.subTest(member=member):
+                self.assertTrue(any(member in item for item in failures))
 
     def test_missing_bundle_fails_inspection(self) -> None:
         failures = inspect_bundle(ROOT / "does-not-exist.mcpb")

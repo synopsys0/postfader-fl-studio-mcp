@@ -31,6 +31,27 @@ ROOT_FILES = (
     "pyproject.toml",
 )
 SOURCE_DIRECTORIES = ("docs", "fl_studio_mcp", "scripts")
+# New feature files may be present in a worktree before the final commit is
+# staged.  Keep this explicit and narrow so the public bundle remains
+# Git-reviewed and arbitrary untracked files are still excluded.
+WORKTREE_FEATURE_PATHS = (
+    Path("docs/creation-pipeline.md"),
+    Path("docs/creation-review.md"),
+    Path("docs/releases/dev-v10.md"),
+    Path("docs/sound-selection.md"),
+    Path("fl_studio_mcp/file_fingerprints.py"),
+    Path("fl_studio_mcp/piano_roll.py"),
+    Path("fl_studio_mcp/production_run_persistence.py"),
+    Path("fl_studio_mcp/saved_project_render.py"),
+    Path("fl_studio_mcp/plugin_loading.py"),
+    Path("fl_studio_mcp/creation_pipeline"),
+    Path("fl_studio_mcp/creation_review"),
+    Path("fl_studio_mcp/sound_selection"),
+    Path("scripts/generate_creation_review_fixtures.py"),
+    Path("scripts/live_creation_acceptance.py"),
+    Path("scripts/live_creation_review_acceptance.py"),
+    Path("scripts/live_sound_selection_acceptance.py"),
+)
 BUNDLE_SPECS = (
     ("Windows", False),
     ("macOS", False),
@@ -86,6 +107,20 @@ def _source_files(root: Path) -> list[Path]:
         for value in completed.stdout.split(b"\0")
         if value
     }
+    worktree_feature_files: set[Path] = set()
+    for relative in WORKTREE_FEATURE_PATHS:
+        path = root / relative
+        if path.is_file() and path.suffix in {".md", ".py", ".json"}:
+            worktree_feature_files.add(relative)
+        elif path.is_dir():
+            worktree_feature_files.update(
+                candidate.relative_to(root)
+                for candidate in path.rglob("*")
+                if candidate.is_file()
+                and "__pycache__" not in candidate.parts
+                and candidate.suffix != ".pyc"
+                and candidate.suffix in {".py", ".json"}
+            )
     files: list[Path] = []
     for relative_text in ROOT_FILES:
         relative = Path(relative_text)
@@ -100,7 +135,7 @@ def _source_files(root: Path) -> list[Path]:
             raise FileNotFoundError(
                 "required bundle directory is missing: %s" % directory_text
             )
-    for relative in tracked:
+    for relative in tracked | worktree_feature_files:
         if not relative.parts or relative.parts[0] not in SOURCE_DIRECTORIES:
             continue
         path = root / relative

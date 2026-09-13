@@ -88,6 +88,7 @@ def main(argv=None) -> int:
             "postfader-install-bridge",
             "postfader-doctor",
             "postfader-plugin-report",
+            "postfader-plugin-atlas",
             "postfader-setup",
         ):
             run([scripts_dir / (command + suffix), "--help"], cwd=root, env=environment)

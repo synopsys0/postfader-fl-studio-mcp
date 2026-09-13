@@ -12,6 +12,10 @@ import tempfile
 from pathlib import Path
 
 
+EXPECTED_TOOL_COUNT = 134
+EXPECTED_RESOURCE_COUNT = 8
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -27,7 +31,16 @@ def main(argv=None) -> int:
         bridge_source_path,
         expected_bridge_deployment,
     )
+    from fl_studio_mcp.creation_pipeline import models as creation_pipeline_models
+    from fl_studio_mcp.creation_pipeline import timing as creation_pipeline_timing
+    from fl_studio_mcp.creation_review import models as creation_review_models
+    from fl_studio_mcp.creation_review import persistence as creation_review_persistence
     from fl_studio_mcp.mcp_server import mcp
+    from fl_studio_mcp.plugin_atlas import load_bundled_registry
+    from fl_studio_mcp.sound_selection import (
+        load_bundled_descriptors,
+        load_bundled_preset_metadata,
+    )
 
     failures: list[str] = []
     distribution = importlib.metadata.distribution("postfader-fl-studio-mcp")
@@ -46,10 +59,54 @@ def main(argv=None) -> int:
         "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
         "postfader-doctor": "fl_studio_mcp.diagnostics:main",
         "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
+        "postfader-plugin-atlas": "fl_studio_mcp.plugin_atlas.cli:main",
         "postfader-setup": "fl_studio_mcp.setup_wizard:main",
     }
     if entries != expected_entries:
         failures.append("installed console entry points differ: %s" % entries)
+
+    try:
+        atlas = load_bundled_registry()
+        if not atlas.products:
+            failures.append("installed Plugin Atlas contains no products")
+        if not atlas.digest():
+            failures.append("installed Plugin Atlas did not produce a content digest")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append("installed Plugin Atlas could not be loaded: %s" % error)
+
+    try:
+        descriptors = load_bundled_descriptors()
+        if not descriptors.descriptors:
+            failures.append("installed Sound Selection descriptors are empty")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append(
+            "installed Sound Selection descriptors could not be loaded: %s" % error
+        )
+
+    try:
+        metadata = load_bundled_preset_metadata()
+        # The loader validates the schema. Catalog content revisions advance
+        # independently when reviewed instrument families are added.
+        if not metadata.families and not metadata.records:
+            failures.append("installed preset metadata catalog is empty")
+        # Import representative strict contracts so a wheel that carries only
+        # the package directory marker cannot pass the installed smoke check.
+        if not creation_pipeline_models.CREATION_PIPELINE_SCHEMA_VERSION:
+            failures.append("installed creation-pipeline model module is empty")
+        if creation_pipeline_timing.RunTimingReport.__name__ != "RunTimingReport":
+            failures.append("installed creation-pipeline timing module is unavailable")
+        if creation_review_models.CREATION_REVIEW_SCHEMA_VERSION != "1.0":
+            failures.append("installed Creation Review schema version is unavailable")
+        if (
+            creation_review_persistence.REVIEW_SESSION_SCHEMA_VERSION
+            != creation_review_models.CREATION_REVIEW_SCHEMA_VERSION
+        ):
+            failures.append("installed Creation Review persistence schema is mismatched")
+    except Exception as error:  # pragma: no cover - exercised in clean installs
+        failures.append(
+            "installed creation-pipeline, Creation Review, or preset metadata resources could not be loaded: %s"
+            % error
+        )
 
     bridge = bridge_source_path().read_bytes()
     if any(byte >= 128 for byte in bridge):
@@ -63,6 +120,17 @@ def main(argv=None) -> int:
         for item in json.loads(args.manifest.read_text(encoding="utf-8"))["tools"]
     }
     installed_names = {tool.name for tool in asyncio.run(mcp.list_tools())}
+    if len(installed_names) != EXPECTED_TOOL_COUNT:
+        failures.append(
+            "installed MCP tool count is not %d: %d"
+            % (EXPECTED_TOOL_COUNT, len(installed_names))
+        )
+    installed_resources = asyncio.run(mcp.list_resources())
+    if len(installed_resources) != EXPECTED_RESOURCE_COUNT:
+        failures.append(
+            "installed MCP resource count is not %d: %d"
+            % (EXPECTED_RESOURCE_COUNT, len(installed_resources))
+        )
     if installed_names != manifest_names:
         failures.append(
             "installed MCP tool surface differs from manifest: %s"
@@ -85,8 +153,8 @@ def main(argv=None) -> int:
             print("  - %s" % failure)
         return 1
     print(
-        "installed wheel verified: version %s, %d tools, platform lock acquired"
-        % (args.expected_version, len(installed_names))
+        "installed wheel verified: version %s, %d tools, %d resources, platform lock acquired"
+        % (args.expected_version, len(installed_names), len(installed_resources))
     )
     return 0
 

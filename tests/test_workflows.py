@@ -76,6 +76,21 @@ def mixer_handler(
 
 
 class VerifiedBatchTests(unittest.TestCase):
+    def test_build_digest_is_diagnostic_for_a_compatible_batch(self) -> None:
+        client = ScriptedClient(mixer_handler)
+        ping = dict(compatible_ping(), bridge_source_sha256="0" * 64)
+        with (
+            mock.patch.object(client, "ping", return_value=ping),
+            mock.patch("fl_studio_mcp.workflows.get_client", return_value=client),
+        ):
+            result = VerifiedBatchExecutor().apply(operations=[{
+                "operation_id": "pan", "operation": "mixer_pan",
+                "track_index": 3, "pan": -0.25,
+            }])
+        self.assertTrue(result.verified)
+        self.assertTrue(result.results[0].receipt.session_precondition_applied)
+        self.assertEqual(len(client.calls), 1)
+
     def test_one_live_ping_serves_every_item_and_session_is_internal(self) -> None:
         client = ScriptedClient(mixer_handler)
         operations = [

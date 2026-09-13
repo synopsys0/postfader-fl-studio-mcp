@@ -24,10 +24,80 @@ version. A channel fingerprint is therefore a same-session stale-target guard,
 not an identity that can be carried across projects or bridge reloads, and
 exact plug-in version remains unknown.
 
+## Atlas knowledge is separate from compatibility evidence
+
+The [Plugin Atlas](plugin-atlas.md) is a static, offline catalog of product
+purpose and related documentation. Its current Image-Line pricing snapshot
+contains 119 rows, plus separately scoped auxiliary, manual/index, and legacy
+records; selected third-party entries are not a completeness claim. Atlas does
+not prove that a product is installed, owned, or loaded, and it is not a
+runtime allowlist.
+
+The validated [plug-in matrix](plugin-matrix.md) records bounded observations
+from actual loaded instances. Its detected, read-profiled, and write-validated
+rows are compatibility/write evidence, not product knowledge and not a gate on
+generic discovery. Neither surface can insert, remove, or reorder a plug-in;
+neither can save or render a project or read FL Studio's live audio output.
+
+Sound Selection builds on this same distinction. It chooses only among the
+loaded targets observed in the current project, while Atlas-only products are
+recommendations rather than executable assignments. A loaded but unprofiled
+plug-in remains eligible for palette planning with lower semantic confidence.
+
+## Effect coverage and semantic processing
+
+Effect coverage is an observation, not a support badge. For each requested
+role and technique, PostFader records the loaded mixer-effect targets,
+product/Atlas matches, adapter matches, supported semantic techniques, and
+unresolved controls. A loaded target is processing-ready only when the Atlas
+capability, compatible adapter, and runtime parameter evidence agree. Missing
+or unresolved capabilities are returned before a creation run writes anything;
+an Atlas-only product is never treated as a loaded effect.
+
+`processing_plan` is read-only and resolves conservative goals such as
+`reduce_mud`, `control_dynamics`, `add_depth`, or `rhythmic_echo` to exact
+controls. It prefers a displayed-value or exact-option setter when the adapter
+establishes that representation. `processing_apply_plan` and the equivalent
+Production Run operation use the existing session/target guards and
+later-idle-tick readback. Results distinguish restrained first-pass,
+partial-processing, dry-by-design, and dry-missing-effects states. None of
+these technical states is an audible-quality verdict; that dimension remains
+unevaluated until a user review or bounce analysis.
+
+## Presets and drum maps
+
+The preset tools are target-aware and work for both mixer effects and global
+Channel Rack generators. `plugins_list_presets` returns bounded pages of FL's
+reported index/name rows, count, current identity, blank names, duplicate
+names, and partial/truncated status. `plugins_get_current_preset` reports a
+current index only when the name can be resolved uniquely. `fl_select_plugin_preset`
+accepts an exact name or index; duplicate names require an index.
+
+Preset navigation uses FL's `nextPreset`/`prevPreset` path within explicit
+navigation and settling limits and succeeds only after later-idle-tick current
+preset readback matches the requested identity. It reports the path and the
+undo evidence FL exposed. Dispatch is not proof, and an ambiguous outcome is
+never retried or rolled back.
+
+`plugins_inspect_pad_map` reads FL's generic pad API, including semitone/MIDI
+note, color, empty, muted, and reported name fields. Sound Selection uses that
+observation to build semantic drum roles without assuming General MIDI. The
+fixed General MIDI map in `compose_drums` remains an explicit fallback only
+when no reported map is supplied.
+
+Sound Selection can walk bounded preset pages beyond the first page when a
+requested identity or a useful candidate is not yet observed. The result
+records page coverage, truncation, duplicate names, and unresolved exact
+identities. Bundled preset/family metadata is versioned separately from Atlas
+and may be supplemented by an isolated user-local layer. Provenance and
+confidence distinguish reviewed exact metadata, family evidence, normalized
+name inference, explicit user preference, and unknowns; absence never proves
+that a preset is unsuitable.
+
 ## How support works for what can be reached
 
 Generic plug-in discovery is identity-independent: there is no allowlist that a
-plug-in must enter before the connector can inspect it. PostFader v0.20 also
+plug-in must enter before the connector can inspect it. PostFader V10 also
 ships a small set of optional processing-intent adapter profiles. The profiles
 describe parameter roles for selected reported names so the `mix_*` planning
 tools can resolve intents such as dynamics, EQ, reverb, or delay. They do not
@@ -76,48 +146,31 @@ the caller to pass an integer index.
 ## Three bounds that can hide controls
 
 These are cost ceilings. FL runs script code on the thread driving its UI and
-audio, so an unbounded walk stalls the program. Each bound is an engineering
-compromise measured on a narrow sample, and each can under-report on a plug-in
-outside that sample.
+audio, so an unbounded walk stalls the program. Each bound limits the time spent inside a scan and can under-report on a
+plug-in whose controls fall outside the sampled range.
 
 ### Enumerated options: `OPTION_SWEEP_STEPS = 64`
 
 FL has no API to list a control's options, so they are found by moving the
-control and reading what it displays. 64 steps was sized against a 12-option
-musical key selector.
+control and reading what it displays. The default is 64 steps; callers may
+request up to 256 steps.
 
 **Where it breaks:** a control with more distinct options than there are steps
 returns a partial list — and a partial list looks exactly like a complete one.
 An impulse-response picker on a convolution reverb, or a preset or wavetable
 selector on a generator, is where this bites.
 
-**How many steps a control actually needs.** Measured against a live VST3: a
-29-option Scale control resolved *completely* at the default 64 steps, and
-re-sweeping the same control at 256 found the identical 29 options and nothing
-more. Options partition the normalised range into roughly equal contiguous
-bands, so the sweep does not need fine sampling -- it needs to land in each
-band at least once. About two samples per option is the working rule.
-
-That gives a usable guide:
-
-| Options on the control | Steps needed | At the default 64 |
-|---|---|---|
-| up to 32 | up to 64 | fine |
-| 33 - 128 | 66 - 256 | raise `sweep_steps` |
-| over 128 | over 256 | cannot be fully enumerated |
-
-**What to do:** raise `sweep_steps` toward its maximum of 256. The MCP argument
-is spelled `sweep_steps`, and arguments are validated strictly, so a
-misspelling is rejected rather than quietly ignored. Past 256 options, sweeping
-cannot see the whole list at all; address the control with
-`fl_set_plugin_param` on the normalised range instead.
+**What to do:** raise `sweep_steps` toward its maximum of 256 when a list
+appears incomplete. More samples improve coverage, but a control may map its
+options unevenly across the normalized range. Neither the default nor a higher
+step count proves that every option was discovered. Address a known normalized
+value with `fl_set_plugin_param` when an option cannot be located by its label.
 
 **Sweeping is not free.** It moves the control to look. Asking for the option a
 control is *already* showing keeps the displayed setting, but the control lands
 on the nearest sweep step rather than its exact previous value, and each sweep
-creates undo points and marks the project dirty. Two sweeps on one control took
-a clean project to `dirty_flag: 1` with four undo entries. Do this in a
-disposable project, and undo or close without saving afterwards.
+can create undo points and mark the project dirty. Use a disposable project
+when exploring an unfamiliar enumerated control.
 
 ### Parameter search: `PARAM_SEARCH_RUN = 256`
 
@@ -137,8 +190,8 @@ control by the index it returns.
 ### Padding detection
 
 A slot counts as padding when it has no name *and* its display is blank or a
-bare zero. This is structural rather than plug-in-specific and has held up
-across everything measured so far.
+bare zero. This rule depends on the reported control structure rather than a
+plug-in name.
 
 **Where it breaks:** a real, nameless control sitting at exactly zero with a
 bare-zero display is classified as padding. In practice nameless controls
@@ -205,6 +258,7 @@ FL's scripting API has no function for these, so no plug-in supports them:
   backend;
 - bypassing a slot or changing its wet/dry mix — FL ignores both when a script
   drives them;
+- hearing, auditioning, or measuring the live output of a selected preset;
 - reading audio, rendering, or saving the project.
 
 See [FL Studio constraints](fl-constraints.md) for the full list.

@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,6 +21,7 @@ from fl_studio_mcp.bridge_stamp import (  # noqa: E402
     BRIDGE_SOURCE_MARKER,
     BridgeStampError,
     main,
+    read_stamped_bridge_source,
     stamp_bridge_source,
 )
 
@@ -51,6 +54,55 @@ class BridgeStampTests(unittest.TestCase):
         source = BRIDGE_SOURCE_MARKER + b"\n" + BRIDGE_SOURCE_MARKER + b"\n"
         with self.assertRaisesRegex(BridgeStampError, "found 2"):
             stamp_bridge_source(source)
+
+    def test_unchanged_source_is_read_and_hashed_only_once(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="flmcp-bridge-cache-") as raw:
+            source = Path(raw) / "bridge.py"
+            source.write_bytes(BRIDGE_SOURCE_MARKER + b"\n")
+            original_read = Path.read_bytes
+            with (
+                mock.patch.object(Path, "read_bytes", autospec=True, side_effect=original_read) as read,
+                mock.patch("fl_studio_mcp.bridge_stamp.hashlib.sha256", wraps=hashlib.sha256) as digest,
+            ):
+                first = read_stamped_bridge_source(source)
+                for _ in range(20):
+                    self.assertEqual(read_stamped_bridge_source(source), first)
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual(digest.call_count, 1)
+
+    def test_same_size_source_edit_invalidates_cached_stamp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="flmcp-bridge-cache-") as raw:
+            source = Path(raw) / "bridge.py"
+            source.write_bytes(BRIDGE_SOURCE_MARKER + b"\n# first\n")
+            first = read_stamped_bridge_source(source)
+            before = source.stat()
+            source.write_bytes(BRIDGE_SOURCE_MARKER + b"\n# other\n")
+            os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
+            second = read_stamped_bridge_source(source)
+            self.assertNotEqual(first[1], second[1])
+            self.assertIn(b"# other", second[0])
+
+    def test_replaced_source_invalidates_cache_even_with_same_size_and_mtime(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="flmcp-bridge-cache-") as raw:
+            source = Path(raw) / "bridge.py"
+            source.write_bytes(BRIDGE_SOURCE_MARKER + b"\n# first\n")
+            first = read_stamped_bridge_source(source)
+            before = source.stat()
+            replacement = Path(raw) / "replacement.py"
+            replacement.write_bytes(BRIDGE_SOURCE_MARKER + b"\n# other\n")
+            os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+            replacement.replace(source)
+            second = read_stamped_bridge_source(source)
+            self.assertNotEqual(first[1], second[1])
+
+    def test_deleted_source_does_not_return_a_cached_stamp(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="flmcp-bridge-cache-") as raw:
+            source = Path(raw) / "bridge.py"
+            source.write_bytes(BRIDGE_SOURCE_MARKER + b"\n")
+            read_stamped_bridge_source(source)
+            source.unlink()
+            with self.assertRaises(FileNotFoundError):
+                read_stamped_bridge_source(source)
 
     def test_cli_writes_the_same_bytes_used_for_deployment_checks(self) -> None:
         source = BRIDGE_SOURCE.read_bytes()

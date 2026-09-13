@@ -41,7 +41,7 @@ The components in scope are:
   typed results. The client and any model provider it uses are outside
   PostFader's trust boundary; a client may send tool arguments and results to a
   remote provider according to its own policy.
-- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers the 90 MCP
+- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers 134 MCP
   tools and 8 live resources. It routes reads, bounded audio analysis,
   creative/file workflows, verified mutations, and session write-mode control
   through typed contracts. It must not become a generic bridge-command or
@@ -69,6 +69,12 @@ The components in scope are:
   selected by the caller; `advisory.py` applies typed path/root policy and
   exposes measurements, comparisons, masking analysis, and bounded recent
   bounce discovery. The FL API is not used to read live audio.
+- **Creation Review.** `fl_studio_mcp/creation_review/` keeps an immutable
+  source-run snapshot, explicit asset metadata, measured findings, producer
+  feedback/locks, bounded revision receipts, comparisons, and delivery
+  handoffs. Persistence is opt-in local, atomic, schema-versioned, and
+  path-redacted by default; it never stores audio bytes or enables a second
+  mutation engine.
 - **Piano Roll script workflow.** `creative.py` prepares an atomic generated
   `.pyscript` beneath the FL Studio user-data scripts directory, verifies the
   channel/pattern/visibility preconditions through the controller bridge, and
@@ -79,7 +85,7 @@ The components in scope are:
 The current safety-critical sequence for a supported state write is:
 
 ```text
-read handshake and stamped provenance
+read compatible handshake and live capabilities
   → resolve target
   → check session fingerprint and expected-before state
   → request an FL undo point where applicable
@@ -153,7 +159,7 @@ reproduction where useful.
 - Trace `fl_set_write_mode` through the host gateway, bridge command, and
   second handshake.
 - Confirm that enabling requires literal `confirm_user_present=true`, a
-  current session fingerprint, matching bridge provenance, runtime-control
+  current session fingerprint, compatible protocol, runtime-control
   support, and an independently observed write-mode transition.
 - Confirm that the state is in memory for the bridge session only, disabling is
   available without positive confirmation, and normal reload/new-process
@@ -172,7 +178,7 @@ describe the current field as an out-of-band confirmation mechanism.
 ### Session fingerprint
 
 - Check generation, scope, comparison, and invalidation of the optional
-  bridge-lifetime fingerprint.
+  bridge/project-session fingerprint.
 - Verify that it prevents stale-session decisions but is not treated as a
   durable project ID, user identity, or secret.
 - Trace expected-before and current-pattern/channel fingerprints through target
@@ -183,8 +189,10 @@ describe the current field as an out-of-band confirmation mechanism.
 - Recompute the packaged bridge source hash and compare it with the deployed
   stamp and handshake response.
 - Exercise missing, malformed, stale, and mismatched provenance.
-- Confirm that all mutation gateways fail closed while reads remain explicitly
-  warning-bearing for repair and diagnosis.
+- Confirm that source differences remain diagnostic and that compatible
+  operations proceed. Protocol, capability and session failures must still
+  prevent mutation. Repeated observations should reuse the packaged-source
+  digest until its file revision changes.
 - Inspect public-package hygiene so host records, project data, and private
   validation outputs cannot enter the packaged bridge or release bundles.
 

@@ -18,3 +18,21 @@ Regenerate the WAV fixtures with:
 ```bash
 ./.venv/bin/python scripts/generate_audio_fixtures.py
 ```
+
+`creation_review/` contains short deterministic bounces and synchronized test
+stems for the Creation Review lifecycle. They cover clipping, tonal imbalance,
+weak and improved section contrast, one deliberate before/after regression,
+alignment and duration mismatch, and tail behavior. The adjacent structural
+fixture represents a synthetic four-section Production Run, palette, feedback,
+revision, comparison, and Playlist handoff.
+
+Regenerate that fixture family with:
+
+```bash
+./.venv/bin/python scripts/generate_creation_review_fixtures.py
+```
+
+`stock-effect-controls-v1.json` contains only the public parameter names and
+indices needed by semantic-processing regressions. Display examples are
+synthetic test inputs. Targets are constructed by the test; the fixture contains
+no captured mixer layout, project state, or user settings.

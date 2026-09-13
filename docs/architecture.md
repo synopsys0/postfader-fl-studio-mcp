@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The v0.20 public surface contains 90 tools and 8 resources.
+controller script. The current V10 surface contains 134 tools and 8 resources.
 It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -14,7 +14,12 @@ fl_studio_mcp/mcp_server.py
         ├── verified_writer.py ────┤
         ├── performance.py ────────┼── bridge_client.py
         ├── workflows.py ──────────┤
+        ├── production_runs.py ────┤
+        ├── sound_selection/ ───────┤
+        ├── creation_pipeline/ ──────┤
+        ├── creation_review/ ───────┤
         ├── mixing.py ─────────────┤
+        ├── plugin_atlas_mcp.py ───┤
         ├── creative.py ───────────┤
         │                          │        │
         │                          │        │ local SysEx over a configured virtual MIDI endpoint
@@ -32,11 +37,21 @@ The MCP process and bridge are local. The MCP client is a separate trust
 boundary: depending on that client's design, tool arguments and results may be
 sent to a remote model provider.
 
+The creation-pipeline modules are pure contracts and phase services around
+the existing bridge gates. They do not add a raw FL command surface or a
+model. `readiness` and `live_readiness` collect one bounded observation,
+`context` caches same-process target/session facts, `phases` orders work,
+`timing` records local diagnostics, `sound_characteristics` and
+`composition_adaptation` carry metadata-aware note constraints, `processing`
+and `semantic_actions` resolve loaded-effect goals, and `outcomes` keeps
+technical, arrangement, processing, audible, and manual-handoff results
+separate.
+
 ## Components
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 90 tools, 8 resources, and their
+`fl_studio_mcp/mcp_server.py` defines all 134 tools, 8 resources, and their
 annotations. It
 uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
@@ -50,6 +65,12 @@ named MCP tool with a bounded schema.
 `fl_studio_mcp/readonly_inspector.py` converts bridge replies into typed
 contracts, enforces a fixed read-command allowlist, and applies the FL Studio,
 MIDI API, and bridge-protocol compatibility gates.
+
+A full capture shares one handshake and project observations before and after
+its mixer scan and plug-in previews. Sixteen previews require 20 bridge calls,
+down from 70 with independent per-preview preflights. Changes during the
+capture remain visible in consistency warnings. Independent tool calls still
+perform fresh handshakes.
 
 Plug-in parameters with no connector profile are returned as
 `profile_status="unprofiled_read_only"` and `safe_to_modify=false`. A caller
@@ -74,7 +95,7 @@ command.
 
 `WriteModeManager` owns that capability transition through a separate gateway
 whose only command is `session.set_write_mode`. Enabling requires literal
-user-present confirmation plus matching provenance and session identity. The
+task authorization plus compatible protocol and live session identity. The
 bridge changes only its in-memory gate, and the manager performs a new
 handshake before returning a typed success. Disabling uses the same absolute
 command and needs no positive confirmation. The mode tool is marked
@@ -82,14 +103,21 @@ destructive so MCP clients can put approval UI in front of the access change,
 but idempotent because repeating an absolute session state has no additional
 effect.
 
-Before dispatch, every mutation also requires the running bridge's stamped
-source SHA-256 to match the bridge packaged with the server. Reads remain
-available when provenance is missing or stale, but carry an explicit warning.
-An optional 32-character bridge-lifetime session fingerprint and typed
-`expected_before` state can close stale-decision races; the bridge rechecks
-both after resolving the target and immediately before it requests undo or
-mutates FL. The fingerprint is a concurrency token, not authentication or a
-durable project identity.
+The running bridge's stamped source SHA-256 identifies its installation build.
+A missing or different stamp is diagnostic and does not block a compatible
+operation. Protocol, live write capability, target/session checks and operation
+readback govern execution. The packaged stamp is cached by file revision so
+routine handshakes do not reread or hash the source.
+Direct verified writes accept an optional 32-character session fingerprint for
+the current project-load epoch and typed `expected_before` state to close
+stale-decision races;
+the bridge rechecks both after resolving the target and immediately before it
+requests undo or mutates FL. The high-level `sound_selection_apply` workflow
+requires that fingerprint in its public MCP contract because its palette
+service cannot apply without a live session token. The fingerprint is a
+concurrency token, not authentication or a durable project identity. Script
+reloads and project-load transitions rotate it. Project loading also disables
+writes and invalidates pending commands, including when loading fails.
 
 ### Workflow engine
 
@@ -103,6 +131,77 @@ Mix Doctor, gain-staging, actual-bounce reference/masking recommendations,
 processing intents, plug-in profiles, and finish assessment. Analysis creates
 recommendations or plans; only the explicit apply surface mutates FL. Registry
 IDs are intentionally process-lifetime objects.
+
+`fl_studio_mcp/production_runs.py` adds the task-scoped Production Run
+contracts, closed operation union, dependency and scope validation, bounded
+registry, durable SQLite journal, and ordered executor. It delegates composition and
+Piano Roll work to `creative.py` and direct project mutations to the existing
+verified writers and batch executor. The connected AI remains the creative
+planner; PostFader never embeds a model or interprets arbitrary chat itself.
+
+### Creation pipeline
+
+`fl_studio_mcp/creation_pipeline/` supplies the read-only readiness scorecard,
+immutable run-context snapshot, ordered `preflight`/`palette`/`composition`/
+`note_application`/`processing`/`finalization` phases, bounded phase timing,
+sound-characteristic provenance, and multi-dimensional completion outcomes.
+When a run contains sound planning or processing plus mutations, the executor
+performs one readiness preflight and reuses the snapshot across phases. A
+ready-with-limitations state proceeds without another prompt; a blocking state
+returns all detected setup actions together. Narrow session/target checks still
+run immediately before each mutation.
+
+Sound-aware composition constrains register, articulation, envelope, density,
+and practical polyphony only from evidence with explicit confidence. Semantic
+processing requires a loaded effect, Atlas capability, compatible adapter, and
+runtime control evidence, then uses the existing verified display/option or
+normalized setter. These layers never hear live audio and never turn metadata
+into an audible-quality verdict.
+
+### Creation Review, Revision, and Delivery
+
+`fl_studio_mcp/creation_review/` owns the workflow that starts after a
+Production Run has produced a draft. It keeps caller-selected audio assets,
+section mapping, decoded-audio measurements, explicit producer feedback,
+accepted-element locks, closed revision plans, before/after comparisons, and
+delivery handoffs in separate modules. Review Sessions are bounded and
+process-local by default; a caller may opt into an atomic, schema-versioned
+local store without persisting audio bytes. The store uses a private per-path
+advisory writer lock across MCP processes and deterministic referenced-finding
+pruning. Its serializer removes credentials, prompts, transcripts, encoded or
+raw audio, cloud identifiers, and arbitrary private paths; asset paths are
+retained only for canonical attached assets when explicitly opted in.
+
+Evaluation is host-side and read-only. It reuses the existing audio analyzers,
+decodes each file identity once per policy and section map, and keeps measured
+facts distinct from arrangement proxies and producer judgment. Revision
+execution adapts the closed review operations to the existing Production Run
+engine, so one pass retains the same session checks, verified writers,
+unknown-outcome rule, and single task-scoped write authorization. A revision
+plan is request-digest bound except for authorization, which is asserted
+afresh for the mutating task. If a verified mutation is followed by a local
+store failure, the receipt remains process-local and the result is blocked
+without replay. Playlist placement, live-project rendering, project saving, and artistic
+approval remain outside the bridge's claimed capabilities. See [Creation
+Review](creation-review.md).
+
+### Sound Selection
+
+`fl_studio_mcp/sound_selection/` keeps live sound inventory, bounded preset
+pages, descriptor evidence, deterministic scoring, palette planning,
+section-scoped variations, local usage history, and verified application
+separate from the MCP registration and Production Run executor. Its service
+uses the existing target-aware Track B model for mixer effects and global
+Channel Rack generators. Planning is metadata-only and read-only; application
+revalidates the loaded target and delegates exact preset navigation to the
+verified Track B controller. Atlas enriches product knowledge but never
+establishes loaded state or write permission. Loop Starter rerolling remains a
+separate dispatch-only path because FL exposes no stable selected-loop identity.
+
+The local history store is schema-versioned, bounded, thread-safe, and atomic.
+It contains only sound-choice usage and explicit feedback, never prompts,
+audio, project files, credentials, or transcripts. A plan does not update it;
+only successfully verified assignments may record usage.
 
 ### Creative pack
 
@@ -130,7 +229,7 @@ plausible-looking result.
 testing, then local MIDI SysEx for the production FL Studio connection. On the
 validated macOS host, FL Studio's embedded interpreter can use neither sockets
 nor files, so CoreMIDI/IAC is the retained operational path. Windows uses the
-same SysEx protocol over a user-configured virtual endpoint. The v0.20 surface
+same SysEx protocol over a user-configured virtual endpoint. The V10 surface
 at revision `3f63d43` was live-qualified on both the documented macOS arm64/IAC
 host and Windows 11 x64 host; those results qualify that revision and the tested
 systems rather than every possible host, virtual MIDI provider, FL Studio
@@ -170,16 +269,17 @@ so a stale installation can be detected.
 
 ## Bridge command surfaces
 
-Normal operation has four bounded bridge-command surfaces. Host-only
+Normal operation has five bounded bridge-command surfaces. Host-only
 composition, audio, MIDI-file, registry, and plan operations do not enter this
 table:
 
 | Surface | Gate | Commands |
 | --- | --- | --- |
-| Read-only | Always | 15 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets, patterns, Playlist tracks, history, and sequencer reads |
-| Session capability control | Always; enabling requires confirmation and the current session fingerprint | `session.set_write_mode` |
-| Direct state changes | Current bridge session reports write mode | 39 MCP setters backed by 39 direct bridge commands across transport/project, mixer, channels, plug-ins, patterns, Playlist tracks, and sequencer state |
-| Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `creative.prepare_piano_roll`, `arrangement.add_markers`, and `automation.record_value` |
+| Read-only | Always | 19 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets/pad maps, patterns, Playlist tracks, history, and sequencer reads |
+| Session capability control | Always; enabling requires task authorization and the current session fingerprint | `session.set_write_mode` |
+| Editor navigation | Available without musical write mode; validates the current session and target | `creative.prepare_piano_roll` |
+| Direct state changes | Current bridge session reports write mode | 40 MCP setters backed by 40 direct bridge commands across transport/project, mixer, channels, plug-ins/presets, patterns, Playlist tracks, and sequencer state |
+| Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `channels.rerollLoopStarterLoop`, `arrangement.add_markers`, and `automation.record_value` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
 the bridge's `available` list.
@@ -187,7 +287,7 @@ the bridge's `available` list.
 ## Verified-write sequence
 
 ```text
-handshake/provenance → resolve target → check session/expected state
+handshake/capabilities → resolve target → check session/expected state
                      → request undo → write → yield an FL idle tick
                      → read back → report per-field and aggregate verdicts
 ```
@@ -238,13 +338,13 @@ and holds the worst simulated tick under a fixed ceiling.
 ## Security properties and boundaries
 
 - Read-only bridge mode is the default.
-- Enabling writes is session-only, requires an explicit user-present
-  confirmation, and is verified by a second handshake.
+- Enabling writes is scoped to the current project-load epoch, uses the user's
+  existing edit authorization, and is verified by a second handshake.
 - MCP input and bridge output use strict schemas and bounded values.
 - Mutating commands are narrow, separately gated, and never replayed after an
   ambiguous response.
-- Stale or unrecognized bridge provenance fails closed for mutation while
-  preserving warning-bearing reads.
+- Bridge-source differences remain diagnostic; incompatible protocols and
+  missing live capabilities prevent mutation.
 - Optional session and expected-state preconditions are enforced inside the
   bridge immediately before mutation.
 - Master writes require explicit targeting.
@@ -256,3 +356,19 @@ and holds the worst simulated tick under a fixed ceiling.
 
 See [SECURITY.md](../SECURITY.md) for deployment guidance and vulnerability
 reporting.
+
+## Note inspection, recovery and render adapters
+
+`piano_roll.py` uses the existing serialized script channel for bounded note
+snapshots. The controller bridge separates editor navigation from musical
+writes and supplies a focused target read after script completion.
+`production_run_persistence.py` stores versioned run checkpoints with SQLite
+transactions and optimistic revisions; operation markers survive process death.
+`saved_project_render.py` owns background command-line export jobs, validates
+complete WAV containers and decodes their audio, and reports application exit
+separately from file readiness. Its shutdown hook cancels active monitoring.
+
+`plugin_loading.py` reads the named macOS Add menu, dispatches one addition,
+and identifies its channel or effect slot through the bridge. It shares the
+Piano Roll desktop-dispatch lock. `sound_selection/direction.py` supplies
+explainable role defaults.

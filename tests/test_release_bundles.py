@@ -144,6 +144,35 @@ class ReleaseBundleTests(unittest.TestCase):
             self.assertIn(f"{root}/{expected[platform][0]}", names)
             self.assertIn(f"{root}/fl_studio_mcp/cli.py", names)
             self.assertIn(f"{root}/fl_studio_mcp/setup_wizard.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/plugin_atlas/__init__.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/plugin_atlas_mcp.py", names)
+            self.assertIn(
+                f"{root}/fl_studio_mcp/plugin_atlas_data/manifests/atlas.json",
+                names,
+            )
+            self.assertIn(f"{root}/fl_studio_mcp/sound_selection/__init__.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/sound_selection/models.py", names)
+            self.assertIn(f"{root}/docs/sound-selection.md", names)
+            self.assertIn(
+                f"{root}/fl_studio_mcp/sound_selection/data/descriptors-v1.json",
+                names,
+            )
+            self.assertIn(
+                f"{root}/scripts/live_sound_selection_acceptance.py",
+                names,
+            )
+            self.assertIn(f"{root}/fl_studio_mcp/creation_review/__init__.py", names)
+            self.assertIn(f"{root}/fl_studio_mcp/creation_review/mcp.py", names)
+            self.assertIn(f"{root}/docs/creation-review.md", names)
+            self.assertIn(
+                f"{root}/scripts/generate_creation_review_fixtures.py",
+                names,
+            )
+            self.assertIn(
+                f"{root}/scripts/live_creation_review_acceptance.py",
+                names,
+            )
+            self.assertIn(f"{root}/fl_studio_mcp/file_fingerprints.py", names)
             self.assertIn("starts read-only", guide)
             self.assertIn("postfader-doctor", guide)
             self.assertIn("postfader", guide)
