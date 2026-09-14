@@ -766,7 +766,7 @@ async def fl_get_transport_state() -> TransportState:
 )
 async def fl_get_selected_range() -> SelectedRangeObservation:
     """Read the current Playlist timeline selection and project PPQ from FL Studio.
-    
+
     Returns raw selection endpoints and observation evidence without changing
     the selection. PPQ is ticks per quarter note; endpoints are not interpreted
     as bars, time-signature boundaries, or guaranteed render limits. Inspect the
@@ -1034,7 +1034,7 @@ async def plugins_atlas_search(
     request: AtlasSearchRequest,
 ) -> AtlasSearchResponse:
     """Find products in the bundled offline Plugin Atlas by text and filters.
-    
+
     Use query for product knowledge search; vendor_id, origin, kind,
     technique_id, and stock_only narrow results, while limit caps returned hits.
     No live FL connection is needed, and results do not establish installation
@@ -1052,7 +1052,7 @@ async def plugins_atlas_get_product(
     request: AtlasGetProductRequest,
 ) -> AtlasProductResponse:
     """Read a bundled Plugin Atlas product by its exact product_id.
-    
+
     Obtain the ID from plugins_atlas_search or plugins_atlas_recommend. Returns
     product and vendor knowledge, adapters, evidence, and stock alternatives.
     This offline lookup neither inspects nor changes FL Studio; catalog adapter
@@ -1071,7 +1071,7 @@ async def plugins_atlas_recommend(
     request: AtlasRecommendRequest,
 ) -> AtlasRecommendationResponse:
     """Rank bundled Plugin Atlas products for a production problem or technique.
-    
+
     Supply query, problems, techniques, sources, and kind to describe the task;
     prefer_stock favors stock choices and limit bounds results. Supply product_id
     together with stock_alternatives=True for alternatives to a known product. Recommendations are static knowledge,
@@ -1091,7 +1091,7 @@ async def plugins_atlas_inspect_loaded(
     request: AtlasInspectLoadedRequest,
 ) -> AtlasInspectLoadedResponse:
     """Match loaded effects and generators to bundled Plugin Atlas knowledge.
-    
+
     Requires a live bridge. only_used restricts the mixer-track inventory;
     match_limit caps candidates per loaded plugin. include_weak=False omits weak
     matches; enable it only to inspect uncertain candidates. Results retain each
@@ -1250,7 +1250,7 @@ async def fl_set_mixer_volume_db(
     ] = None,
 ) -> VerifiedMixerVolumeDbWrite:
     """Set one mixer fader to a target dB readback, between -60 and +6 dB.
-    
+
     Requires enabled writes and a live bridge; Master index 0 also requires
     allow_master=True. Searches the fader curve, which moves the fader during
     calibration, and reports later-tick readback within tolerance_db. Inspect
@@ -2052,7 +2052,7 @@ async def fl_set_plugin_param(
     ] = None,
 ) -> VerifiedPluginParameterWrite | VerifiedTargetedPluginParameterWrite:
     """Set one inspected plugin parameter to a known normalized value from 0 to 1.
-    
+
     Read plugins_inspect_parameter_map first for the parameter index and current
     state. Use fl_set_plugin_param_display for numeric units such as Hz or dB,
     and fl_set_plugin_param_option for named choices; do not guess a unit-to-0..1
@@ -2116,7 +2116,7 @@ async def fl_apply_verified_batch(
     session_fingerprint: SessionFingerprintArg = None,
 ) -> VerifiedBatchResult:
     """Apply an ordered list of supported absolute writes to the current FL session.
-    
+
     Use a direct setter for one change, or mix_create_plan when changes need a
     stored review step before application. Requires enabled writes and passes
     through each operation's target and safety checks. Operations must have
@@ -2491,7 +2491,7 @@ async def fl_select_plugin_preset(
     ] = 1,
 ) -> VerifiedPluginPresetSelection:
     """Select a known preset on one loaded mixer effect or Channel Rack generator.
-    
+
     Read plugins_list_presets and plugins_get_current_preset first; supply an
     exact reported preset name and/or index. Requires enabled writes. Optional
     session, target, and current-preset guards reject stale observations.
@@ -3251,7 +3251,7 @@ async def mix_create_plan(
     session_fingerprint: SessionFingerprintArg = None,
 ) -> MixPlan:
     """Store proposed mixer/plugin changes for review without applying them.
-    
+
     Supply a title, 1..32 supported batch operations, and optional rationale.
     Requires a compatible live bridge to bind the plan to its current session;
     optional session_fingerprint rejects a different session. Returns a draft
@@ -3276,7 +3276,7 @@ async def mix_get_plan(
     plan_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
 ) -> MixPlan:
     """Retrieve a stored mix plan's operations, rationale, session, and status.
-    
+
     Pass the plan_id returned by mix_create_plan or mix_create_gain_stage_plan.
     The lookup does not apply changes or reread current FL values. Plans are
     process-local and IDs can expire; a restarted server cannot recover them.
@@ -3294,7 +3294,7 @@ async def mix_apply_plan(
     stop_on_unverified: Annotated[bool, Field(description="Skip remaining plan items after unverified proof.")] = True,
 ) -> MixPlanApplication:
     """Apply a previously reviewed draft mix plan once to its bound FL session.
-    
+
     Use mix_get_plan to review the plan_id first. Requires enabled writes and
     the original bridge session. Applies operations in order; it is non-atomic,
     so earlier changes remain after a later failure. stop_on_unverified=True
@@ -3427,7 +3427,7 @@ async def sound_selection_create_variation(
     ] = (),
 ) -> SoundPaletteVariationPlan:
     """Plan a section-specific change to an existing sound palette without applying it.
-    
+
     Pass an existing palette_id and a new structured request; section labels the
     intended section. Existing anchors are preserved by default; replace_roles
     explicitly permits replacements for those roles. Returns a variation plan
@@ -3474,7 +3474,7 @@ async def sound_selection_apply(
     ] = None,
 ) -> SoundSelectionApplyResult:
     """Apply exact preset assignments from a reviewed sound palette or variation.
-    
+
     Pass the plan or its process-local ID, the observed session_fingerprint, and
     authorized_to_modify=True only after explicit user authorization. Enabled
     writes are required. role_ids limits application to chosen roles; navigation
@@ -3511,7 +3511,7 @@ async def sound_selection_record_feedback(
     ],
 ) -> SoundFeedbackResult:
     """Record a user's explicit accepted, rejected, or neutral sound-palette feedback.
-    
+
     Supply palette_id and optionally role_id or assignment_id to scope feedback.
     Descriptors express preferred or unwanted qualities for future ranking.
     Persistence follows the request's persist/persistence settings and may write
@@ -4068,7 +4068,7 @@ async def piano_roll_bridge(
     ] = False,
 ) -> PianoRollBridgeStatus:
     """Prepare the separate FL Studio Piano Roll scripting connection.
-    
+
     Use status to inspect readiness without writing files. prepare writes the
     bootstrap script; the user must run Postfader Apply once in FL's Piano Roll.
     Only then use confirm with confirm_user_ran_script=True to arm this process.
@@ -4161,7 +4161,7 @@ async def piano_roll_write_notes(
     ] = True,
 ) -> PianoRollDispatch:
     """Add supplied notes to a channel's Piano Roll in the specified pattern.
-    
+
     Automatic execution requires live FL Studio, enabled writes, and piano_roll_bridge
     setup. Notes use quarter-note beats. mode='append' keeps existing notes;
     mode='replace' clears the score before inserting the supplied notes.
@@ -4193,7 +4193,7 @@ async def piano_roll_transform(
     """Transform existing Piano Roll notes in the requested selection or whole score.
 
     Supports quantize, transpose, humanize, duplicate, delete, and clear.
-    
+
     Automatic execution requires live FL Studio, enabled writes, and piano_roll_bridge
     setup. Read
     notes first with piano_roll_read_notes to establish the target and scope.

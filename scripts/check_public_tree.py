@@ -171,6 +171,7 @@ PUBLIC_DOCUMENT_PATHS = {
     "docs/releases/v0.20.0.md",
     "docs/releases/dev-v10.md",
     "docs/releases/v10.0.0.md",
+    "docs/releases/v10.0.1.md",
     "docs/setup.md",
     "docs/sound-selection.md",
     "docs/supply-chain.md",
