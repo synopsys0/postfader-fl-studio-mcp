@@ -9,7 +9,7 @@ assets and SHA-256 checksums to GitHub.
 
 ## V10 publication
 
-V10 uses package version `10.0.0` and exposes 134 tools and 8 resources.
+V10 uses package version `10.0.1` and exposes 134 tools and 8 resources.
 Publish the reviewed dev feature set through a main pull request, then the
 matching version tag. The new host-adapter paths retain explicit live-validation
 limitations; do not imply a new complete hardware qualification matrix.

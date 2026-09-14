@@ -64,8 +64,8 @@ postfader setup
 ```
 
 For Codex, the release also provides dedicated
-`PostFader-v10.0.0-Codex-Windows.zip` and
-`PostFader-v10.0.0-Codex-macOS.zip` packages. Their launchers run the same base
+`PostFader-v10.0.1-Codex-Windows.zip` and
+`PostFader-v10.0.1-Codex-macOS.zip` packages. Their launchers run the same base
 installation, preselect `codex-toml`, and request a separate confirmation
 before registering the resolved server through the Codex CLI. The equivalent
 command for a source or Python installation is:
@@ -528,7 +528,7 @@ server and bridge together before using them.
 
 The new note-read and render paths have deterministic coverage; live FL Studio
 acceptance remains pending. See the [contracts](tool-contracts.md) and
-[V10 release notes](releases/v10.0.0.md) before relying on them.
+[V10 release notes](releases/v10.0.1.md) before relying on them.
 
 ## Environment variables
 

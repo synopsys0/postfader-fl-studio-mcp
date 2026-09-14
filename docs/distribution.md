@@ -16,7 +16,7 @@ control, MIDI composition, and arrangement on Windows and macOS.
 
 ## Release scope and directory copy
 
-PostFader **V10 (10.0.0)** exposes **134 tools and 8 resources**. Use that
+PostFader **V10 (10.0.1)** exposes **134 tools and 8 resources**. Use that
 count in current listings. Older version counts belong only in historical
 release notes. The immutable package version, registry record, and GitHub tag
 must agree before a listing is marked updated.
@@ -208,7 +208,7 @@ metadata. `—` means no submission has been made; it is not an acceptance.
 
 | Platform | Canonical destination | Update mechanism |
 | --- | --- | --- |
-| GitHub Releases | [V10](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v10.0.0) | Tagged release workflow uploads four platform ZIPs, MCPB, wheel, sdist, SBOM, and checksums; publication must be verified. |
+| GitHub Releases | [V10](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v10.0.1) | Tagged release workflow uploads four platform ZIPs, MCPB, wheel, sdist, SBOM, and checksums; publication must be verified. |
 | PyPI | [Package](https://pypi.org/project/postfader-fl-studio-mcp/) | Trusted Publishing from the version tag; immutable versions cannot be replaced. |
 | Official MCP Registry | [Latest record](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.synopsys0%2Fpostfader-fl-studio-mcp/versions/latest) | OIDC publication after PyPI; verify the server and package versions. |
 | Glama | [Listing](https://glama.ai/mcp/servers/synopsys0/postfader-fl-studio-mcp) | Maintainer claimed; edit description and request repository sync after main is updated. There is no hosted FL Studio runtime release. |

@@ -1,9 +1,9 @@
 # Early-user activation guide
 
 This guide is for the first external users and maintainers helping them
-activate PostFader V10 (10.0.0), with 134 tools and 8 resources. Record the
+activate PostFader V10 (10.0.1), with 134 tools and 8 resources. Record the
 package version and source commit for source installs, and consult the
-[V10 release notes](releases/v10.0.0.md) for qualification boundaries. This is a manual, privacy-preserving checklist. The
+[V10 release notes](releases/v10.0.1.md) for qualification boundaries. This is a manual, privacy-preserving checklist. The
 project has no telemetry or automatic analytics: activation results must be
 shared only when a user chooses to report them.
 
