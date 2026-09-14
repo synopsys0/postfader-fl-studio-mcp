@@ -29,8 +29,8 @@ documents instead of expanding the homepage.
 
 ## Release scope
 
-PostFader V10 (10.0.0) contains 134 tools and 8 resources. Use the
-[V10 release notes](releases/v10.0.0.md) for feature limits and live acceptance
+PostFader V10 (10.0.1) contains 134 tools and 8 resources. Use the
+[V10 release notes](releases/v10.0.1.md) for feature limits and live acceptance
 status. These counts apply to the matching V10 packages.
 
 ## Hero
@@ -46,8 +46,8 @@ another local MCP client.
 
 **Primary actions**
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip)
 
 **Secondary action:** Explore what PostFader can do
 
@@ -535,8 +535,8 @@ installer, select the virtual MIDI endpoint you created, complete one FL Studio
 MIDI setup stage—Input, Output, Universal Bridge, matching port, and script
 reload—and connect your AI client.
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip)
 - [Read the complete setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 
 Dedicated Codex packages add guided Codex registration. The Claude Desktop
@@ -598,9 +598,9 @@ guaranteed rollback, or a guaranteed undo point.
 Inspect the project. Diagnose the mix. Build the parts. Review the plan. Make
 the change.
 
-[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)
+[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip)
 ·
-[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)
+[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip)
 ·
 [Read the setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 

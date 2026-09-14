@@ -13,6 +13,30 @@ below.
 `sound_selection_history_reset` deletes only the bounded local history after
 explicit confirmation.
 
+## Choosing between related tools
+
+| Goal | Tool and distinction |
+| --- | --- |
+| Set a known normalized plugin value | `fl_set_plugin_param`; inspect the parameter index first. |
+| Set Hz, dB, ms, or another displayed number | `fl_set_plugin_param_display`; searches displayed values instead of assuming a normalized curve. |
+| Select a named control option | `fl_set_plugin_param_option`; moves the control during discovery, so it is not a read-only option listing. |
+| Select a whole preset | `fl_select_plugin_preset`; use exact names/indices from preset inspection. |
+| Apply already-reviewed writes | `fl_apply_verified_batch`; ordered and non-atomic, with per-operation receipts. |
+| Store writes for review first | `mix_create_plan` → `mix_get_plan` → `mix_apply_plan`; process-local, session-bound, one application attempt. |
+| Choose sounds for multiple roles | `sound_selection_plan`; use `sound_selection_create_variation` to preserve anchors while planning a section change, then `sound_selection_apply` after review. |
+| Record a user's sound preferences | `sound_selection_record_feedback`; updates local ranking history according to persistence settings, without applying presets. |
+| Search product knowledge offline | `plugins_atlas_search` → `plugins_atlas_get_product`; `plugins_atlas_recommend` ranks choices for a production goal. |
+| Identify currently loaded products | `plugins_atlas_inspect_loaded`; catalog matches do not prove writable controls or ownership. |
+| Insert supplied score notes | `piano_roll_write_notes`; append preserves notes, replace clears the score. |
+| Edit or inspect existing score notes | `piano_roll_transform` edits; `piano_roll_read_notes` inspects. Automatic script dispatch requires the Piano Roll setup handshake. |
+| Generate a MIDI file offline | `compose_*` generates notes; `midi_export_type1` writes a file without editing a live score. |
+
+For Piano Roll writes, `auto_trigger=False` prepares a script and leaves target
+selection and execution to the user. A dispatched shortcut alone is not proof
+that notes were applied. For batches and plans, earlier changes remain after a
+later failure; inspect receipts before continuing and never replay an ambiguous
+write automatically. These tools do not imply a project save.
+
 ## Inspection tools
 
 | Tool | Purpose |

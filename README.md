@@ -20,8 +20,8 @@ parts, organize patterns and Playlist tracks, add section markers, or make
 supported changes from natural language.
 
 <p>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
+  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
 </p>
 
 [All release assets](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
@@ -30,9 +30,9 @@ supported changes from natural language.
 
 **V10: 134 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
 
-**PostFader V10 (10.0.0)** brings the complete 134-tool workflow to the
+**PostFader V10 (10.0.1)** brings the complete 134-tool workflow to the
 Windows/macOS packages, Codex ZIPs, Claude Desktop MCPB, and Python distribution.
-See the [V10 release notes](docs/releases/v10.0.0.md) for upgrade steps and evidence boundaries.
+See the [V10 release notes](docs/releases/v10.0.1.md) for upgrade steps and evidence boundaries.
 
 Starts read-only and never saves your project automatically. Native macOS
 plug-in loading, note inspection, and saved-project rendering are included;
@@ -362,10 +362,10 @@ every other project.
 3. Complete the documented FL Studio MIDI Settings stage.
 4. Connect your local AI client.
 
-- **[Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-Windows.zip)**
-- **[Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.0-macOS.zip)**
+- **[Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip)**
+- **[Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip)**
 - [Open the complete setup and troubleshooting guide](docs/setup.md)
-- [See every v10.0.0 release asset](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v10.0.0)
+- [See every v10.0.1 release asset](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v10.0.1)
 
 Codex users can choose the dedicated Codex ZIP for guided `codex mcp add`
 registration. Claude Desktop users can add the `.mcpb` after completing the
@@ -402,14 +402,14 @@ server and cannot use PostFader's current local packages directly.
 
 | Component | V10 support |
 | --- | --- |
-| PostFader | V10 / 10.0.0 |
+| PostFader | V10 / 10.0.1 |
 | FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer; live evidence is limited to the tested systems below. |
 | FL MIDI scripting API | Version 44 or newer |
 | Python | 3.10 through 3.14 |
 | macOS | Qualified on macOS 27.0 arm64 with FL Studio Producer Edition 26.1.3 build 5336 and the built-in IAC bus. |
 | Windows | Qualified on Windows 11 x64 with FL Studio Producer Edition 26.1.4 build 5589. |
 
-The [V10 release notes](docs/releases/v10.0.0.md) distinguish automated platform checks
+The [V10 release notes](docs/releases/v10.0.1.md) distinguish automated platform checks
 from the historical live qualification matrix and the remaining experimental
 host-adapter paths.
 
@@ -476,10 +476,10 @@ installation, and a bidirectional virtual MIDI endpoint are required.
 
 ### Which features are released?
 
-V10 (10.0.0) exposes **134 tools and 8 resources**, including Plugin Atlas,
+V10 (10.0.1) exposes **134 tools and 8 resources**, including Plugin Atlas,
 Sound Selection, recoverable Production Runs, Creation Review, Piano Roll note
 inspection, macOS plug-in loading, and saved-project rendering. Read the
-[release notes](docs/releases/v10.0.0.md) for experimental feature boundaries.
+[release notes](docs/releases/v10.0.1.md) for experimental feature boundaries.
 
 ### Does it upload my music or save my project?
 
@@ -504,7 +504,7 @@ Keep private project data and local run journals out of public reports.
 | [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
 | [Distribution and listings](docs/distribution.md) | Published versions, development scope, and verified MCP directory status |
 | [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
-| [V10 release notes](docs/releases/v10.0.0.md) | Features, upgrades, platform support, and known live-validation gaps |
+| [V10 release notes](docs/releases/v10.0.1.md) | Features, upgrades, platform support, and known live-validation gaps |
 | [Distribution and listings](docs/distribution.md) | Verified releases, canonical descriptions, and MCP directory status |
 | [Security](SECURITY.md) | Threat model, local trust boundaries, privacy, and vulnerability reporting |
 | [Early-user activation](docs/early-access-testing.md) | A privacy-safe first-session and return-session checklist |

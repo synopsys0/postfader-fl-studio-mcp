@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "10.0.0",
+  "version": "10.0.1",
   "description": "FL Studio MCP server with 134 tools for mixing, composition, sound selection, production runs, and review.",
   "long_description": "A local 134-tool MCP server and MIDI bridge that lets an AI inspect and control the open FL Studio project, run bounded task-scoped Production Runs, review exported creation bounces, plan one bounded revision, prepare delivery handoffs, diagnose exported mixes, work with loaded plug-ins, compose deterministic parts, export multi-track MIDI, and prepare Piano Roll transforms. PostFader starts read-only, never saves the project automatically, and reads supported direct changes back from FL Studio. Before opening this extension, install the matching Python package and run `postfader setup`; the .mcpb does not deploy FL Studio's controller script or configure a virtual MIDI endpoint.",
   "author": {
@@ -63,7 +63,7 @@
     },
     {
       "name": "fl_get_selected_range",
-      "description": "Read raw endpoints and PPQ without claiming meter or rendering semantics."
+      "description": "Read the current Playlist timeline selection and project PPQ from FL Studio."
     },
     {
       "name": "fl_list_mixer_tracks",
@@ -87,19 +87,19 @@
     },
     {
       "name": "plugins_atlas_search",
-      "description": "Search bundled static plug-in knowledge without contacting FL Studio."
+      "description": "Find products in the bundled offline Plugin Atlas by text and filters."
     },
     {
       "name": "plugins_atlas_get_product",
-      "description": "Read one static Atlas product and its related descriptive records."
+      "description": "Read a bundled Plugin Atlas product by its exact product_id."
     },
     {
       "name": "plugins_atlas_recommend",
-      "description": "Rank static plug-in choices or stock alternatives without changing FL."
+      "description": "Rank bundled Plugin Atlas products for a production problem or technique."
     },
     {
       "name": "plugins_atlas_inspect_loaded",
-      "description": "Match the target-aware live Track B inventory to static Atlas knowledge."
+      "description": "Match loaded effects and generators to bundled Plugin Atlas knowledge."
     },
     {
       "name": "copilot_capture_readonly_inspection",
@@ -115,7 +115,7 @@
     },
     {
       "name": "fl_set_mixer_volume_db",
-      "description": "Search FL's fader curve and prove the requested dB value on a later tick."
+      "description": "Set one mixer fader to a target dB readback, between -60 and +6 dB."
     },
     {
       "name": "fl_set_mixer_pan",
@@ -171,11 +171,11 @@
     },
     {
       "name": "fl_set_plugin_param",
-      "description": "Set one plug-in parameter; verified from FL's display string changing."
+      "description": "Set one inspected plugin parameter to a known normalized value from 0 to 1."
     },
     {
       "name": "fl_apply_verified_batch",
-      "description": "Apply a closed-union batch after one session preflight, without replay."
+      "description": "Apply an ordered list of supported absolute writes to the current FL session."
     },
     {
       "name": "fl_set_playing",
@@ -243,7 +243,7 @@
     },
     {
       "name": "fl_select_plugin_preset",
-      "description": "Navigate to an exact preset and require later-idle-tick identity readback."
+      "description": "Select a known preset on one loaded mixer effect or Channel Rack generator."
     },
     {
       "name": "fl_list_channels",
@@ -375,15 +375,15 @@
     },
     {
       "name": "mix_create_plan",
-      "description": "Store a session-bound closed-union plan; no project value changes."
+      "description": "Store proposed mixer/plugin changes for review without applying them."
     },
     {
       "name": "mix_get_plan",
-      "description": "Read one process-local reviewable plan."
+      "description": "Retrieve a stored mix plan's operations, rationale, session, and status."
     },
     {
       "name": "mix_apply_plan",
-      "description": "Apply a plan once through the verified batch kernel."
+      "description": "Apply a previously reviewed draft mix plan once to its bound FL session."
     },
     {
       "name": "mix_finish_assessment",
@@ -403,15 +403,15 @@
     },
     {
       "name": "sound_selection_create_variation",
-      "description": "Return a section delta instead of replacing the existing palette."
+      "description": "Plan a section-specific change to an existing sound palette without applying it."
     },
     {
       "name": "sound_selection_apply",
-      "description": "Apply exact presets in deterministic order and stop on unknown or unverified outcomes."
+      "description": "Apply exact preset assignments from a reviewed sound palette or variation."
     },
     {
       "name": "sound_selection_record_feedback",
-      "description": "Update bounded local ranking feedback; silence is never inferred."
+      "description": "Record a user's explicit accepted, rejected, or neutral sound-palette feedback."
     },
     {
       "name": "sound_selection_history_status",
@@ -519,7 +519,7 @@
     },
     {
       "name": "piano_roll_bridge",
-      "description": "Manage the one-time-per-process arm for FL's separate Piano Roll script runtime."
+      "description": "Prepare the separate FL Studio Piano Roll scripting connection."
     },
     {
       "name": "piano_roll_read_notes",
@@ -539,11 +539,11 @@
     },
     {
       "name": "piano_roll_write_notes",
-      "description": "Generate a typed Piano Roll script, select its target, and report hotkey dispatch honestly."
+      "description": "Add supplied notes to a channel's Piano Roll in the specified pattern."
     },
     {
       "name": "piano_roll_transform",
-      "description": "Quantize, transpose, humanize, duplicate, delete, or clear selected/all notes."
+      "description": "Transform existing Piano Roll notes in the requested selection or whole score."
     },
     {
       "name": "compose_chord_progression",
