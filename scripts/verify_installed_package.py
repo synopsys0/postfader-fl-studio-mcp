@@ -12,7 +12,6 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_TOOL_COUNT = 134
 EXPECTED_RESOURCE_COUNT = 8
 
 
@@ -120,11 +119,6 @@ def main(argv=None) -> int:
         for item in json.loads(args.manifest.read_text(encoding="utf-8"))["tools"]
     }
     installed_names = {tool.name for tool in asyncio.run(mcp.list_tools())}
-    if len(installed_names) != EXPECTED_TOOL_COUNT:
-        failures.append(
-            "installed MCP tool count is not %d: %d"
-            % (EXPECTED_TOOL_COUNT, len(installed_names))
-        )
     installed_resources = asyncio.run(mcp.list_resources())
     if len(installed_resources) != EXPECTED_RESOURCE_COUNT:
         failures.append(

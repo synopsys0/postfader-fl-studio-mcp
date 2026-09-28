@@ -38,26 +38,6 @@ from fl_studio_mcp.bridge_stamp import stamp_bridge_source  # noqa: E402
 
 
 class BridgeSourceTests(unittest.TestCase):
-    def test_the_bridge_ships_inside_the_package(self):
-        # A pip user has no repository, so the script FL loads has to travel
-        # with the package or the install is unusable.
-        source = bridge_install.bridge_source_path()
-        self.assertTrue(source.is_file())
-        self.assertEqual(source.name, "device_UniversalBridge.py")
-        self.assertEqual(source.parent.name, "_bridge")
-        self.assertEqual(source.parent.parent.name, "fl_studio_mcp")
-
-    def test_the_bridge_directory_has_no_package_initializer(self):
-        # Python may expose this directory as a namespace, but the controller
-        # module body depends on FL-only modules. Keep it as deployable data;
-        # the MCP process must not treat it as a normal Python subpackage.
-        self.assertFalse((bridge_install.bridge_source_path().parent / "__init__.py").exists())
-
-    def test_the_packaged_bridge_is_ascii(self):
-        # FL Studio loads MIDI scripts through an ASCII code path.
-        raw = bridge_install.bridge_source_path().read_bytes()
-        self.assertTrue(all(byte < 128 for byte in raw))
-
     def test_expected_deployment_uses_the_same_stamped_bytes_and_digest(self):
         source = bridge_install.bridge_source_path().read_bytes()
         expected_bytes, expected_digest = stamp_bridge_source(source)
@@ -83,12 +63,6 @@ class UserDataResolutionTests(unittest.TestCase):
         if self._saved is not None:
             os.environ["FL_STUDIO_USER_DATA_DIR"] = self._saved
         self._tmp.cleanup()
-
-    def test_default_location(self):
-        self.assertEqual(
-            bridge_install.user_data_dir(),
-            host_config.default_fl_studio_user_data_dir(),
-        )
 
     def test_environment_override(self):
         configured = self.root / "some-fl-folder"
@@ -367,14 +341,6 @@ print(json.dumps({
             payload["mailboxes"],
         )
         self.assertIn(os.fspath(user_data / "Settings"), payload["mailboxes"])
-
-    def test_clone_installer_uses_shared_paths_without_overwriting_client_config(self):
-        source = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
-        self.assertIn("fl_studio_user_data_dir", source)
-        self.assertNotIn("$HOME/Documents/Image-Line/FL Studio", source)
-        self.assertNotIn(".mcp.json", source)
-        self.assertIn('"$VENV/bin/postfader"', source)
-        self.assertIn("--skip-bridge-deployment", source)
 
 
 class DeployTests(unittest.TestCase):

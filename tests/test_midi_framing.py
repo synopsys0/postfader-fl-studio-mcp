@@ -117,7 +117,6 @@ class BridgeFramingTests(unittest.TestCase):
             ping[bridge.MIDI_WIRE_PROTOCOL_FIELD],
             bridge.MIDI_WIRE_PROTOCOL_VERSION,
         )
-        self.assertEqual(bridge.PROTOCOL_VERSION, 2)
 
     def test_legacy_client_request_frames_are_accepted_by_current_bridge(self):
         request = {

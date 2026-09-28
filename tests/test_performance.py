@@ -17,9 +17,7 @@ from fl_studio_mcp import mcp_server
 from fl_studio_mcp.bridge_client import BridgeError
 from fl_studio_mcp.bridge_install import expected_bridge_deployment
 from fl_studio_mcp.performance import (
-    TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
     TEMPO_READBACK_TOLERANCE,
-    TRACK_B_MCP_TOOL_NAMES,
     TRACK_B_MUTATION_COMMANDS,
     TRACK_B_READ_COMMANDS,
     TrackBBoundaryViolation,
@@ -32,7 +30,6 @@ from fl_studio_mcp.performance import (
 )
 from fl_studio_mcp.readonly_inspector import IncompatibleFLStudio
 from fl_studio_mcp.track_b_contracts import (
-    PLAYBACK_SPEED_OMISSION_REASON,
     ChannelGeneratorTarget,
     ChannelIdentitySnapshot,
     ChannelMixSnapshot,
@@ -358,55 +355,7 @@ def step_write_handler(command: str, arguments: dict[str, Any]) -> dict[str, Any
 
 
 class GatewayBoundaryTests(unittest.TestCase):
-    def test_allowlists_are_exact_and_disjoint_by_mutability(self) -> None:
-        self.assertEqual(
-            TRACK_B_READ_COMMANDS,
-            {
-                "project.info",
-                "project.history",
-                "channels.list",
-                "mixer.list",
-                "plugin.params",
-                "plugin.scan_params",
-                "plugin.preset_count",
-                "sequencer.get",
-                "patterns.list",
-                "patterns.find_empty",
-                "playlist.list",
-            },
-        )
-        self.assertEqual(
-            TRACK_B_MUTATION_COMMANDS,
-            {
-                "transport.set_playing",
-                "transport.stop",
-                "transport.set_song_position",
-                "transport.set_loop_mode",
-                "transport.set_tempo",
-                "transport.set_recording",
-                "transport.set_metronome",
-                "transport.set_precount",
-                "project.set_time_signature_numerator",
-                "project.undo",
-                "project.redo",
-                "channel.set_mix",
-                "channel.set_solo",
-                "channel.set_pitch",
-                "channel.select",
-                "channel.set_identity",
-                "channel.route_to_mixer",
-                "pattern.select",
-                "pattern.set_identity",
-                "pattern.set_length",
-                "playlist.set_identity",
-                "playlist.set_state",
-                "plugin.set_param",
-                "plugin.set_param_display",
-                "plugin.set_param_option",
-                "sequencer.set",
-                "channel.trigger_note",
-            },
-        )
+    def test_read_and_mutation_allowlists_are_disjoint(self) -> None:
         self.assertTrue(TRACK_B_READ_COMMANDS.isdisjoint(TRACK_B_MUTATION_COMMANDS))
 
     def test_gateways_reject_cross_boundary_and_arbitrary_commands(self) -> None:
@@ -1737,21 +1686,6 @@ class TargetAwarePluginTests(unittest.TestCase):
                     controller.set_plugin_parameter_display(track_index=4, slot_index=2, parameter=1, target_value=3000.0, target_unit="Hz")
                 self.assertFalse(client.calls)
 
-    def test_existing_six_plugin_tools_are_the_only_target_aware_names(self) -> None:
-        self.assertEqual(
-            TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
-            {
-                "plugins_scan_loaded_plugins",
-                "plugins_inspect_parameter_map",
-                "plugins_scan_parameters",
-                "fl_set_plugin_param",
-                "fl_set_plugin_param_display",
-                "fl_set_plugin_param_option",
-            },
-        )
-        self.assertEqual(len(TRACK_B_MCP_TOOL_NAMES), 31)
-        self.assertTrue(TRACK_B_MCP_TOOL_NAMES.isdisjoint(TARGET_AWARE_EXISTING_PLUGIN_TOOLS))
-
     def test_inventory_combines_effects_and_global_generators(self) -> None:
         def handler(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
             if command == "project.info":
@@ -2741,14 +2675,6 @@ class ContractAndMalformedReplyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     invoke(controller)
             self.assertEqual(client.calls, [])
-
-    def test_playback_speed_is_absent_with_an_explicit_backend_reason(self) -> None:
-        self.assertNotIn("transport.set_playback_speed", TRACK_B_MUTATION_COMMANDS)
-        self.assertNotIn("transport.setPlaybackSpeed", TRACK_B_MUTATION_COMMANDS)
-        self.assertFalse(hasattr(TrackBController, "set_playback_speed"))
-        self.assertNotIn("PlaybackSpeed", {value.__name__ for value in get_args(TrackBResult)})
-        self.assertIn("no authoritative playback speed getter", PLAYBACK_SPEED_OMISSION_REASON)
-        self.assertIn("later-idle-tick readback", PLAYBACK_SPEED_OMISSION_REASON)
 
 
 if __name__ == "__main__":

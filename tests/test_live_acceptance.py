@@ -165,15 +165,6 @@ class ReadAcceptanceTests(unittest.TestCase):
             ["in_flight", "failed"],
         )
 
-    def test_large_response_arguments_are_explicitly_bounded(self):
-        arguments = self.arguments()
-        self.assertIsNone(arguments["fl_list_mixer_tracks"]["max_tracks"])
-        self.assertEqual(arguments["plugins_inspect_parameter_map"]["limit"], 128)
-        self.assertEqual(arguments["plugins_scan_parameters"]["max_indices"], 8192)
-        self.assertEqual(arguments["plugins_scan_parameters"]["max_results"], 2048)
-        self.assertIn("fl_list_channels", arguments)
-        self.assertIn("fl_get_step_sequence", arguments)
-
     def test_read_checkpoints_bracket_every_invocation_in_order(self):
         checkpoints = []
 

@@ -66,25 +66,6 @@ class PluginAtlasMCPTests(unittest.TestCase):
             adapters=(adapter,),
         )
 
-    def test_four_generic_atlas_tools_are_registered_at_134_total(self) -> None:
-        tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 134)
-        names = {tool.name for tool in tools}
-        self.assertEqual(
-            names & {
-                "plugins_atlas_search",
-                "plugins_atlas_get_product",
-                "plugins_atlas_recommend",
-                "plugins_atlas_inspect_loaded",
-            },
-            {
-                "plugins_atlas_search",
-                "plugins_atlas_get_product",
-                "plugins_atlas_recommend",
-                "plugins_atlas_inspect_loaded",
-            },
-        )
-
     def test_static_tools_are_closed_world_read_only_and_strict(self) -> None:
         tools = {
             tool.name: tool

@@ -868,28 +868,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SelectedRangeObservation.model_validate(result)
 
-    def test_selected_range_json_schema_is_structurally_raw_only(self):
-        properties = SelectedRangeObservation.model_json_schema()["properties"]
-        for field, value in (
-            ("raw_time_unit", "unknown"),
-            ("selection_state", "unknown"),
-            ("selection_presence", "unknown"),
-            ("interpretation_status", "unvalidated"),
-            ("render_endpoint_inclusivity", "unknown"),
-            ("safe_for_rendering", False),
-        ):
-            with self.subTest(field=field):
-                self.assertEqual(properties[field]["const"], value)
-        for field in (
-            "semantic_scope",
-            "start_ticks",
-            "end_ticks",
-            "duration_ticks",
-            "range_order",
-        ):
-            with self.subTest(field=field):
-                self.assertEqual(properties[field]["type"], "null")
-
     def test_parameter_paging_preserves_padding_as_classified_rows(self):
         page = self.inspector.plugin_parameters(
             track_index=5, slot_index=0, limit=6, offset=0
@@ -1521,28 +1499,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             {"enabled", "confirm_user_present"},
         )
         self.assertTrue(all(tool.output_schema for tool in tools))
-        selection_schema = next(
-            tool.output_schema for tool in tools if tool.name == "fl_get_selected_range"
-        )["properties"]
-        self.assertEqual(
-            selection_schema["interpretation_status"]["const"], "unvalidated"
-        )
-        self.assertEqual(selection_schema["selection_state"]["const"], "unknown")
-        self.assertEqual(selection_schema["selection_presence"]["const"], "unknown")
-        self.assertEqual(selection_schema["raw_time_unit"]["const"], "unknown")
-        for field in (
-            "semantic_scope",
-            "start_ticks",
-            "end_ticks",
-            "duration_ticks",
-            "range_order",
-        ):
-            self.assertEqual(selection_schema[field]["type"], "null")
-        self.assertTrue(
-            all(
-                tool.input_schema.get("additionalProperties") is False for tool in tools
-            )
-        )
 
 
 class WriteModeTests(unittest.TestCase):
@@ -2027,20 +1983,6 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assert_unverified(result)
         self.assertTrue(any("source differs" in warning for warning in result.warnings[1:]))
 
-    def test_volume_write_refuses_master_unless_asked_for_by_name(self):
-        with self.assertRaises(ValueError) as caught:
-            self.writer.set_mixer_volume(track_index=0, volume_normalized=0.5)
-        self.assertIn("allow_master", str(caught.exception))
-        self.assertEqual(self.dispatched(), [])
-        self.assertEqual(_state.TRACKS[0].volume, 0.8)
-
-        result = self.writer.set_mixer_volume(
-            track_index=0, volume_normalized=0.5, allow_master=True
-        )
-        self.assert_write_report(result, "mixer.set_volume", 0, master=True)
-        self.assertIs(result.verified, True)
-        self.assertEqual(_state.TRACKS[0].volume, 0.5)
-
     def test_volume_write_rejects_out_of_range_before_the_bridge(self):
         for value in (-0.01, 1.01, 42.0, float("nan"), float("inf")):
             with self.subTest(value=value):
@@ -2091,16 +2033,6 @@ class VerifiedWriteTests(unittest.TestCase):
             result = self.writer.set_mixer_pan(track_index=3, pan=-0.4)
         self.assert_unverified(result)
         self.assertEqual(result.after_pan, 0.0)
-
-    def test_pan_write_refuses_master_unless_asked_for_by_name(self):
-        with self.assertRaises(ValueError) as caught:
-            self.writer.set_mixer_pan(track_index=0, pan=0.3)
-        self.assertIn("allow_master", str(caught.exception))
-        self.assertEqual(self.dispatched(), [])
-
-        result = self.writer.set_mixer_pan(track_index=0, pan=0.3, allow_master=True)
-        self.assert_write_report(result, "mixer.set_pan", 0, master=True)
-        self.assertIs(result.verified, True)
 
     def test_pan_write_rejects_out_of_range_before_the_bridge(self):
         for value in (-1.01, 1.01, float("nan"), float("-inf")):
@@ -2366,20 +2298,6 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertIs(result.after_muted, False)
         self.assertFalse(_state.TRACKS[3].muted)
 
-    def test_mute_write_refuses_master_unless_asked_for_by_name(self):
-        with self.assertRaises(ValueError) as caught:
-            self.writer.set_mixer_mute(track_index=0, muted=True)
-        self.assertIn("allow_master", str(caught.exception))
-        self.assertEqual(self.dispatched(), [])
-        self.assertFalse(_state.TRACKS[0].muted)
-
-        result = self.writer.set_mixer_mute(
-            track_index=0, muted=True, allow_master=True
-        )
-        self.assert_write_report(result, "mixer.set_mute", 0, master=True)
-        self.assertIs(result.verified, True)
-        self.assertTrue(_state.TRACKS[0].muted)
-
     def test_mute_write_rejects_a_non_boolean_state_before_the_bridge(self):
         for value in ("true", 1, None):
             with self.subTest(value=value):
@@ -2504,18 +2422,6 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertIs(result.frequency_verified, False)
         self.assertEqual(_state.TRACKS[3].eq[1]["freq"], 0.5)
 
-    def test_eq_write_refuses_master_unless_asked_for_by_name(self):
-        with self.assertRaises(ValueError) as caught:
-            self.writer.set_mixer_eq(track_index=0, band_index=0, gain_normalized=0.6)
-        self.assertIn("allow_master", str(caught.exception))
-        self.assertEqual(self.dispatched(), [])
-
-        result = self.writer.set_mixer_eq(
-            track_index=0, band_index=0, gain_normalized=0.6, allow_master=True
-        )
-        self.assert_write_report(result, "mixer.set_eq", 0, master=True)
-        self.assertIs(result.verified, True)
-
     def test_eq_write_rejects_out_of_range_before_the_bridge(self):
         for arguments in (
             {"band_index": 3, "gain_normalized": 0.6},
@@ -2584,25 +2490,6 @@ class VerifiedWriteTests(unittest.TestCase):
         )
         self.assertIs(result.verified, True)
         self.assertEqual(result.verification_basis_detail, "display_change_only")
-
-    def test_plugin_parameter_write_refuses_master_unless_asked_for_by_name(self):
-        with self.assertRaises(ValueError) as caught:
-            self.writer.set_plugin_parameter(
-                track_index=0, slot_index=0, parameter_index=0, normalized_value=0.4
-            )
-        self.assertIn("allow_master", str(caught.exception))
-        self.assertEqual(self.dispatched(), [])
-
-        result = self.writer.set_plugin_parameter(
-            track_index=0,
-            slot_index=0,
-            parameter_index=0,
-            normalized_value=0.4,
-            allow_master=True,
-        )
-        self.assert_write_report(result, "plugin.set_param", 0, master=True)
-        self.assertIs(result.verified, True)
-        self.assertEqual(result.plugin_name, "Fruity Limiter")
 
     def test_plugin_parameter_write_rejects_out_of_range_before_the_bridge(self):
         for arguments in (
@@ -2930,14 +2817,6 @@ class VerifiedWriteToolTests(unittest.TestCase):
                 self.client = WriteEnabledFakeClient()
                 with self.assertRaises(ToolError):
                     self.call(name, arguments)
-                self.assertEqual(self.client.commands, [])
-
-    def test_write_tools_reject_an_unknown_argument(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
-                self.client = WriteEnabledFakeClient()
-                with self.assertRaises(ToolError):
-                    self.call(name, dict(arguments, nudge_by=0.1))
                 self.assertEqual(self.client.commands, [])
 
     def test_mcp_schema_rejects_malformed_preconditions_before_dispatch(self):

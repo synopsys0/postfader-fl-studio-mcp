@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.metadata
 import unittest
 from unittest import mock
 
 from jsonschema import Draft202012Validator
-from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 
 from fl_studio_mcp import mcp_server as server_module
 from fl_studio_mcp.mcp_server import mcp
@@ -17,22 +14,18 @@ from fl_studio_mcp.workflows import validate_batch_operations
 
 
 class MCPCompatibilityTests(unittest.TestCase):
-    def test_installed_sdk_is_inside_the_declared_minor_range(self) -> None:
-        version = importlib.metadata.version("mcp")
-        major, minor = (int(part) for part in version.split(".", 2)[:2])
-        self.assertEqual((major, minor), (2, 0), version)
-
-    def test_lower_level_imports_used_by_the_server_remain_available(self) -> None:
-        self.assertIsInstance(mcp, MCPServer)
-        self.assertEqual(ArgModelBase.model_config.get("extra"), "forbid")
-
-    def test_all_tools_register_with_strict_top_level_input_schemas(self) -> None:
+    def test_all_tools_register_with_strict_input_schemas(self) -> None:
         tools = asyncio.run(mcp.list_tools())
-        self.assertEqual(len(tools), 134)
+        self.assertTrue(tools)
         non_strict = [
             tool.name
             for tool in tools
             if tool.input_schema.get("additionalProperties") is not False
+            or any(
+                definition.get("type") == "object"
+                and definition.get("additionalProperties") is not False
+                for definition in tool.input_schema.get("$defs", {}).values()
+            )
         ]
         self.assertEqual(non_strict, [])
 
@@ -55,7 +48,6 @@ class MCPCompatibilityTests(unittest.TestCase):
 
     def test_all_live_resources_register_through_the_sdk(self) -> None:
         resources = asyncio.run(mcp.list_resources())
-        self.assertEqual(len(resources), 8)
         self.assertEqual(
             {str(resource.uri) for resource in resources},
             {

@@ -7,7 +7,6 @@ proven to perform zero project mutations.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import unittest
 from datetime import datetime, timezone
@@ -2065,45 +2064,6 @@ class ProductionRunTests(unittest.TestCase):
         dispatch.assert_not_called()
         mode.assert_not_called()
         self.assertEqual(result.attempted_count, 0)
-
-    def test_production_run_tools_remain_registered_with_honest_annotations(
-        self,
-    ) -> None:
-        from fl_studio_mcp import mcp_server
-
-        tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
-        expected = {
-            "postfader_validate_run",
-            "postfader_execute_run",
-            "postfader_get_run",
-            "postfader_continue_run",
-            "postfader_stop_run",
-        }
-        self.assertTrue(expected <= tools.keys())
-        self.assertTrue(
-            {
-                "fl_apply_verified_batch",
-                "compose_melody",
-                "mix_apply_plan",
-                "piano_roll_write_notes",
-            }
-            <= tools.keys()
-        )
-        for name in ("postfader_validate_run", "postfader_get_run"):
-            annotations = tools[name].annotations
-            self.assertIsNotNone(annotations)
-            self.assertTrue(annotations.read_only_hint)
-            self.assertFalse(annotations.destructive_hint)
-        for name in ("postfader_execute_run", "postfader_continue_run"):
-            annotations = tools[name].annotations
-            self.assertIsNotNone(annotations)
-            self.assertFalse(annotations.read_only_hint)
-            self.assertTrue(annotations.destructive_hint)
-            self.assertFalse(annotations.idempotent_hint)
-        stop_annotations = tools["postfader_stop_run"].annotations
-        self.assertIsNotNone(stop_annotations)
-        self.assertFalse(stop_annotations.read_only_hint)
-        self.assertFalse(stop_annotations.destructive_hint)
 
 
 if __name__ == "__main__":

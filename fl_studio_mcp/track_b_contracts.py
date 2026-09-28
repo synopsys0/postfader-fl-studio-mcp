@@ -6,8 +6,7 @@ and does not alter the existing mixer/plugin JSON surface.
 
 Playback speed is deliberately absent.  FL Studio documents a setter but no
 authoritative getter, so it cannot meet this project's later-idle-tick readback
-rule.  ``PLAYBACK_SPEED_OMISSION_REASON`` is exported so the integration layer
-can expose that limitation without accidentally presenting an unverified tool.
+rule.
 """
 
 from __future__ import annotations
@@ -21,12 +20,6 @@ from pydantic import ConfigDict, Field, model_validator
 
 from .contracts import ContractModel, SCHEMA_VERSION
 
-
-PLAYBACK_SPEED_OMISSION_REASON = (
-    "FL Studio exposes transport.setPlaybackSpeed but no authoritative playback "
-    "speed getter, so a later-idle-tick readback-verified setter cannot be "
-    "implemented honestly."
-)
 
 SESSION_FINGERPRINT_PATTERN = r"^[0-9a-f]{32}$"
 SHA256_PATTERN = r"^[0-9a-f]{64}$"

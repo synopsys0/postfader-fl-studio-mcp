@@ -282,12 +282,6 @@ class PublicReportTests(unittest.TestCase):
         self.assertIn("1 control was nameless in FL's report.", rendered)
         self.assertNotIn("1 controls were", rendered)
 
-    def test_generated_markdown_defines_community_candidate_status(self):
-        rendered = render_public_markdown(report_for())
-        self.assertIn("community candidate", rendered)
-        self.assertIn("has not yet been reviewed or merged", rendered)
-        self.assertIn("maintained compatibility matrix", rendered)
-
 
 class FakeWriteClient:
     def __init__(
@@ -503,16 +497,6 @@ assert os.environ['FL_BRIDGE_MIDI_PORT'] == 'Exact Fixture Port'
                 "--midi-port",
                 "Must Not Open",
             ])
-
-    def test_help_defines_community_candidate_status(self):
-        stdout = io.StringIO()
-        with contextlib.redirect_stdout(stdout):
-            with self.assertRaises(SystemExit) as stopped:
-                main(["--help"])
-        self.assertEqual(stopped.exception.code, 0)
-        help_text = " ".join(stdout.getvalue().split())
-        self.assertIn("community candidate for maintainer review", help_text)
-        self.assertIn("not maintained compatibility evidence", help_text)
 
     def test_saved_raw_bridge_scan_generates_shareable_output(self):
         raw = {

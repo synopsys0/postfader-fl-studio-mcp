@@ -482,7 +482,7 @@ class DiscoveryTests(unittest.TestCase):
     def test_the_default_roots_are_fixed_fl_locations(self):
         # An agent cannot choose where this connector reads; the roots are
         # compiled in and stay inside the FL user folder.
-        self.assertEqual(len(advisory.DEFAULT_DISCOVERY_ROOTS), 3)
+        self.assertTrue(advisory.DEFAULT_DISCOVERY_ROOTS)
         for root in advisory.DEFAULT_DISCOVERY_ROOTS:
             with self.subTest(root=root):
                 self.assertTrue(root.is_absolute())

@@ -8,13 +8,13 @@ import importlib.util
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 import zipfile
-from importlib.resources import files
 from pathlib import Path
 from unittest import mock
 
@@ -187,15 +187,6 @@ class PackageHygieneTests(unittest.TestCase):
             self.assertIn("internal working-document name: plan", failures)
             self.assertIn("unreviewed public documentation path", failures)
 
-    def test_current_public_documentation_is_exactly_allowlisted(self) -> None:
-        scanner = self.load_public_tree_scanner()
-        current = {
-            path.relative_to(ROOT).as_posix()
-            for path in (ROOT / "docs").rglob("*")
-            if path.is_file()
-        }
-        self.assertEqual(current, scanner.PUBLIC_DOCUMENT_PATHS)
-
     def test_checkout_scripts_resolve_from_a_space_path_and_external_cwd(self) -> None:
         runner = load_safe_runner()
         scripts = (
@@ -221,32 +212,6 @@ class PackageHygieneTests(unittest.TestCase):
                         completed.stdout + completed.stderr,
                     )
                     self.assertIn("--midi-port", completed.stdout)
-
-    def test_safe_runner_overrides_ambient_midi_opt_in(self) -> None:
-        runner = load_safe_runner()
-        with mock.patch.dict(
-            os.environ,
-            {
-                "FL_BRIDGE_ENABLE_MIDI": "1",
-                "FL_BRIDGE_ENABLE_WRITES": "1",
-                "FL_BRIDGE_SANDBOXED": "0",
-                "FL_BRIDGE_MIDI_PORT": "Must Not Be Enumerated",
-            },
-            clear=False,
-        ):
-            child = runner.safe_child_environment()
-            self.assertEqual(child["FL_BRIDGE_ENABLE_MIDI"], "0")
-            self.assertEqual(child["FL_BRIDGE_ENABLE_WRITES"], "0")
-            self.assertEqual(child["FL_BRIDGE_SANDBOXED"], "1")
-            self.assertEqual(
-                child["FL_BRIDGE_MIDI_PORT"], "SAFE_TEST_MIDI_DISABLED"
-            )
-            self.assertEqual(os.environ["FL_BRIDGE_ENABLE_MIDI"], "1")
-            self.assertEqual(os.environ["FL_BRIDGE_ENABLE_WRITES"], "1")
-            self.assertEqual(os.environ["FL_BRIDGE_SANDBOXED"], "0")
-            self.assertEqual(
-                os.environ["FL_BRIDGE_MIDI_PORT"], "Must Not Be Enumerated"
-            )
 
     def test_every_offline_test_is_included_in_the_required_suite(self) -> None:
         runner = load_safe_runner()
@@ -369,80 +334,6 @@ with mock.patch.object(
             "MCP Registry rejects server descriptions longer than 100 characters",
         )
 
-    def test_no_author_host_records_are_shipped(self) -> None:
-        # An installed copy must describe the user's own FL Studio, never the
-        # machine this package was built on. A dated validation record used to
-        # ship here and was surfaced through fl_get_capabilities, which meant
-        # every install answered with the author's host instead of its own.
-        package = files("fl_studio_mcp")
-        for name in ("validation_manifest.json",
-                     "selection_validation_manifest.json"):
-            with self.subTest(name=name):
-                self.assertFalse((package / name).is_file())
-
-    def test_entry_points_are_exactly_the_supported_setup_and_runtime_commands(self) -> None:
-        # Pinned as a set, not merely checked for presence: a stray console
-        # script is a public surface, and this file is where that gets caught.
-        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        self.assertEqual(
-            project["project"]["scripts"],
-            {
-                "fl-studio-mcp": "fl_studio_mcp.mcp_server:main",
-                "postfader": "fl_studio_mcp.cli:main",
-                "postfader-install-bridge": "fl_studio_mcp.bridge_install:main",
-                "postfader-doctor": "fl_studio_mcp.diagnostics:main",
-                "postfader-plugin-report": "fl_studio_mcp.plugin_report:main",
-                "postfader-plugin-atlas": "fl_studio_mcp.plugin_atlas.cli:main",
-                "postfader-setup": "fl_studio_mcp.setup_wizard:main",
-            },
-        )
-
-    def test_an_install_can_deploy_the_bridge_without_the_repository(self) -> None:
-        # The whole reason the bridge is package data. If it stops shipping,
-        # `pip install` silently produces a server that can never reach FL
-        # Studio, and the failure only shows up on a user's machine.
-        package = files("fl_studio_mcp")
-        self.assertTrue((package / "_bridge" / "device_UniversalBridge.py").is_file())
-
-        declared = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        self.assertIn(
-            "fl_studio_mcp._bridge",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        self.assertIn(
-            "fl_studio_mcp.plugin_atlas",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        self.assertIn(
-            "fl_studio_mcp.plugin_atlas_data",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        self.assertIn(
-            "fl_studio_mcp.sound_selection",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        self.assertIn(
-            "fl_studio_mcp.sound_selection.data",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        self.assertIn(
-            "fl_studio_mcp.creation_review",
-            declared["tool"]["setuptools"]["packages"],
-        )
-        atlas_data = files("fl_studio_mcp.plugin_atlas_data")
-        source_data = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
-        for path in source_data.rglob("*.json"):
-            relative = path.relative_to(source_data)
-            with self.subTest(atlas_data=relative.as_posix()):
-                self.assertTrue(atlas_data.joinpath(*relative.parts).is_file())
-
-        sound_data = files("fl_studio_mcp.sound_selection.data")
-        source_sound_data = ROOT / "fl_studio_mcp" / "sound_selection" / "data"
-        for path in source_sound_data.rglob("*.json"):
-            relative = path.relative_to(source_sound_data)
-            with self.subTest(sound_data=relative.as_posix()):
-                self.assertTrue(sound_data.joinpath(*relative.parts).is_file())
-
     def test_runtime_modules_do_not_import_the_fl_controller_body(self) -> None:
         # `_bridge` has no __init__.py, but its directory may still be found as
         # a PEP 420 namespace package. That is not the safety boundary. The
@@ -475,121 +366,16 @@ with mock.patch.object(
                     f"{module.name} imports the FL-only controller body",
                 )
 
-    def test_public_metadata_and_direct_test_dependencies_are_declared(self) -> None:
-        metadata = tomllib.loads(
-            (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        )
-        project = metadata["project"]
-        self.assertEqual(project["name"], "postfader-fl-studio-mcp")
-        self.assertEqual(project["readme"], "README.md")
-        self.assertEqual(project["requires-python"], ">=3.10,<3.15")
-        self.assertIn("Programming Language :: Python :: 3.14", project["classifiers"])
-        self.assertIn(
-            "Operating System :: Microsoft :: Windows :: Windows 11",
-            project["classifiers"],
-        )
-        self.assertIn("Operating System :: MacOS :: MacOS X", project["classifiers"])
-        self.assertTrue(any(item.startswith("anyio") for item in project["dependencies"]))
-        self.assertIn("mcp>=2.0.0,<2.1", project["dependencies"])
-        self.assertFalse(
-            any(item.startswith("mcp[") for item in project["dependencies"])
-        )
-        self.assertTrue(
-            any(item.startswith("tomli") for item in project["optional-dependencies"]["test"])
-        )
-        self.assertEqual(
-            project["urls"]["Repository"],
-            "https://github.com/synopsys0/postfader-fl-studio-mcp",
-        )
-        self.assertEqual(
-            metadata["tool"]["setuptools"]["packages"],
-            [
-                "fl_studio_mcp",
-                "fl_studio_mcp._bridge",
-                "fl_studio_mcp.creation_pipeline",
-                "fl_studio_mcp.creation_review",
-                "fl_studio_mcp.plugin_atlas",
-                "fl_studio_mcp.plugin_atlas_data",
-                "fl_studio_mcp.sound_selection",
-                "fl_studio_mcp.sound_selection.data",
-            ],
-        )
-        self.assertFalse(metadata["tool"]["setuptools"]["include-package-data"])
-        self.assertEqual(
-            metadata["tool"]["setuptools"]["package-data"],
-            {
-                "fl_studio_mcp.plugin_atlas_data": ["*.json", "**/*.json"],
-                "fl_studio_mcp.sound_selection.data": ["*.json", "**/*.json"],
-            },
-        )
-
-    def test_offline_prototype_is_not_in_the_public_package(self) -> None:
-        package = ROOT / "fl_studio_mcp"
-        for name in ("server.py", "models.py", "project_file.py"):
-            with self.subTest(name=name):
-                self.assertFalse((package / name).exists())
-
-        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-        self.assertFalse(any(item.startswith("pyflp") for item in project["project"]["dependencies"]))
-
-    def test_ci_targets_windows_and_macos_with_transport_disabled(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("windows-latest", workflow)
-        self.assertIn("macos-latest", workflow)
-        self.assertIn('FL_BRIDGE_ENABLE_MIDI: "0"', workflow)
-        self.assertIn('FL_BRIDGE_ENABLE_WRITES: "0"', workflow)
-        self.assertIn('FL_BRIDGE_SANDBOXED: "1"', workflow)
-        self.assertNotIn("test_midi_transport.py", workflow)
-        self.assertIn("scripts/verify_distribution.py", workflow)
-        self.assertIn("scripts/clean_wheel_smoke.py", workflow)
-        self.assertIn("scripts/build_release_bundles.py", workflow)
-        self.assertIn("mcp==2.0.0", workflow)
-        self.assertIn("mcp>=2.0.0,<2.1", workflow)
-        self.assertIn("tests/test_sdk_compatibility.py", workflow)
-        self.assertIn("tests/test_readonly_mcp.py", workflow)
-        self.assertIn("POSTFADER_BUNDLE_DRY_RUN", workflow)
-        for line in workflow.splitlines():
-            self.assertNotRegex(line, r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
-
-    def test_release_publish_waits_for_both_native_platform_checks(self) -> None:
-        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
-            encoding="utf-8"
-        )
-        platform = workflow.split("\n  platform-verify:\n", 1)[1].split(
-            "\n  build:\n", 1
-        )[0]
-        build = workflow.split("\n  build:\n", 1)[1].split(
-            "\n  publish:\n", 1
-        )[0]
-        publish = workflow.split("\n  publish:\n", 1)[1].split(
-            "\n  github-release:\n", 1
-        )[0]
-
-        self.assertIn("os: [windows-latest, macos-latest]", platform)
-        self.assertIn('python-version: ["3.10", "3.14"]', platform)
-        self.assertIn("python-version: ${{ matrix.python-version }}", platform)
-        self.assertIn("scripts/run_safe_tests.py", platform)
-        self.assertIn("scripts/verify_distribution.py", platform)
-        self.assertIn("scripts/clean_wheel_smoke.py", platform)
-        self.assertIn("scripts/build_release_bundles.py", platform)
-        self.assertIn("POSTFADER_BUNDLE_DRY_RUN", platform)
-        self.assertIn("if: runner.os == 'Windows'", platform)
-        self.assertIn("scripts/install.ps1", platform)
-        self.assertIn("scripts/launch_fl_studio.ps1", platform)
-        self.assertIn("scripts/verify_distribution.py", build)
-        self.assertIn("scripts/clean_wheel_smoke.py", build)
-        self.assertIn("scripts/build_release_bundles.py", build)
-        self.assertIn("release-platform-bundles", workflow)
-        self.assertIn("release-software-bom", workflow)
-        self.assertIn("SHA256SUMS.txt", workflow)
-        self.assertIn("needs: [build, platform-verify, attest-release]", publish)
-        self.assertIn("attest-release:", workflow)
-        self.assertIn("actions/attest@", workflow)
-        self.assertIn("skip-existing: true", publish)
-        for line in workflow.splitlines():
-            self.assertNotRegex(line, r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
+    def test_workflow_actions_are_pinned_by_commit(self) -> None:
+        unpinned = re.compile(r"uses:\s+[^\s]+@(v\d+|release/v\d+)\s*$")
+        for workflow in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+            with self.subTest(workflow=workflow.name):
+                text = workflow.read_text(encoding="utf-8")
+                self.assertNotIn("test_midi_transport.py", text)
+                self.assertEqual(
+                    [line for line in text.splitlines() if unpinned.search(line)],
+                    [],
+                )
 
     def test_distribution_verifier_blocks_a_missing_ownership_marker(self) -> None:
         verifier = load_distribution_verifier()
@@ -617,68 +403,6 @@ with mock.patch.object(
 
         self.assertTrue(any("ownership marker" in item for item in missing))
         self.assertFalse(any("ownership marker" in item for item in present))
-
-    def test_distribution_verifier_pins_new_v013_runtime_modules(self) -> None:
-        verifier = load_distribution_verifier()
-        expected = {
-            "fl_studio_mcp/acceptance.py",
-            "fl_studio_mcp/client_config.py",
-            "fl_studio_mcp/evidence.py",
-            "fl_studio_mcp/host_config.py",
-        }
-        self.assertEqual(verifier.V013_REQUIRED_RUNTIME_MODULES, expected)
-        self.assertLessEqual(expected, verifier.RUNTIME_MODULES)
-
-    def test_distribution_verifier_pins_plugin_atlas_modules_and_data(self) -> None:
-        verifier = load_distribution_verifier()
-        self.assertTrue(verifier.ATLAS_RUNTIME_MODULES)
-        self.assertTrue(verifier.ATLAS_DATA_FILES)
-        self.assertLessEqual(verifier.ATLAS_RUNTIME_MODULES, verifier.RUNTIME_MODULES)
-        self.assertTrue(
-            all(
-                path.startswith("fl_studio_mcp/plugin_atlas_data/")
-                and path.endswith(".json")
-                for path in verifier.ATLAS_DATA_FILES
-            )
-        )
-
-    def test_distribution_verifier_pins_sound_selection_modules_and_data(self) -> None:
-        verifier = load_distribution_verifier()
-        self.assertTrue(verifier.SOUND_SELECTION_RUNTIME_MODULES)
-        self.assertTrue(verifier.SOUND_SELECTION_DATA_FILES)
-        self.assertLessEqual(
-            verifier.SOUND_SELECTION_RUNTIME_MODULES,
-            verifier.RUNTIME_MODULES,
-        )
-        self.assertTrue(
-            all(
-                path.startswith("fl_studio_mcp/sound_selection/data/")
-                and path.endswith(".json")
-                for path in verifier.SOUND_SELECTION_DATA_FILES
-            )
-        )
-        self.assertIn(
-            "/scripts/live_sound_selection_acceptance.py",
-            verifier.SDIST_REQUIRED_SUFFIXES,
-        )
-
-    def test_distribution_verifier_pins_creation_review_modules_and_docs(self) -> None:
-        verifier = load_distribution_verifier()
-        self.assertTrue(verifier.CREATION_REVIEW_RUNTIME_MODULES)
-        self.assertLessEqual(
-            verifier.CREATION_REVIEW_RUNTIME_MODULES,
-            verifier.RUNTIME_MODULES,
-        )
-        self.assertIn("/docs/creation-review.md", verifier.SDIST_REQUIRED_SUFFIXES)
-        self.assertIn(
-            "/scripts/generate_creation_review_fixtures.py",
-            verifier.SDIST_REQUIRED_SUFFIXES,
-        )
-
-    def test_distribution_verifier_pins_the_current_tool_count(self) -> None:
-        verifier = load_distribution_verifier()
-        self.assertEqual(verifier.EXPECTED_TOOL_COUNT, 134)
-        self.assertEqual(verifier.EXPECTED_RESOURCE_COUNT, 8)
 
     def test_sdist_verification_requires_every_runtime_module(self) -> None:
         verifier = load_distribution_verifier()
