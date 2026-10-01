@@ -341,7 +341,7 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader is an FL Studio production connector with 149 tools and 8 live
+PostFader is an FL Studio production connector with 134 tools and 8 live
 resources. Use focused project, channel, mixer, pattern and plug-in reads to
 understand the user's task, then carry it through with the relevant workflow.
 The connected AI makes creative decisions; PostFader executes and reports FL
@@ -1031,7 +1031,7 @@ async def plugins_scan_parameters(
     annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Search Plugin Atlas"}),
 )
 async def plugins_atlas_search(
-    request: AtlasSearchRequest,
+    request: Annotated[AtlasSearchRequest, Field(description="Offline catalog text search and optional narrowing filters; omit filters to search all products.")],
 ) -> AtlasSearchResponse:
     """Find products in the bundled offline Plugin Atlas by text and filters.
 
@@ -1049,7 +1049,7 @@ async def plugins_atlas_search(
     annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get Plugin Atlas product"}),
 )
 async def plugins_atlas_get_product(
-    request: AtlasGetProductRequest,
+    request: Annotated[AtlasGetProductRequest, Field(description="Exact catalog product ID obtained from Atlas search, recommendations, or a live match.")],
 ) -> AtlasProductResponse:
     """Read a bundled Plugin Atlas product by its exact product_id.
 
@@ -1068,7 +1068,7 @@ async def plugins_atlas_get_product(
     ),
 )
 async def plugins_atlas_recommend(
-    request: AtlasRecommendRequest,
+    request: Annotated[AtlasRecommendRequest, Field(description="Production-goal criteria, or product_id plus stock_alternatives=True for a known product's stock alternatives.")],
 ) -> AtlasRecommendationResponse:
     """Rank bundled Plugin Atlas products for a production problem or technique.
 
@@ -1088,7 +1088,7 @@ async def plugins_atlas_recommend(
     ),
 )
 async def plugins_atlas_inspect_loaded(
-    request: AtlasInspectLoadedRequest,
+    request: Annotated[AtlasInspectLoadedRequest, Field(description="Live inventory scope and catalog-match limits; an empty request uses conservative matching defaults.")],
 ) -> AtlasInspectLoadedResponse:
     """Match loaded effects and generators to bundled Plugin Atlas knowledge.
 
@@ -3245,9 +3245,32 @@ async def mix_resolve_processing_intent(
     annotations=WORKFLOW_STATE.model_copy(update={"title": "Create a reviewable mix plan"}),
 )
 async def mix_create_plan(
-    title: Annotated[str, Field(min_length=1, max_length=128)],
-    operations: Annotated[list[BatchOperation], Field(min_length=1, max_length=32)],
-    rationale: Annotated[list[str] | None, Field(default=None, max_length=32)] = None,
+    title: Annotated[str, Field(
+        min_length=1, max_length=128,
+        description="Short human-readable purpose for the proposed changes; this labels the review plan and is not a project filename.",
+        examples=["Balance two mixer tracks"],
+    )],
+    operations: Annotated[list[BatchOperation], Field(
+        min_length=1, max_length=32,
+        description=(
+            "Ordered absolute writes to propose, not execute. Each item needs a unique "
+            "operation_id and an operation discriminator selecting one of the listed "
+            "schemas. Mixer, channel, pattern, Playlist, plugin-parameter, and tempo "
+            "operations have different target fields and units: follow that variant's "
+            "schema. Do not write the same target field twice. expected_before is an "
+            "optional stale-state guard; mixer index 0 requires allow_master=True. "
+            "Applying the reviewed plan is non-atomic and does not roll back."
+        ),
+        examples=[[
+            {"operation_id": "level-1", "operation": "mixer_volume_db", "track_index": 1, "volume_db": -6.0},
+            {"operation_id": "pan-2", "operation": "mixer_pan", "track_index": 2, "pan": 0.2},
+        ]],
+    )],
+    rationale: Annotated[list[str] | None, Field(
+        default=None, max_length=32,
+        description="Optional review notes explaining the intended result and evidence for the proposed writes; each entry must be non-empty and at most 512 characters. Omit when no notes are needed.",
+        examples=[["Reduce the first track's level and move the second slightly right."]],
+    )] = None,
     session_fingerprint: SessionFingerprintArg = None,
 ) -> MixPlan:
     """Store proposed mixer/plugin changes for review without applying them.
@@ -3452,8 +3475,9 @@ async def sound_selection_apply(
         SoundPalettePlan | SoundPaletteVariationPlan | str,
         Field(
             description=(
-                "A validated palette plan, section variation, or its "
-                "process-local palette ID."
+                "A validated palette plan, full section-variation object, or "
+                "process-local base palette ID. A variation_id is not accepted; "
+                "the base palette ID selects base assignments, not a variation."
             )
         ),
     ],
@@ -3475,7 +3499,9 @@ async def sound_selection_apply(
 ) -> SoundSelectionApplyResult:
     """Apply exact preset assignments from a reviewed sound palette or variation.
 
-    Pass the plan or its process-local ID, the observed session_fingerprint, and
+    Pass a palette plan, its palette_id, or the full variation object. A variation_id
+    cannot be applied; its base_palette_id selects the base assignments instead.
+    Supply the observed session_fingerprint and
     authorized_to_modify=True only after explicit user authorization. Enabled
     writes are required. role_ids limits application to chosen roles; navigation
     and settle limits bound preset selection. Applies in deterministic order and

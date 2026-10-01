@@ -7,11 +7,13 @@ import importlib.metadata
 import unittest
 from unittest import mock
 
+from jsonschema import Draft202012Validator
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 
 from fl_studio_mcp import mcp_server as server_module
 from fl_studio_mcp.mcp_server import mcp
+from fl_studio_mcp.workflows import validate_batch_operations
 
 
 class MCPCompatibilityTests(unittest.TestCase):
@@ -67,6 +69,46 @@ class MCPCompatibilityTests(unittest.TestCase):
                 "fl://patterns",
             },
         )
+
+    def test_mix_plan_examples_validate_through_exported_schema_and_batch_kernel(self) -> None:
+        tool = next(tool for tool in asyncio.run(mcp.list_tools()) if tool.name == "mix_create_plan")
+        schema = tool.input_schema
+        properties = schema["properties"]
+        arguments = {
+            name: properties[name]["examples"][0]
+            for name in ("title", "operations", "rationale")
+        }
+        Draft202012Validator(schema).validate(arguments)
+        operations = validate_batch_operations(arguments["operations"])
+        self.assertEqual([item.operation_id for item in operations], [item["operation_id"] for item in arguments["operations"]])
+        for reference in properties["operations"]["items"]["oneOf"]:
+            variant = schema["$defs"][reference["$ref"].rsplit("/", 1)[-1]]
+            self.assertTrue(variant.get("description"))
+            self.assertIs(variant.get("additionalProperties"), False)
+
+        invalid = {**arguments, "operations": [{**arguments["operations"][0], "volume_db": 7.0}]}
+        self.assertTrue(list(Draft202012Validator(schema).iter_errors(invalid)))
+        with self.assertRaises(ValueError):
+            validate_batch_operations(arguments["operations"] * 2)
+
+    def test_atlas_request_guidance_and_examples_survive_sdk_registration(self) -> None:
+        tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+        for name in ("plugins_atlas_search", "plugins_atlas_get_product", "plugins_atlas_recommend", "plugins_atlas_inspect_loaded"):
+            with self.subTest(tool=name):
+                schema = tools[name].input_schema
+                request = schema["properties"]["request"]
+                self.assertTrue(request.get("description"))
+                definition = schema["$defs"][request["$ref"].rsplit("/", 1)[-1]]
+                self.assertIs(definition.get("additionalProperties"), False)
+                for field in definition["properties"].values():
+                    self.assertTrue(field.get("description"))
+                    for example in field.get("examples", []):
+                        Draft202012Validator({**field, "$defs": schema["$defs"]}).validate(example)
+
+        for name in ("plugins_atlas_search", "plugins_atlas_recommend", "plugins_atlas_inspect_loaded"):
+            Draft202012Validator(tools[name].input_schema).validate({"request": {}})
+        invalid = {"request": {"only_used": False, "match_limit": 129}}
+        self.assertTrue(list(Draft202012Validator(tools["plugins_atlas_inspect_loaded"].input_schema).iter_errors(invalid)))
 
     def test_unknown_tool_arguments_still_fail_closed(self) -> None:
         cases = {

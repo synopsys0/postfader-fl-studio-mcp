@@ -37,6 +37,26 @@ that notes were applied. For batches and plans, earlier changes remain after a
 later failure; inspect receipts before continuing and never replay an ambiguous
 write automatically. These tools do not imply a project save.
 
+`mix_create_plan.operations` is an ordered discriminated union: each item needs
+a unique `operation_id` and an `operation` name selecting its target fields and
+units. For example, `mixer_volume_db` uses a zero-based `track_index` and
+`volume_db`, while `mixer_pan` uses `pan` from -1 (left) to 1 (right). The
+exported input schema describes each supported variant and includes a valid
+two-operation example. The title labels the review plan; rationale entries
+explain its intended result. Creating the plan does not execute the example
+or any supplied operation.
+
+To apply a Sound Selection variation, pass the full variation object to
+`sound_selection_apply`. Passing a `variation_id` is unsupported, and passing
+its `base_palette_id` selects the base palette's assignments instead of the
+section delta. Review the returned assignments before applying either.
+
+Atlas request fields document catalog filters separately from live matching.
+The response's `registry_digest` identifies the bundled catalog; `observed_at`
+dates the live inventory. Candidate scores and `best_match` describe catalog
+matching, while `compatibility` contains scoped evidence. None of these alone
+proves that a live control is writable, or that the user owns a product.
+
 ## Inspection tools
 
 | Tool | Purpose |
