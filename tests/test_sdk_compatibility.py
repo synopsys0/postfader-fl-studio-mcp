@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import json
 import pkgutil
 import unittest
 from unittest import mock
@@ -18,21 +19,67 @@ from fl_studio_mcp.mcp_server import mcp
 from fl_studio_mcp.workflows import validate_batch_operations
 
 
+def _schema_nodes(node):
+    """Yield every schema object, skipping data such as examples and defaults."""
+
+    if not isinstance(node, dict):
+        return
+    yield node
+    for key, value in node.items():
+        if key in {"items", "additionalProperties", "not"} and isinstance(value, dict):
+            yield from _schema_nodes(value)
+        elif key in {"anyOf", "oneOf", "allOf", "prefixItems"}:
+            for item in value:
+                yield from _schema_nodes(item)
+        elif key in {"properties", "$defs"}:
+            for item in value.values():
+                yield from _schema_nodes(item)
+
+
 class MCPCompatibilityTests(unittest.TestCase):
-    def test_all_tools_register_with_strict_input_schemas(self) -> None:
+    def test_advertised_input_schemas_are_closed_valid_and_compact(self) -> None:
         tools = asyncio.run(mcp.list_tools())
         self.assertTrue(tools)
-        non_strict = [
-            tool.name
-            for tool in tools
-            if tool.input_schema.get("additionalProperties") is not False
-            or any(
-                definition.get("type") == "object"
-                and definition.get("additionalProperties") is not False
-                for definition in tool.input_schema.get("$defs", {}).values()
-            )
-        ]
-        self.assertEqual(non_strict, [])
+        open_objects = set()
+        sizes = {}
+        for tool in tools:
+            schema = tool.input_schema
+            Draft202012Validator.check_schema(schema)
+            sizes[tool.name] = len(json.dumps(schema, separators=(",", ":")))
+            definitions = schema.get("$defs", {})
+            for node in _schema_nodes(schema):
+                reference = node.get("$ref")
+                if reference is not None:
+                    self.assertIn(reference.rsplit("/", 1)[-1], definitions, tool.name)
+                if "properties" in node and node.get("additionalProperties") is not False:
+                    open_objects.add(tuple(sorted(node["properties"])))
+        # Only the Production Run operation item is open: its fields depend on
+        # the operation, are validated by the server, and are served on demand.
+        self.assertEqual(open_objects, {("after", "operation", "operation_id")})
+        # Clients load this listing into the model's context. Plans alone once
+        # advertised about 240 KB each; keep the whole listing far below that.
+        self.assertLess(max(sizes.values()), 40_000)
+        self.assertLess(sum(sizes.values()), 350_000)
+
+    def test_operation_schemas_are_served_on_demand(self) -> None:
+        tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
+        plan = tools["postfader_execute_run"].input_schema["$defs"]["ProductionRunPlan"]
+        advertised = plan["properties"]["operations"]["items"]["properties"]["operation"]["enum"]
+
+        result = asyncio.run(
+            mcp.call_tool("postfader_describe_operations", {"operations": ["generate_melody"]})
+        )
+        listed = {item["operation"]: item for item in result.structured_content["operations"]}
+        self.assertEqual(sorted(listed), sorted(advertised))
+        self.assertEqual(
+            [name for name, item in listed.items() if not item["summary"].endswith(".")], []
+        )
+        self.assertIsNone(listed["write_note_sequence"]["json_schema"])
+
+        validator = Draft202012Validator(listed["generate_melody"]["json_schema"])
+        operation = {"operation": "generate_melody", "operation_id": "melody-1", "bars": 8}
+        validator.validate(operation)
+        self.assertTrue(list(validator.iter_errors({**operation, "bar_count": 8})))
 
     def test_every_contract_model_rejects_unknown_fields(self) -> None:
         models = set()
@@ -160,6 +207,29 @@ class MCPCompatibilityTests(unittest.TestCase):
                             "unexpected_nested": True,
                         }
                     ]
+                },
+            ),
+            # The listing advertises plan operations by name only; the call is
+            # still validated against each operation's full model.
+            "Production Run operation": (
+                "postfader_validate_run",
+                {
+                    "request": {
+                        "brief": "Write a melody.",
+                        "scope": {"kind": "whole_project", "description": "Project."},
+                        "allowed_changes": ["composition"],
+                        "completion_target": "A melody.",
+                    },
+                    "plan": {
+                        "plan_id": "plan-1",
+                        "operations": [
+                            {
+                                "operation": "generate_melody",
+                                "operation_id": "melody-1",
+                                "unexpected_nested": True,
+                            }
+                        ],
+                    },
                 },
             ),
         }

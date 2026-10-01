@@ -450,6 +450,8 @@ class ProductionOperationBase(ProductionRunModel):
 
 
 class GenerateChordProgressionOperation(ProductionOperationBase):
+    """Generate a chord progression in a key from chord tokens."""
+
     operation: Literal["generate_chord_progression"] = "generate_chord_progression"
     progression: tuple[ChordToken, ...] = Field(min_length=1, max_length=64)
     root: RootValue = "C"
@@ -465,6 +467,8 @@ class GenerateChordProgressionOperation(ProductionOperationBase):
 
 
 class GenerateMelodyOperation(ProductionOperationBase):
+    """Generate a seeded melody in a key, register and contour."""
+
     operation: Literal["generate_melody"] = "generate_melody"
     root: RootValue = "C"
     collection: str = Field(default="major", min_length=1, max_length=64)
@@ -488,6 +492,8 @@ class GenerateMelodyOperation(ProductionOperationBase):
 
 
 class GenerateBasslineOperation(ProductionOperationBase):
+    """Generate a seeded bassline that follows a chord progression."""
+
     operation: Literal["generate_bassline"] = "generate_bassline"
     progression: tuple[ChordToken, ...] = Field(min_length=1, max_length=64)
     root: RootValue = "C"
@@ -503,6 +509,8 @@ class GenerateBasslineOperation(ProductionOperationBase):
 
 
 class GenerateDrumsOperation(ProductionOperationBase):
+    """Generate a seeded drum pattern, optionally mapped to a kit's reported pads."""
+
     operation: Literal["generate_drums"] = "generate_drums"
     style: Literal["house", "hiphop", "trap", "pop", "dnb"] = "house"
     bars: int = Field(default=4, ge=1, le=64)
@@ -572,6 +580,8 @@ class AdaptNoteSequenceOperation(ProductionOperationBase):
 
 
 class PreparePatternOperation(ProductionOperationBase):
+    """Name and size a pattern that FL Studio reports as empty."""
+
     operation: Literal["prepare_pattern"] = "prepare_pattern"
     pattern_number: int = Field(ge=1, le=999)
     name: str = Field(min_length=1, max_length=64)
@@ -580,11 +590,15 @@ class PreparePatternOperation(ProductionOperationBase):
 
 
 class SelectPatternOperation(ProductionOperationBase):
+    """Select an existing pattern by number."""
+
     operation: Literal["select_pattern"] = "select_pattern"
     pattern_number: int = Field(ge=1, le=999)
 
 
 class WriteNoteSequenceOperation(ProductionOperationBase):
+    """Write a note sequence into a channel's pattern through the Piano Roll script."""
+
     operation: Literal["write_note_sequence"] = "write_note_sequence"
     sequence: NoteSequence | OperationOutputReference
     channel_index: int | OperationOutputReference
@@ -610,6 +624,8 @@ class WriteNoteSequenceOperation(ProductionOperationBase):
 
 
 class TransformPianoRollOperation(ProductionOperationBase):
+    """Quantize, transpose, humanize, duplicate, delete or clear a pattern's notes."""
+
     operation: Literal["transform_piano_roll"] = "transform_piano_roll"
     transform: PianoRollTransform
     channel_index: int = Field(ge=0)
@@ -617,11 +633,15 @@ class TransformPianoRollOperation(ProductionOperationBase):
 
 
 class AddSectionMarkersOperation(ProductionOperationBase):
+    """Add named section markers to the Playlist."""
+
     operation: Literal["add_section_markers"] = "add_section_markers"
     markers: tuple[SectionMarker, ...] = Field(min_length=1, max_length=32)
 
 
 class RecordAutomationValueOperation(ProductionOperationBase):
+    """Record one mixer or channel volume, pan or stereo-separation value."""
+
     operation: Literal["record_automation_value"] = "record_automation_value"
     target_kind: Literal["mixer", "channel"]
     target_index: int = Field(ge=0)
@@ -632,6 +652,8 @@ class RecordAutomationValueOperation(ProductionOperationBase):
 
 
 class ApplyVerifiedBatchOperation(ProductionOperationBase):
+    """Apply an ordered batch of direct edits, each read back from FL Studio."""
+
     operation: Literal["apply_verified_batch"] = "apply_verified_batch"
     operations: tuple[BatchOperation, ...] = Field(
         min_length=1, max_length=MAX_BATCH_OPERATIONS
@@ -639,11 +661,15 @@ class ApplyVerifiedBatchOperation(ProductionOperationBase):
 
 
 class PlanSoundPaletteOperation(ProductionOperationBase):
+    """Choose a sound for each role from the loaded instruments; changes nothing."""
+
     operation: Literal["plan_sound_palette"] = "plan_sound_palette"
     request: SoundSelectionRequest
 
 
 class ApplySoundPaletteOperation(ProductionOperationBase):
+    """Select a palette's presets in FL Studio and read each one back."""
+
     operation: Literal["apply_sound_palette"] = "apply_sound_palette"
     palette: SoundPalettePlan | SoundPaletteVariationPlan | OperationOutputReference
     role_ids: tuple[str, ...] = Field(default_factory=tuple, max_length=128)
@@ -665,6 +691,8 @@ class ApplySoundPaletteOperation(ProductionOperationBase):
 
 
 class CreateSoundPaletteVariationOperation(ProductionOperationBase):
+    """Plan a section-specific variation of an earlier palette; changes nothing."""
+
     operation: Literal["create_sound_palette_variation"] = (
         "create_sound_palette_variation"
     )
@@ -694,6 +722,8 @@ class CreateSoundPaletteVariationOperation(ProductionOperationBase):
 
 
 class SelectPluginPresetOperation(ProductionOperationBase):
+    """Select a preset on a loaded instrument or effect by name or index."""
+
     operation: Literal["select_plugin_preset"] = "select_plugin_preset"
     target: PluginTarget | OperationOutputReference
     preset_name: str | None = Field(default=None, min_length=1, max_length=256)
@@ -718,6 +748,8 @@ class SelectPluginPresetOperation(ProductionOperationBase):
 
 
 class InspectDrumMapOperation(ProductionOperationBase):
+    """Read which pads of a loaded drum instrument play which drum roles."""
+
     operation: Literal["inspect_drum_map"] = "inspect_drum_map"
     target: PluginTarget | OperationOutputReference
     required_roles: tuple[str, ...] = Field(
@@ -739,6 +771,8 @@ class InspectDrumMapOperation(ProductionOperationBase):
 
 
 class SelectDrumKitOperation(ProductionOperationBase):
+    """Select a drum-kit preset, then check its pads cover the required roles."""
+
     operation: Literal["select_drum_kit"] = "select_drum_kit"
     target: PluginTarget | OperationOutputReference
     preset_name: str | None = Field(default=None, min_length=1, max_length=256)
@@ -768,6 +802,8 @@ class SelectDrumKitOperation(ProductionOperationBase):
 
 
 class RecordSoundFeedbackOperation(ProductionOperationBase):
+    """Record accepted, rejected or neutral feedback on a sound; FL Studio is unchanged."""
+
     operation: Literal["record_sound_feedback"] = "record_sound_feedback"
     feedback: SoundFeedbackRequest
 
@@ -818,11 +854,15 @@ def _validate_review_session_reference(
 
 
 class StartReviewSessionOperation(ProductionOperationBase):
+    """Start a Creation Review session linked to a completed run."""
+
     operation: Literal["start_review_session"] = "start_review_session"
     request: ReviewSessionRequest
 
 
 class AttachReviewAssetsOperation(ProductionOperationBase):
+    """Attach exported audio files to a review session."""
+
     operation: Literal["attach_review_assets"] = "attach_review_assets"
     review_session: ReviewSessionSelector
     assets: tuple[ReviewAudioAsset, ...] = Field(
@@ -838,6 +878,8 @@ class AttachReviewAssetsOperation(ProductionOperationBase):
 
 
 class EvaluateCreationOperation(ProductionOperationBase):
+    """Measure the attached bounce overall and per section."""
+
     operation: Literal["evaluate_creation"] = "evaluate_creation"
     review_session: ReviewSessionSelector
     asset_set_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -864,6 +906,8 @@ class EvaluateCreationOperation(ProductionOperationBase):
 
 
 class RecordCreationFeedbackOperation(ProductionOperationBase):
+    """Record the producer's feedback and locks on the reviewed draft."""
+
     operation: Literal["record_creation_feedback"] = "record_creation_feedback"
     review_session: ReviewSessionSelector
     feedback: CreationFeedback
@@ -881,6 +925,8 @@ class RecordCreationFeedbackOperation(ProductionOperationBase):
 
 
 class PlanCreationRevisionOperation(ProductionOperationBase):
+    """Plan one bounded revision from feedback and measured findings."""
+
     operation: Literal["plan_creation_revision"] = "plan_creation_revision"
     review_session: ReviewSessionSelector
     request: RevisionRequest
@@ -928,6 +974,8 @@ class PlanCreationRevisionOperation(ProductionOperationBase):
 
 
 class ApplyCreationRevisionOperation(ProductionOperationBase):
+    """Apply a planned revision through the run executor."""
+
     operation: Literal["apply_creation_revision"] = "apply_creation_revision"
     review_session: ReviewSessionSelector
     plan: RevisionPlan | OperationOutputReference
@@ -946,6 +994,8 @@ class ApplyCreationRevisionOperation(ProductionOperationBase):
 
 
 class CompareRevisionBouncesOperation(ProductionOperationBase):
+    """Compare the before and after bounces of a revision."""
+
     operation: Literal["compare_revision_bounces"] = "compare_revision_bounces"
     review_session: ReviewSessionSelector
     before_asset_id: str = Field(min_length=1, max_length=128)
@@ -961,6 +1011,8 @@ class CompareRevisionBouncesOperation(ProductionOperationBase):
 
 
 class CreatePlaylistHandoffOperation(ProductionOperationBase):
+    """List the manual Playlist steps that remain after a revision."""
+
     operation: Literal["create_playlist_handoff"] = "create_playlist_handoff"
     review_session: ReviewSessionSelector
 
@@ -971,6 +1023,8 @@ class CreatePlaylistHandoffOperation(ProductionOperationBase):
 
 
 class CreateDeliveryManifestOperation(ProductionOperationBase):
+    """Describe the export and import work that remains for delivery."""
+
     operation: Literal["create_delivery_manifest"] = "create_delivery_manifest"
     review_session: ReviewSessionSelector
 

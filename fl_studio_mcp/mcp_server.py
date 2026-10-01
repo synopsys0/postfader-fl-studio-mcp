@@ -16,7 +16,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp.types import ToolAnnotations
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, WithJsonSchema
 
 from . import __version__
 from .advisory import (
@@ -290,6 +290,13 @@ from .track_b_contracts import (
     VerifiedTempoWrite,
     VerifiedTimeSignatureNumeratorWrite,
 )
+from .tool_schemas import (
+    MAX_DESCRIBED_OPERATIONS,
+    OperationCatalog,
+    ProductionOperationName,
+    compact_input_schema,
+    describe_operations,
+)
 from .verified_writer import VerifiedWriter, WriteModeManager
 from .workflows import (
     MAX_BATCH_OPERATIONS,
@@ -341,9 +348,9 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader is an FL Studio production connector with 134 tools and 8 live
-resources. Use focused project, channel, mixer, pattern and plug-in reads to
-understand the user's task, then carry it through with the relevant workflow.
+PostFader is an FL Studio production connector. Use focused project, channel,
+mixer, pattern and plug-in reads to understand the user's task, then carry it
+through with the relevant workflow.
 The connected AI makes creative decisions; PostFader executes and reports FL
 state. Prefer fl:// resources for initial context when the client exposes them.
 
@@ -354,6 +361,8 @@ readiness checks and enables writes internally once. Do not ask separately to
 enable write mode, repeat authorization inside the run, or call validation and
 readiness tools again before execution. Use postfader_creation_readiness or
 postfader_validate_run when the user actually wants a diagnostic or a plan.
+Plan schemas list operation names only: call postfader_describe_operations
+with the operations you will use to get their exact fields.
 For individual setters, enable fl_set_write_mode(enabled=true,
 confirm_user_present=true) once when needed; the user's request to edit is the
 confirmation. Analysis and ideas alone do not authorize project changes.
@@ -394,7 +403,8 @@ then express the user's specific style through descriptors and role requests.
 On macOS, use plugins_list_available and plugins_load to add missing instruments
 or effects from FL's native Add menu. Match exact observed menu names, then use
 the verified new channel/slot for preset selection or processing. Menu presence
-does not prove licensing. Loading is a separate host tool, outside Run operations.
+does not prove licensing. Loading is a separate host tool, outside Run operations,
+and needs write mode like any setter.
 
 Use piano_roll_read_notes to inspect existing notes, timing, velocity and
 expression before composing around them. It opens the requested editor without
@@ -521,7 +531,32 @@ FILE_MUTATING = ToolAnnotations(
     openWorldHint=False,
 )
 
-mcp = MCPServer(
+
+class PostFaderServer(MCPServer):
+    """Serve compact input schemas; validation still uses the full models.
+
+    Clients commonly load every tool definition into the model's context, so
+    the listing advertises the reduced form from ``tool_schemas``. Calls are
+    validated by the SDK against each tool's complete argument model.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._advertised_schemas: dict[str, dict] = {}
+
+    async def list_tools(self):
+        tools = await super().list_tools()
+        listed = []
+        for tool in tools:
+            schema = self._advertised_schemas.get(tool.name)
+            if schema is None:
+                schema = compact_input_schema(tool.input_schema)
+                self._advertised_schemas[tool.name] = schema
+            listed.append(tool.model_copy(update={"input_schema": schema}))
+        return listed
+
+
+mcp = PostFaderServer(
     name="postfader-fl-studio-mcp",
     version=__version__,
     instructions=INSTRUCTIONS,
@@ -3473,11 +3508,22 @@ async def sound_selection_create_variation(
 async def sound_selection_apply(
     palette: Annotated[
         SoundPalettePlan | SoundPaletteVariationPlan | str,
+        # Advertised as an opaque echo of an earlier result; validated in full.
+        WithJsonSchema(
+            {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "object"},
+                ]
+            }
+        ),
         Field(
             description=(
-                "A validated palette plan, full section-variation object, or "
-                "process-local base palette ID. A variation_id is not accepted; "
-                "the base palette ID selects base assignments, not a variation."
+                "The palette_id from sound_selection_plan, or the full palette plan "
+                "or section-variation object returned by sound_selection_plan or "
+                "sound_selection_create_variation, passed back unchanged. A "
+                "variation_id is not accepted; the base palette ID selects base "
+                "assignments, not a variation."
             )
         ),
     ],
@@ -3632,7 +3678,13 @@ async def processing_plan(
 async def processing_apply_plan(
     plan: Annotated[
         ProcessingPlan,
-        Field(description="Bounded semantic plan returned by processing_plan."),
+        # Advertised as an opaque echo of an earlier result; validated in full.
+        WithJsonSchema({"type": "object"}),
+        Field(
+            description=(
+                "The plan object returned by processing_plan, passed back unchanged."
+            )
+        ),
     ],
     session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
     authorized_to_modify: Annotated[
@@ -3698,6 +3750,33 @@ async def processing_apply_plan(
         ),
     )
     return await _mix(PRODUCTION_RUNS.execute, request, run_plan)
+
+
+@mcp.tool(
+    name="postfader_describe_operations",
+    annotations=LOCAL_READ_ONLY.model_copy(
+        update={"title": "Describe Production Run operations"}
+    ),
+)
+async def postfader_describe_operations(
+    operations: Annotated[
+        tuple[ProductionOperationName, ...],
+        Field(
+            default=(),
+            max_length=MAX_DESCRIBED_OPERATIONS,
+            description=(
+                "Operations whose exact JSON Schema you need before building a plan. "
+                "Omit to list every operation with its summary and required fields."
+            ),
+        ),
+    ] = (),
+) -> OperationCatalog:
+    """List Production Run operations and return exact schemas for the ones named.
+
+    Call this before building a plan for postfader_validate_run,
+    postfader_execute_run, postfader_creation_readiness or postfader_continue_run;
+    their plan schemas name operations without listing each one's fields."""
+    return describe_operations(operations)
 
 
 @mcp.tool(
@@ -4071,10 +4150,10 @@ async def plugins_load(
 ) -> PluginLoadResult:
     """Load one macOS Add-menu plugin, then identify its new channel or effect slot.
 
-    Use plugins_list_available first. The task request authorizes the addition;
-    effect loading temporarily enables bridge writes only to select its track.
-    Unknown outcomes must be inspected before any new load attempt. Does not
-    save the project; Windows insertion is not implemented by this adapter.
+    Use plugins_list_available first. Loading changes the project, so session
+    write mode must be on (fl_set_write_mode); an effect load first selects its
+    mixer track. Unknown outcomes must be inspected before any new load attempt.
+    Does not save the project; Windows insertion is not implemented.
     """
     return await _mix(load_plugin, request)
 

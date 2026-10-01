@@ -434,6 +434,10 @@
       "description": "Apply a semantic plan through one task-scoped verified Production Run."
     },
     {
+      "name": "postfader_describe_operations",
+      "description": "List Production Run operations and return exact schemas for the ones named."
+    },
+    {
       "name": "postfader_validate_run",
       "description": "Validate a bounded Production Run and current capabilities without changing FL."
     },

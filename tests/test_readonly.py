@@ -967,6 +967,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             "sound_selection_history_reset",
         }
         production_read_tools = {
+            "postfader_describe_operations",
             "postfader_creation_readiness",
             "postfader_validate_run",
             "postfader_get_run",
