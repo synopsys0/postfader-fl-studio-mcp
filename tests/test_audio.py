@@ -8,24 +8,14 @@ import tempfile
 import numpy as np
 import soundfile as sf
 
+from _checks import check, section, summary
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from fl_studio_mcp import audio  # noqa: E402
 
-PASS = 0
-FAIL = 0
 TMP = tempfile.mkdtemp(prefix="flmcp-audio-")
 SR = 48000
-
-
-def check(label, cond, detail=""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
 
 
 def write(name, data, rate=SR):
@@ -40,7 +30,7 @@ def sine(freq, secs=4.0, amp=0.5, rate=SR):
 
 
 def main():
-    print("\n-- level measurement --")
+    section("level measurement")
     # A 0.5-amplitude sine: peak -6.02 dBFS, RMS 3.01 dB below peak.
     p = write("sine1k.wav", sine(1000, amp=0.5))
     a = audio.load(p)
@@ -64,7 +54,7 @@ def main():
           abs((loud["lufs_integrated"] - l2["lufs_integrated"]) - 6.02) < 0.2,
           (loud["lufs_integrated"], l2["lufs_integrated"]))
 
-    print("\n-- clipping and dc --")
+    section("clipping and dc")
     clipped = np.clip(sine(1000, amp=1.4), -1.0, 1.0)
     lc = audio.measure_loudness(audio.load(write("clipped.wav", clipped)))
     check("clipped samples detected", lc["clipped_samples"] > 1000, lc["clipped_samples"])
@@ -72,7 +62,7 @@ def main():
     ldc = audio.measure_loudness(audio.load(write("dc.wav", dc)))
     check("dc offset detected", abs(ldc["dc_offset"] - 0.05) < 0.005, ldc["dc_offset"])
 
-    print("\n-- channel-aware full-duration peaks --")
+    section("channel-aware full-duration peaks")
     anti = sine(440, secs=2, amp=0.8)
     anti_path = write("anti_phase_levels.wav", np.column_stack([anti, -anti]))
     anti_loaded = audio.load(anti_path)
@@ -120,7 +110,7 @@ def main():
           np.isfinite(late_true_peak) and late_true_peak > -3.0,
           late_true_peak)
 
-    print("\n-- spectrum --")
+    section("spectrum")
     spec = audio.measure_spectrum(audio.load(p))
     check("1 kHz lands in the mid band", 900 < spec["dominant_hz"] < 1100,
           spec["dominant_hz"])
@@ -136,7 +126,7 @@ def main():
           low["spectral_centroid_hz"] < spec["spectral_centroid_hz"],
           (low["spectral_centroid_hz"], spec["spectral_centroid_hz"]))
 
-    print("\n-- sibilance --")
+    section("sibilance")
     body = sine(700, amp=0.4)
     essy = body + sine(7000, amp=0.4)
     s_plain = audio.measure_spectrum(audio.load(write("plain.wav", body)))
@@ -149,13 +139,13 @@ def main():
           and abs(s_essy["sibilance_peak_hz"] - 7000) < 150,
           s_essy["sibilance_peak_hz"])
 
-    print("\n-- rumble --")
+    section("rumble")
     rum = audio.measure_spectrum(audio.load(write("rumble.wav",
                                                   sine(700, amp=0.3) + sine(25, amp=0.3))))
     check("sub-40 Hz rumble flagged", rum["sub_40hz_share"] > 0.02,
           rum["sub_40hz_share"])
 
-    print("\n-- pitch --")
+    section("pitch")
     # 220 Hz is exactly A3, so cents-off should be ~0.
     pa = audio.measure_pitch(audio.load(write("a3.wav", sine(220, secs=3))))
     check("A3 identified", pa["median_note"] == "A3", pa)
@@ -189,7 +179,7 @@ def main():
     check("noise yields no confident pitch",
           pn.get("voiced_share", 0) < 0.5 or pn.get("note"), pn)
 
-    print("\n-- stereo --")
+    section("stereo")
     mono_sig = sine(440, secs=2, amp=0.4)
     st_same = np.column_stack([mono_sig, mono_sig])
     r1 = audio.measure_stereo(audio.load(write("same.wav", st_same)))
@@ -201,7 +191,7 @@ def main():
     check("inverted channels correlate at -1", abs(r2["correlation"] + 1.0) < 1e-6, r2)
     check("inverted flagged mono-incompatible", r2["mono_compatible"] is False, r2)
 
-    print("\n-- dynamics --")
+    section("dynamics")
     quiet = sine(440, secs=2, amp=0.02)
     loud_s = sine(440, secs=2, amp=0.6)
     dyn = audio.measure_dynamics(audio.load(write("dyn.wav",
@@ -209,7 +199,7 @@ def main():
     check("dynamic spread detected", dyn["dynamic_spread_db"] > 15,
           dyn["dynamic_spread_db"])
 
-    print("\n-- full analyze() --")
+    section("full analyze()")
     full = audio.analyze(write("full.wav", np.column_stack([essy, essy])),
                          include_pitch=True, target_lufs=-14.0)
     check("all sections present",
@@ -245,7 +235,7 @@ def main():
           and any("truncated" in item for item in truncated["limitations"]),
           (truncated["confidence"], truncated["limitations"]))
 
-    print("\n-- compare() --")
+    section("compare()")
     bright = np.column_stack([sine(700, amp=0.3) + sine(9000, amp=0.35)] * 2)
     dull = np.column_stack([sine(700, amp=0.3) + sine(9000, amp=0.02)] * 2)
     cmp_ = audio.compare(write("ref_bright.wav", bright), write("tgt_dull.wav", dull))
@@ -257,7 +247,7 @@ def main():
           cmp_["centroid_hz"]["target"] < cmp_["centroid_hz"]["reference"],
           cmp_["centroid_hz"])
 
-    print("\n-- aligned loudness-matched comparison --")
+    section("aligned loudness-matched comparison")
     compare_rng = np.random.default_rng(20260809)
     base = compare_rng.normal(0.0, 0.12, SR * 5)
     fade = np.linspace(0.0, 1.0, 1000)
@@ -346,7 +336,7 @@ def main():
           any("not applied" in item for item in guarded_gain["readings"]),
           guarded_gain["readings"])
 
-    print("\n-- synchronized vocal / instrumental masking --")
+    section("synchronized vocal / instrumental masking")
     context_vocal = sine(1000, secs=4, amp=0.25)
     masking_instrument = (
         sine(1000, secs=4, amp=0.4) + sine(100, secs=4, amp=0.08)
@@ -404,7 +394,7 @@ def main():
           and any("not automatic" in item for item in masked_context["readings"]),
           (masked_context["limitations"], masked_context["readings"]))
 
-    print("\n-- error handling --")
+    section("error handling")
     try:
         audio.load("/nope/missing.wav")
         check("missing file raises", False)
@@ -418,8 +408,7 @@ def main():
     except audio.AudioError as e:
         check("very short file raises clearly", "short" in str(e).lower(), str(e))
 
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":

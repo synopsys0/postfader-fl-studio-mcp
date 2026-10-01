@@ -13,6 +13,8 @@ import socket
 import sys
 import time
 
+from _checks import check, section, summary
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
@@ -31,24 +33,12 @@ import device_UniversalBridge as bridge  # noqa: E402
 # this process uses the exact ephemeral listener selected below.
 bridge.PORT = 0
 
-PASS = 0
-FAIL = 0
 CALLS = collections.Counter()
 
 # A single OnIdle callback should stay well inside FL's ~20 ms budget. This
 # ceiling is deliberately far below the ~3000 calls an unchunked full-mixer
 # scan used to make in one go.
 MAX_CALLS_PER_TICK = 400
-
-
-def check(label, cond, detail=""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
 
 
 def instrument():
@@ -125,7 +115,7 @@ def main():
     port = bridge._transport.server.getsockname()[1]
     c = Client(port)
 
-    print("\n-- full mixer scan is chunked --")
+    section("full mixer scan is chunked")
     resp, ticks = c.call("mixer.list", only_used=False)
     worst = max(ticks)
     busy = [t for t in ticks if t > 0]
@@ -140,7 +130,7 @@ def main():
     print("     %d busy ticks, worst %d calls, total %d"
           % (len(busy), worst, sum(ticks)))
 
-    print("\n-- default listing is chunked too --")
+    section("default listing is chunked too")
     resp, ticks = c.call("mixer.list")
     check("default scan completed", resp["ok"], resp)
     check("worst tick under budget (%d calls)" % max(ticks),
@@ -148,13 +138,13 @@ def main():
     check("only interesting tracks returned",
           len(resp["result"]["tracks"]) < 10, len(resp["result"]["tracks"]))
 
-    print("\n-- peaks variant stays bounded --")
+    section("peaks variant stays bounded")
     resp, ticks = c.call("mixer.list", only_used=False, peaks=True)
     check("peak scan completed", resp["ok"], resp)
     check("worst tick under budget (%d calls)" % max(ticks),
           max(ticks) <= MAX_CALLS_PER_TICK, max(ticks))
 
-    print("\n-- max_tracks stops the walk early --")
+    section("max_tracks stops the walk early")
     resp, ticks = c.call("mixer.list", only_used=False, max_tracks=5)
     check("respects max_tracks", len(resp["result"]["tracks"]) == 5,
           len(resp["result"]["tracks"]))
@@ -162,7 +152,7 @@ def main():
           resp["result"]["scanned"])
     check("cheaper than a full scan", sum(ticks) < 400, sum(ticks))
 
-    print("\n-- single-track and param reads stay cheap --")
+    section("single-track and param reads stay cheap")
     resp, ticks = c.call("mixer.track", track=3)
     check("track detail under budget (%d calls)" % max(ticks),
           max(ticks) <= MAX_CALLS_PER_TICK, max(ticks))
@@ -170,7 +160,7 @@ def main():
     check("param listing under budget (%d calls)" % max(ticks),
           max(ticks) <= MAX_CALLS_PER_TICK, max(ticks))
 
-    print("\n-- raw selection reads stay bounded --")
+    section("raw selection reads stay bounded")
     resp, ticks = c.call("arrangement.selection")
     check("raw selection read completed", resp["ok"], resp)
     check("raw selection under budget (%d calls)" % max(ticks),
@@ -209,7 +199,7 @@ def main():
           selection_batch_worst <= MAX_CALLS_PER_TICK,
           selection_batch_worst)
 
-    print("\n-- maximum agent parameter page is chunked --")
+    section("maximum agent parameter page is chunked")
     resp, ticks = c.call(
         "plugin.params", track=5, slot=0, limit=128, skip_padding=False)
     busy = [tick for tick in ticks if tick > 0]
@@ -219,7 +209,7 @@ def main():
     check("maximum page stays under budget (%d calls)" % max(ticks),
           max(ticks) <= MAX_CALLS_PER_TICK, max(ticks))
 
-    print("\n-- concurrent parameter pages share the global tick budget --")
+    section("concurrent parameter pages share the global tick budget")
     readers = [Client(port) for _ in range(3)]
     for reader in readers:
         reader.sock.sendall((json.dumps({
@@ -265,7 +255,7 @@ def main():
     check("completed readers disconnected before the next scenario",
           len(bridge._transport.clients) == 1, len(bridge._transport.clients))
 
-    print("\n-- chunked scans stay correct and concurrent --")
+    section("chunked scans stay correct and concurrent")
     a, b = Client(port), Client(port)
     a.sock.sendall((json.dumps(
         {"id": 1, "cmd": "mixer.list", "args": {"only_used": False}}) + "\n").encode())
@@ -296,7 +286,7 @@ def main():
     check("concurrent worst tick under budget (%d)" % worst_concurrent,
           worst_concurrent <= MAX_CALLS_PER_TICK, worst_concurrent)
 
-    print("\n-- guarded step writes preserve the atomic tick budget --")
+    section("guarded step writes preserve the atomic tick budget")
     saved_write_gate = bridge.LEAN_WRITES_ENABLED
     bridge.LEAN_WRITES_ENABLED = True
     try:
@@ -371,7 +361,7 @@ def main():
     finally:
         bridge.LEAN_WRITES_ENABLED = saved_write_gate
 
-    print("\n-- a client that leaves mid-scan is cleaned up --")
+    section("a client that leaves mid-scan is cleaned up")
     d = Client(port)
     d.sock.sendall((json.dumps(
         {"id": 1, "cmd": "mixer.list", "args": {"only_used": False}}) + "\n").encode())
@@ -399,8 +389,7 @@ def main():
         bridge.OnIdle()
     bridge.OnDeInit()
 
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import inspect
+import pkgutil
 import unittest
 from unittest import mock
 
 from jsonschema import Draft202012Validator
+from pydantic import BaseModel
 
+import fl_studio_mcp
 from fl_studio_mcp import mcp_server as server_module
 from fl_studio_mcp.mcp_server import mcp
 from fl_studio_mcp.workflows import validate_batch_operations
@@ -29,22 +34,38 @@ class MCPCompatibilityTests(unittest.TestCase):
         ]
         self.assertEqual(non_strict, [])
 
-    def test_production_validate_run_nested_contracts_are_strict(self) -> None:
-        tool = next(
-            tool
-            for tool in asyncio.run(mcp.list_tools())
-            if tool.name == "postfader_validate_run"
+    def test_every_contract_model_rejects_unknown_fields(self) -> None:
+        models = set()
+        for info in pkgutil.walk_packages(fl_studio_mcp.__path__, "fl_studio_mcp."):
+            if "._bridge" in info.name:
+                continue
+            module = importlib.import_module(info.name)
+            models.update(
+                value
+                for _, value in inspect.getmembers(module, inspect.isclass)
+                if issubclass(value, BaseModel)
+                and value.__module__.startswith("fl_studio_mcp.")
+            )
+        self.assertTrue(models)
+        self.assertEqual(
+            sorted(
+                model.__qualname__
+                for model in models
+                if model.model_config.get("extra") != "forbid"
+            ),
+            [],
         )
-        schema = tool.input_schema
-        definitions = schema.get("$defs", {})
-        for field_name in ("request", "plan"):
-            with self.subTest(field=field_name):
-                field_schema = schema["properties"][field_name]
-                reference = field_schema.get("$ref")
-                if reference is not None:
-                    field_schema = definitions[reference.rsplit("/", 1)[-1]]
-                self.assertEqual(field_schema.get("type"), "object")
-                self.assertIs(field_schema.get("additionalProperties"), False)
+        # Results describe something that already happened, so nothing
+        # downstream may edit them. The original read contracts predate this.
+        self.assertEqual(
+            sorted(
+                model.__qualname__
+                for model in models
+                if model.__module__ != "fl_studio_mcp.contracts"
+                and not model.model_config.get("frozen")
+            ),
+            [],
+        )
 
     def test_all_live_resources_register_through_the_sdk(self) -> None:
         resources = asyncio.run(mcp.list_resources())

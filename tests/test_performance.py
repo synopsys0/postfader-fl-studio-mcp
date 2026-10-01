@@ -2612,15 +2612,6 @@ class TargetAwareMCPBoundaryTests(unittest.TestCase):
 
 
 class ContractAndMalformedReplyTests(unittest.TestCase):
-    def test_contracts_are_strict_frozen_and_forbid_extra_fields(self) -> None:
-        value = ExpectedPlayingState(playing=True)
-        with self.assertRaises(ValidationError):
-            ExpectedPlayingState(playing=1)
-        with self.assertRaises(ValidationError):
-            ExpectedPlayingState(playing=True, surprise=True)
-        with self.assertRaises(ValidationError):
-            value.playing = False
-
     def test_empty_expected_before_contracts_are_rejected(self) -> None:
         for contract in (
             ExpectedStopState,

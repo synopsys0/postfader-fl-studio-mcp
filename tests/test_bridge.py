@@ -11,6 +11,8 @@ import socket
 import sys
 import time
 
+from _checks import check, section, summary
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
@@ -29,19 +31,6 @@ import device_UniversalBridge as bridge  # noqa: E402
 # concurrent safe-suite run (or a real local bridge) from receiving test
 # traffic.
 bridge.PORT = 0
-
-PASS = 0
-FAIL = 0
-
-
-def check(label, cond, detail=""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
 
 
 class Client:
@@ -223,7 +212,7 @@ def check_source_is_ascii():
     with UnicodeDecodeError before any code runs, and the only symptom is a
     bridge that never answers.
     """
-    print("\n-- source encoding --")
+    section("source encoding")
     path = os.path.join(ROOT, "fl_studio_mcp", "_bridge", "device_UniversalBridge.py")
     raw = open(path, "rb").read()
     try:
@@ -242,7 +231,7 @@ def check_transport_selection():
     Inside FL the socket type cannot construct at all, so the fallback is the
     only thing that makes the bridge reachable. Both paths are checked here.
     """
-    print("\n-- transport selection --")
+    section("transport selection")
     import tempfile
 
     bridge._start_server()
@@ -290,13 +279,13 @@ def check_scan_params(c):
     real_indices = sorted(_state.SPARSE_VST_REAL)
     total = _state.SPARSE_VST_COUNT
 
-    print("\n-- the fixture really is a sparse padded map --")
+    section("the fixture really is a sparse padded map")
     check("reported count is far larger than the real one",
           total == 1200 and len(real_indices) == 7, (total, real_indices))
     check("real parameters are scattered, not a prefix",
           real_indices[-1] == total - 1 and 517 in real_indices, real_indices)
 
-    print("\n-- scanning a padded VST returns only the real parameters --")
+    section("scanning a padded VST returns only the real parameters")
     undo_at = len(_state.UNDO)
     before_values = list(_state.TRACKS[7].slots[2].values)
     r = c.call("plugin.scan_params", track=7, slot=2)
@@ -319,7 +308,7 @@ def check_scan_params(c):
               for p in res["params"]),
           [p for p in res["params"] if p["index"] == 61])
 
-    print("\n-- every real parameter carries the display that identifies it --")
+    section("every real parameter carries the display that identifies it")
     by_index = {p["index"]: p for p in res["params"]}
     check("display strings present on every row",
           all(p["display"] for p in res["params"]),
@@ -332,7 +321,7 @@ def check_scan_params(c):
           and by_index[0]["name"] == "Input Gain"
           and by_index[0]["display"] == "-3.0 dB", by_index[0])
 
-    print("\n-- the scan reports its own coverage --")
+    section("the scan reports its own coverage")
     check("FL's padded count is reported as reported",
           res["reported_count"] == total, res["reported_count"])
     check("the real count is reported separately",
@@ -355,13 +344,13 @@ def check_scan_params(c):
     check("the plug-in is named", res["plugin"] == "Sparse Param VST3",
           res.get("plugin"))
 
-    print("\n-- the scan is a read --")
+    section("the scan is a read")
     check("no undo point taken", len(_state.UNDO) == undo_at, _state.UNDO[-2:])
     check("nothing in the plug-in moved",
           _state.TRACKS[7].slots[2].values == before_values,
           _state.TRACKS[7].slots[2].values[:8])
 
-    print("\n-- it shares one padding rule with plugin.params --")
+    section("it shares one padding rule with plugin.params")
     paged = []
     paged_padding = 0
     offset = 0
@@ -377,7 +366,7 @@ def check_scan_params(c):
           paged_padding == res["padding_skipped"],
           (paged_padding, res["padding_skipped"]))
 
-    print("\n-- an honest native plug-in is not de-padded away --")
+    section("an honest native plug-in is not de-padded away")
     r = c.call("plugin.scan_params", track=3, slot=1)
     res = r["result"]
     check("all six compressor parameters kept",
@@ -387,7 +376,7 @@ def check_scan_params(c):
           res["params"][0]["name"] == "Threshold"
           and res["truncated"] is False, res["params"][0])
 
-    print("\n-- a bounded scan says it is bounded --")
+    section("a bounded scan says it is bounded")
     res = c.call("plugin.scan_params", track=7, slot=2,
                  max_indices=100)["result"]
     check("max_indices stops the walk",
@@ -419,7 +408,7 @@ def check_scan_params(c):
           [p["index"] for p in res["params"]]
           == [i for i in real_indices if i >= 500], res["params"])
 
-    print("\n-- bad bounds are refused rather than guessed at --")
+    section("bad bounds are refused rather than guessed at")
     for label, args in (
         ("negative start", {"track": 7, "slot": 2, "start": -1}),
         ("negative end", {"track": 7, "slot": 2, "end": -5}),
@@ -433,7 +422,7 @@ def check_scan_params(c):
         r = c.call("plugin.scan_params", **args)
         check("%s refused" % label, not r["ok"], r)
 
-    print("\n-- the walk is spread over FL idle ticks --")
+    section("the walk is spread over FL idle ticks")
     full, yields = drive(bridge, "plugin.scan_params", track=7, slot=2)
     check("driven scan still complete",
           full["ok"] and full["result"]["real"] == len(real_indices), full)
@@ -449,7 +438,7 @@ def check_scan_params(c):
     check("paging a sparse map spans ticks as well",
           paged_yields >= 2, paged_yields)
 
-    print("\n-- the scan needs no write flag --")
+    section("the scan needs no write flag")
     ro = _load_bridge_read_only()
     check("the copy really is locked read-only",
           ro.LEAN_WRITES_ENABLED is False, ro.LEAN_WRITES_ENABLED)
@@ -466,7 +455,7 @@ def check_scan_params(c):
           _state.TRACKS[7].slots[2].values == before_values,
           _state.TRACKS[7].slots[2].values[:8])
 
-    print("\n-- BridgeClient.scan_plugin_params speaks the same argument names --")
+    section("BridgeClient.scan_plugin_params speaks the same argument names")
     client_mod = _load_bridge_client()
     sent = []
 
@@ -524,7 +513,7 @@ def check_lean_writes(c):
     saves = []
     fake_general.saveProject = lambda *args, **kwargs: saves.append(args)
 
-    print("\n-- lean writes are gated behind FL_BRIDGE_ENABLE_WRITES --")
+    section("lean writes are gated behind FL_BRIDGE_ENABLE_WRITES")
     check("flag off in the bridge loaded without it",
           bridge.LEAN_WRITES_ENABLED is False, bridge.LEAN_WRITES_ENABLED)
     check("flag on in the copy loaded with it",
@@ -632,7 +621,7 @@ def check_lean_writes(c):
           all(cmd in bridge.HANDLERS for cmd in bridge.LEAN_WRITE_COMMANDS),
           sorted(bridge.HANDLERS))
 
-    print("\n-- write mode can change safely within one bridge session --")
+    section("write mode can change safely within one bridge session")
     initial = c.call("ping")["result"]
     runtime_session = initial["session_fingerprint"]
     check("read-only ping advertises runtime mode control",
@@ -765,7 +754,7 @@ def check_lean_writes(c):
           != session_fingerprint)
     check("reads still work with writes enabled", dispatch(w, "project.info")["ok"])
 
-    print("\n-- write preconditions are enforced inside the bridge --")
+    section("write preconditions are enforced inside the bridge")
     _state.reset()
     before_volume = _state.TRACKS[3].volume
     before_undo = list(_state.UNDO)
@@ -802,7 +791,7 @@ def check_lean_writes(c):
           accepted)
     _state.reset()
 
-    print("\n-- master is refused unless it is asked for by name --")
+    section("master is refused unless it is asked for by name")
     master_vol = _state.TRACKS[0].volume
     master_gain = _state.TRACKS[0].slots[0].values[0]
     for cmd, args in (
@@ -845,7 +834,7 @@ def check_lean_writes(c):
           _state.TRACKS[0].slots[0].values[0])
     _state.TRACKS[0].slots[0].values[0] = master_gain
 
-    print("\n-- a verified write on each surface --")
+    section("a verified write on each surface")
     undo_at = len(_state.UNDO)
     was = _state.TRACKS[3].volume
     r = dispatch(w, "mixer.set_volume", track=3, value=0.55)
@@ -979,7 +968,7 @@ def check_lean_writes(c):
           r["ok"] and r["result"]["verified_fields"] == {"freq": True},
           r.get("result"))
 
-    print("\n-- plugin parameters are proved by the display string --")
+    section("plugin parameters are proved by the display string")
     plug = _state.TRACKS[3].slots[1]
     plug.values[1] = 0.20
     plug.reported = {}
@@ -1028,7 +1017,7 @@ def check_lean_writes(c):
           res["display_changed"] is False and res["reads_at_value"] is True,
           res)
 
-    print("\n-- FL accepting a write and moving nothing --")
+    section("FL accepting a write and moving nothing")
     verb = _state.TRACKS[3].slots[3]
     verb.reported = {}
     stuck = StuckValues(verb.values, 0)
@@ -1069,7 +1058,7 @@ def check_lean_writes(c):
     check("fader before and after match because nothing moved",
           abs(res["after"] - res["before"]) < 1e-9, res)
 
-    print("\n-- naming, sends and slot mix --")
+    section("naming, sends and slot mix")
     res = dispatch(w, "mixer.set_name", track=3, name="Lead Verb")["result"]
     check("a track takes the name it was given",
           res["verified"] and res["after"] == "Lead Verb", res)
@@ -1104,7 +1093,7 @@ def check_lean_writes(c):
     r = dispatch(w, "mixer.set_send", track=3, to=3, enabled=True)
     check("a track may not send to itself", not r["ok"], r)
 
-    print("\n-- setting a parameter in the units the plug-in displays --")
+    section("setting a parameter in the units the plug-in displays")
     # The fake's display is the value as a percentage, so a target of 40 is a
     # normalised 0.4 -- but nothing here is told that, and the bridge is never
     # given the curve. It searches on the readback exactly as it does on FL.
@@ -1168,7 +1157,7 @@ def check_lean_writes(c):
           and "attack 8" not in bounded_error,
           bounded_error)
 
-    print("\n-- every parameter write turns FL's pickup off --")
+    section("every parameter write turns FL's pickup off")
     # The trap this guards: FL's default pickup can put a control into
     # "waiting for pickup" after repeated writes and then refuse everything,
     # including the write that would put it back. Live, that stranded a
@@ -1196,7 +1185,7 @@ def check_lean_writes(c):
                        track=3, slot=1, index=0, value=value)["result"]
     check("even after six of them in a row", res["verified"], res)
 
-    print("\n-- enumerated controls, the ones with no number to search --")
+    section("enumerated controls, the ones with no number to search")
     res = dispatch(w, "plugin.set_param_option",
                    track=9, slot=0, param="Key", option="A")["result"]
     check("an enumerated control lands on the named option",
@@ -1222,7 +1211,7 @@ def check_lean_writes(c):
           abs(_state.TRACKS[9].slots[0].values[0] - moved) < 1e-9,
           _state.TRACKS[9].slots[0].values[0])
 
-    print("\n-- the undo guarantee is observed, never asserted --")
+    section("the undo guarantee is observed, never asserted")
     # Undo is the entire safety net for this surface. Telling a caller a change
     # is reversible when FL took no undo point hands them the one guarantee
     # they cannot check for themselves, so it is watched rather than claimed.
@@ -1241,7 +1230,7 @@ def check_lean_writes(c):
     check("and it still reports the fader move truthfully",
           res["verified"] is True, res)
 
-    print("\n-- master is guarded at the bridge, not only at the MCP layer --")
+    section("master is guarded at the bridge, not only at the MCP layer")
     for cmd, args in (
         ("plugin.set_param_display",
          {"track": 0, "slot": 0, "param": "GAIN", "target": 50.0}),
@@ -1252,7 +1241,7 @@ def check_lean_writes(c):
         check("%s refuses master without allow_master" % cmd,
               not r["ok"] and "allow_master" in r.get("error", ""), r)
 
-    print("\n-- a failed option search never leaves the control adrift --")
+    section("a failed option search never leaves the control adrift")
     _state.reset()
     before = _state.TRACKS[9].slots[0].values[0]
     r = dispatch(w, "plugin.set_param_option",
@@ -1286,7 +1275,7 @@ def check_lean_writes(c):
     check("a restore FL ignored is reported as leaving the control moved",
           not r["ok"] and "LEFT AT" in r.get("error", ""), r)
 
-    print("\n-- movement is not proof it moved to the requested value --")
+    section("movement is not proof it moved to the requested value")
     _state.reset()
     real_set = fake_plugins.setParamValue
 
@@ -1309,7 +1298,7 @@ def check_lean_writes(c):
     check("and the display shows it did not land on the request",
           res["after"]["display"] == "20.0 %" and res["requested"] == 0.9, res)
 
-    print("\n-- refusing is an error; ignoring is verified false --")
+    section("refusing is an error; ignoring is verified false")
     for label, cmd, args in (
         ("volume above 1.0", "mixer.set_volume", {"track": 3, "value": 1.5}),
         ("pan beyond hard right", "mixer.set_pan", {"track": 3, "value": 2.0}),
@@ -1330,7 +1319,7 @@ def check_lean_writes(c):
         r = dispatch(w, cmd, **args)
         check("%s is refused outright" % label, not r["ok"], r)
 
-    print("\n-- malformed raw writes fail closed before undo or mutation --")
+    section("malformed raw writes fail closed before undo or mutation")
 
     def track_a_state():
         """Snapshot every field reachable by the original ten write commands."""
@@ -1465,7 +1454,7 @@ def check_display_unit_solver():
     import plugins as fake_plugins
     from fl_studio_mcp.contracts import display_value_in_unit
 
-    print("\n-- display-unit conversions across solver observations --")
+    section("display-unit conversions across solver observations")
     w = _load_bridge_with_writes()
     for text, unit, expected in (
         ("3.0kHz", "Hz", 3000.0), ("500 Hz", "kHz", 0.5),
@@ -1625,7 +1614,7 @@ def check_track_b():
     w = _load_bridge_with_writes()
     session = dispatch(w, "ping")["result"]["session_fingerprint"]
 
-    print("\n-- patterns and Playlist tracks use getter-backed public APIs --")
+    section("patterns and Playlist tracks use getter-backed public APIs")
     listed, pattern_yields = drive(w, "patterns.list")
     check("pattern inventory reports current identity and length",
           listed["ok"] and pattern_yields == 0
@@ -1715,7 +1704,7 @@ def check_track_b():
           playlist_same["result"]["verified"] and selection_calls == [2],
           (playlist_same, selection_calls))
 
-    print("\n-- creative targeting, section markers and automation boundaries --")
+    section("creative targeting, section markers and automation boundaries")
     absent = object()
     saved_open_event_editor = getattr(fake_ui, "openEventEditor", absent)
     saved_rec_chan_piano_roll = getattr(fake_midi, "REC_Chan_PianoRoll", absent)
@@ -2079,7 +2068,7 @@ def check_track_b():
     fake_plugins.setParamValue = plugin_set
 
     try:
-        print("\n-- Track B uses only the explicit published surface --")
+        section("Track B uses only the explicit published surface")
         check("playback speed remains omitted",
               "transport.set_playback_speed" not in w.LEAN_WRITE_COMMANDS
               and "transport.set_playback_speed" not in w.HANDLERS)
@@ -2098,7 +2087,7 @@ def check_track_b():
               and preset_count["result"]["preset_count"] == 12,
               preset_count)
 
-        print("\n-- Track B transport is absolute and later-tick verified --")
+        section("Track B transport is absolute and later-tick verified")
         r, yields = drive(
             w, "transport.set_playing", playing=True,
             session_fingerprint=session, expected_before={"playing": False}
@@ -2345,7 +2334,7 @@ def check_track_b():
         _state.PLAYING = False
         _state.SONG_POS = 0.0
 
-        print("\n-- global Channel Rack identity and guarded writes --")
+        section("global Channel Rack identity and guarded writes")
         listing = dispatch(w, "channels.list", global_count=True)["result"]
         first = listing["channels"][0]
         check("channel list is globally addressed with strong identity",
@@ -2627,7 +2616,7 @@ def check_track_b():
               and (_state.CHANNELS[2].target_fx, list(_state.UNDO)) == state_before,
               r)
 
-        print("\n-- current-pattern sequencer uses one canonical digest --")
+        section("current-pattern sequencer uses one canonical digest")
         before = dispatch(
             w, "sequencer.get", pattern=2, channel=1, index_scope="global"
         )["result"]
@@ -2768,7 +2757,7 @@ def check_track_b():
               not refused["ok"] and current_pattern[0] == 1, refused)
         current_pattern[0] = 2
 
-        print("\n-- live note is dispatch-only with guaranteed cleanup --")
+        section("live note is dispatch-only with guaranteed cleanup")
         target_fingerprint = dispatch(
             w, "channels.list", global_count=True
         )["result"]["channels"][2]["channel_fingerprint"]
@@ -2883,7 +2872,7 @@ def check_track_b():
               w._active_notes == [] and notes[-1] == (2, 69, 0, -1),
               (notes, w._active_notes))
 
-        print("\n-- generator targets preserve full plug-in guarantees --")
+        section("generator targets preserve full plug-in guarantees")
         plugin_scopes[:] = []
         ambiguous_generator = dispatch(
             w, "plugin.params", target_kind="channel_generator", channel=2,
@@ -3050,7 +3039,7 @@ def check_mixer_count_sentinel(c):
     fake_plugins.isValid = plugin_valid
     fake_channels.setTargetFxTrack = set_target
     try:
-        print("\n-- API 45 mixer count sentinel is never addressable --")
+        section("API 45 mixer count sentinel is never addressable")
         info = c.call("project.info")
         listing = c.call("mixer.list", only_used=False)
         detail = c.call("mixer.track", track=3)
@@ -3127,7 +3116,7 @@ def check_project_load_lifecycle():
     import channels as fake_channels
     import tempfile
 
-    print("\n-- project-load epochs and pending command cleanup --")
+    section("project-load epochs and pending command cleanup")
     w = _load_bridge_with_writes()
     notes = []
     calls = []
@@ -3366,7 +3355,7 @@ def main():
     port = bridge._transport.server.getsockname()[1]
     c = Client(port)
 
-    print("\n-- handshake --")
+    section("handshake")
     r = c.call("ping")
     check("ping ok", r["ok"], r)
     check("reports FL version",
@@ -3379,7 +3368,7 @@ def main():
           r["result"].get("tempo_bpm"))
     check("mixer count", r["result"]["mixer_track_count"] == 126, r)
 
-    print("\n-- raw arrangement selection --")
+    section("raw arrangement selection")
     _state.SELECTION_START = 384
     _state.SELECTION_END = 768
     r = c.call("arrangement.selection")
@@ -3401,7 +3390,7 @@ def main():
     r = c.call("arrangement.selection", unexpected=True)
     check("selection command rejects arguments", not r["ok"], r)
 
-    print("\n-- mixer listing --")
+    section("mixer listing")
     r = c.call("mixer.list")
     check("mixer.list ok", r["ok"], r)
     tracks = r["result"]["tracks"]
@@ -3430,7 +3419,7 @@ def main():
 
     check_mixer_count_sentinel(c)
 
-    print("\n-- only_used ignores FL's default track names --")
+    section("only_used ignores FL's default track names")
     # FL names every empty mixer track "Insert N", so treating any name as a
     # sign of use returned all 127 tracks on the real project.
     r = c.call("mixer.list")
@@ -3452,7 +3441,7 @@ def main():
           and bridge._has_custom_name("Insert Coin"),
           "real names rejected")
 
-    print("\n-- VST padding parameters --")
+    section("VST padding parameters")
     # FL reports a fixed padded count for VST plugins; the real ones carry
     # a name or a meaningful display, the rest are blank filler.
     r = c.call("plugin.params", track=5, slot=0, limit=240)
@@ -3474,13 +3463,13 @@ def main():
 
     check_scan_params(c)
 
-    print("\n-- track detail --")
+    section("track detail")
     r = c.call("mixer.track", track=3)
     check("mixer.track ok", r["ok"], r)
     check("eq bands returned", len(r["result"]["eq"]["bands"]) == 3, r["result"]["eq"])
     check("routes returned", r["result"]["routes"][0]["to"] == 0, r["result"]["routes"])
 
-    print("\n-- plugin params --")
+    section("plugin params")
     r = c.call("plugin.params", track=3, slot=1)
     check("plugin.params ok", r["ok"], r)
     check("compressor param count", r["result"]["param_count"] == 6, r["result"])
@@ -3496,7 +3485,7 @@ def main():
     check_display_unit_solver()
     check_track_b()
 
-    print("\n-- channels and dispatch errors --")
+    section("channels and dispatch errors")
     r = c.call("channels.list")
     check("channels.list ok", r["ok"] and r["result"]["channel_count"] == 3, r)
     r = c.call("call", module="mixer", function="getTrackName", args=[3])
@@ -3508,12 +3497,12 @@ def main():
           ),
           r)
 
-    print("\n-- large payload across ticks --")
+    section("large payload across ticks")
     r = c.call("mixer.list", only_used=False, peaks=True)
     check("large reply fully drained", r["ok"] and len(r["result"]["tracks"]) == 126,
           len(r["result"].get("tracks", [])))
 
-    print("\n-- malformed input --")
+    section("malformed input")
     c.sock.sendall(b"this is not json\n")
     deadline = time.time() + 2
     got = None
@@ -3557,7 +3546,7 @@ def main():
           (non_object, bad_args))
     check("bridge remains alive after non-object input", c.call("ping")["ok"])
 
-    print("\n-- disconnect handling --")
+    section("disconnect handling")
     c.sock.close()
     # Reaping needs the kernel to surface EOF on the server side, which is not
     # guaranteed to have happened by the time close() returns on the client.
@@ -3577,8 +3566,7 @@ def main():
         bridge.OnIdle()
 
     bridge.OnDeInit()
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":

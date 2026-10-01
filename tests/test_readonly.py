@@ -34,7 +34,6 @@ from fl_studio_mcp.bridge_install import (  # noqa: E402
 )
 from fl_studio_mcp.contracts import (  # noqa: E402
     CapabilityStatus,
-    ConnectionInfo,
     ExpectedEqBandState,
     ExpectedPluginParameterState,
     MixerTrackSummary,
@@ -1161,15 +1160,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         self.assertFalse(connection.compatible)
         with self.assertRaises(IncompatibleFLStudio):
             inspector.project_summary()
-
-    def test_agent_contracts_forbid_unknown_fields(self):
-        with self.assertRaises(ValidationError):
-            ConnectionInfo(
-                connected=True,
-                compatible=True,
-                compatibility_reason="test",
-                surprise="not allowed",
-            )
 
     def test_mcp_surface_is_exactly_the_published_tool_set(self):
         # This used to be a blanket ban on any tool whose name contained

@@ -12,6 +12,8 @@ import tempfile
 import threading
 import time
 
+from _checks import check, section, summary
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -37,8 +39,6 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 
-PASS = 0
-FAIL = 0
 STOP = threading.Event()
 MAILBOX = tempfile.mkdtemp(prefix="flmcp-readonly-e2e-")
 BRIDGE_PORT = None
@@ -147,16 +147,6 @@ PRESET_WRITE_CALLS = {
 }
 
 
-def check(label, condition, detail=""):
-    global PASS, FAIL
-    if condition:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
-
-
 def pump_bridge():
     bridge.OnInit()
     while not STOP.is_set():
@@ -256,6 +246,7 @@ async def run():
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
+            section("stdio handshake, tool listing and live resources")
             initialized = await session.initialize()
             check(
                 "server initialises",
@@ -343,6 +334,7 @@ async def run():
                 and patterns_resource["patterns"][0]["current"] is True,
                 patterns_resource,
             )
+            section("read tools over stdio")
             project = payload(await session.call_tool("fl_get_project_summary", {}))
             check("FL 2026 version gate passed", project["connection"]["compatible"], project)
             check(
@@ -441,6 +433,7 @@ async def run():
             )
             check("capture declares read-only mode", report["mode"] == "read_only", report)
 
+            section("writes are refused while the bridge is read-only")
             # This bridge starts read-only. Every project write must refuse
             # over the wire by naming the user-confirmed mode tool, rather than
             # surfacing a raw dispatch rejection or changing anything.
@@ -500,6 +493,7 @@ async def run():
                 unauthorized_text,
             )
 
+            section("runtime write mode over stdio")
             state_before_mode = fingerprint()
             unconfirmed = await session.call_tool(
                 "fl_set_write_mode",
@@ -559,6 +553,7 @@ async def run():
                 (state_before_mode, fingerprint()),
             )
 
+    section("session left FL state untouched")
     check("end-to-end session did not mutate FL state", before == fingerprint())
 
 
@@ -578,8 +573,7 @@ def main():
         STOP.set()
         thread.join(timeout=2)
         shutil.rmtree(MAILBOX, ignore_errors=True)
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":
