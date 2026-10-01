@@ -1,562 +1,175 @@
 <div align="center">
 
-# PostFader — FL Studio MCP server
+<img src="https://raw.githubusercontent.com/synopsys0/postfader-fl-studio-mcp/main/docs/assets/banner.svg" alt="PostFader, the FL Studio MCP server" width="100%">
 
-**The AI copilot for FL Studio**
+# PostFader: FL Studio MCP Server
 
-<p>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/synopsys0/postfader-fl-studio-mcp?style=flat-square&amp;label=release"></a>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/synopsys0/postfader-fl-studio-mcp/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
-  <a href="https://pypi.org/project/postfader-fl-studio-mcp/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/postfader-fl-studio-mcp?style=flat-square"></a>
-  <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/github/license/synopsys0/postfader-fl-studio-mcp?style=flat-square"></a>
-</p>
+**Let Claude, Codex, Cursor, or any MCP client work inside the FL Studio project you have open.**
 
-## Your AI can finally work inside FL Studio.
+[![Latest release](https://img.shields.io/github/v/release/synopsys0/postfader-fl-studio-mcp?style=flat-square&label=release)](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
+[![PyPI](https://img.shields.io/pypi/v/postfader-fl-studio-mcp?style=flat-square&label=PyPI)](https://pypi.org/project/postfader-fl-studio-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/postfader-fl-studio-mcp?style=flat-square)](https://pypi.org/project/postfader-fl-studio-mcp/)
+[![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555?style=flat-square)](docs/setup.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/synopsys0/postfader-fl-studio-mcp/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/synopsys0/postfader-fl-studio-mcp?style=flat-square)](LICENSE)
 
-PostFader connects Claude, Codex, Cursor, and other local MCP-compatible AI
-clients to the FL Studio project you already have open. Ask it to inspect your
-session, diagnose a mix, control loaded plug-ins, clean up routing, build MIDI
-parts, organize patterns and Playlist tracks, add section markers, or make
-supported changes from natural language.
+<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
+<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
 
-<p>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
-  <a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
-</p>
+[Quick start](#quick-start) · [What it does](#what-you-can-ask-for) · [Why PostFader](#why-postfader) · [Docs](#documentation) · [FAQ](#faq)
 
-[All release assets](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
-· [Setup guide](docs/setup.md)
-· [Explore what PostFader can do](#not-just-another-note-sender)
-
-**V10: 134 tools · 8 live resources · Windows and macOS · Open source · No PostFader account**
-
-**PostFader V10 (10.0.1)** brings the complete 134-tool workflow to the
-Windows/macOS packages, Codex ZIPs, Claude Desktop MCPB, and Python distribution.
-See the [V10 release notes](docs/releases/v10.0.1.md) for upgrade steps and evidence boundaries.
-
-Starts read-only and never saves your project automatically. Native macOS
-plug-in loading, note inspection, and saved-project rendering are included;
-complete live qualification of those newer host paths remains pending.
-
-[What it can do](#not-just-another-note-sender) ·
-[Workflows](#workflows-with-postfader) ·
-[Feature depth](#feature-depth) ·
-[Install](#quick-installation) ·
-[AI clients](#supported-ai-clients) ·
-[Documentation](#documentation)
-
-<sub>Unofficial community project; not made by or affiliated with Image-Line.</sub>
+<sub>Free and open source. Unofficial: not made by or affiliated with Image-Line.</sub>
 
 </div>
 
-## Not just another note sender
-
-PostFader is a production layer for FL Studio—not only a way to send notes or
-change isolated controls. It gives your AI useful context from the project that
-is open now, plus tools to analyze exported audio, work with loaded plug-ins,
-compose musical parts, and carry separately requested supported changes back
-into the session.
-
-| 🔎 Understand your project | 🩺 Diagnose the mix |
-| --- | --- |
-| Inspect mixer routing, Channel Rack generators, loaded effects, patterns, Playlist tracks, transport, undo/redo history position, step sequences, and parameters exposed by loaded plug-ins. | Measure an exported bounce, compare it with a reference, examine vocal-versus-instrument masking, monitor peaks during playback, and surface evidence your AI can prioritize. |
-| **🎛️ Control the session** | **🎹 Create and transform music** |
-| Rename and color tracks, adjust levels and panning, manage sends and routing, control transport, organize channels and patterns, edit steps, and change supported loaded plug-in parameters. | Generate chords, melody, bass, and drums; export multi-track Type-1 MIDI; estimate tempo and key; transcribe monophonic audio; and prepare or transform Piano Roll material. |
-
-## Workflows with PostFader
-
-### 🔎 Understand the project already open
-
-> “Show me every instrument that is not routed to the mixer.”
->
-> “Which effects are loaded on my lead vocal?”
->
-> “Where are my drums routed, and which mixer inserts are peaking too high?”
-
-PostFader reads FL Studio's current project state: mixer inserts and sends,
-loaded mixer effects, Channel Rack generators, patterns, Playlist track state,
-transport, undo/redo history bounds, the current step grid, and exposed plug-in
-parameters. Your AI can answer from the actual session instead of relying on a
-project description pasted into chat.
-
-### 🩺 Diagnose an exported mix and decide what to improve
-
-> “What are the three highest-impact problems in this bounce?”
->
-> “Compare this mix with my reference and explain the biggest differences.”
->
-> “Check these vocal and instrumental exports for likely masking.”
-
-Mix Doctor turns an exported bounce into producer-readable technical findings
-about level, dynamics, tonal balance, stereo behavior, and export readiness.
-Reference analysis compares loudness and tonal balance across aligned audio.
-Masking analysis uses synchronized vocal and instrumental renders to report
-possible spectral-overlap regions.
-
-During a chosen observation window, a peak watch samples the mixer inserts
-included in the watch and remembers the highest level it observed for each.
-Use those results to build a gain-staging plan from a playback section or full
-pass that fits the window rather than a single instant. These are sampled
-observations, so they do not prove that every transient was captured. Your AI
-can use other reported findings to create a separate, reviewable mix plan.
-
-### 🎛️ Control the session and the plug-ins you already use
-
-> “Rename insert 4 to Lead Vocal, color it purple, pan it 10% left, and confirm
-> the changes.”
->
-> “Mute the backing-vocal tracks and lower the send to the reverb bus.”
->
-> “Find the feedback parameter on the delay that is already loaded and reduce
-> it.”
-
-PostFader can control mixer volume, pan, mute, solo, arm, selection, stereo
-separation, sends, and routing. It can change tempo, playback, loop mode,
-recording state, and song position; organize channels, patterns, and Playlist
-tracks; and edit step sequences.
-
-For loaded effects and Channel Rack generators, PostFader asks FL Studio which
-parameters the plug-in exposes. It can inspect names and values, search or scan
-large parameter surfaces within explicit limits, set a known value, target the
-number a plug-in displays, or choose an exact named option. Bundled profiles
-for selected FL Studio stock effects add known parameter roles for supported
-workflows without pretending every plug-in has the same controls.
-
-For those selected profiles, your AI can turn supported goals such as “tame
-harshness,” “control dynamics,” “limit peaks,” “shorten the reverb,” or “create
-a rhythmic echo” into matching parameter roles. Intent resolution is read-only;
-choosing values and applying a change remain separate steps.
-
-On macOS, `plugins_list_available` reads FL's native Add menu and `plugins_load`
-adds an instrument or an effect on a specified mixer track, then identifies
-the new instance through FL's bridge. Removal and reordering remain unavailable,
-as does reliable effect-slot bypass or wet/dry control.
-
-Plugin Atlas adds offline product knowledge for plug-ins whether or not an
-instance is currently loaded. Its bundled Image-Line catalog and selected
-third-party records describe purposes, techniques, limitations, and explicit
-stock alternatives. Atlas keeps that knowledge separate from runtime matching,
-control-adapter evidence, and the three honest availability states. See the
-[Plugin Atlas guide](docs/plugin-atlas.md) or inspect the installed bundle with
-`postfader-plugin-atlas`.
-
-### 🎚️ Choose a coherent sound palette
-
-> “Create a melodic bass track and choose all the sounds yourself.”
->
-> “Keep the lead in Drop B, but make the bass and texture feel bigger.”
-
-Sound Selection turns that direction into a deterministic palette chosen from
-the generators and effects already loaded in the project. It can select a
-product and exact preset for each role, preserve core identity sounds, plan a
-section variation, map a drum kit's reported pads, and pass role targets into a
-Production Run. User preferences and exclusions always win; balanced planning
-uses bounded local recency only to distinguish similarly suitable choices.
-
-Sound Selection does not use random preset roulette or pretend to hear FL
-Studio's output. It reads preset identity back after bounded navigation, keeps
-explicit local feedback and usage history separate from project state, and
-reports a concise blocker when the requested sound is not loaded. Load the
-instrument pool manually, then see the [Sound Selection guide](docs/sound-selection.md)
-for examples and exact boundaries.
-
-### 🎹 Compose, transform, and organize musical ideas
-
-> “Create an eight-bar D Dorian melody with a bassline and drum pattern.”
->
-> “Transpose this Piano Roll part up an octave and humanize the velocities.”
->
-> “Estimate the tempo and key of this sample.”
->
-> “Transcribe this monophonic melody into a reviewable note sequence.”
-
-Generate deterministic chord progressions, melodies, bass parts, and drums from
-a musical brief; melody, bass, and drum generation also accept reproducible
-seeds. Export separate parts in one Type-1 MIDI file and verify the written
-file's structure and content digest. Audio tools can estimate tempo and a global
-major or minor key, while monophonic transcription creates a note sequence that
-can be reviewed and exported in a separate step.
-
-PostFader can also find and prepare a pattern FL Studio reports as empty, add
-section markers, organize Playlist tracks, record a supported automation value,
-and inspect existing Piano Roll notes or prepare append, replace, quantize, transpose, humanize,
-duplicate, delete, or clear operations. Piano Roll application uses FL Studio's
-separate script workflow, so PostFader reports the evidence it actually has
-instead of claiming controller-side note readback.
-
-## From one request to a complete production workflow
-
-> [!TIP]
-> **You ask:** “The vocal feels buried. Find the most likely cause, show me what
-> you would change, and fix only the highest-confidence problem.”
-
-### PostFader workflow
-
-1. Reads the mixer, routing, and relevant loaded plug-ins.
-2. Analyzes the bounce or synchronized renders you provide.
-3. Reports possible level, tonal, dynamics, or synchronized-input masking
-   findings.
-4. Your AI prioritizes the reported evidence and builds a reviewable plan from
-   supported operations.
-5. Returns the proposed changes for a plan-only request, or uses the existing
-   authorization when you asked it to fix the problem.
-6. Enables session writes once and applies the supported changes within that
-   request's scope.
-7. Reports the observed result and any evidence limitation.
-
-<p align="center">
-  <strong>Read the project → analyze the bounce → identify the problem → propose a plan → choose the change → apply → report</strong>
-</p>
-
-> **A narrow remote control stops at individual commands. PostFader connects
-> those commands into a production workflow.**
-
-## Production Runs: task-scoped autonomy
-
-Production Runs let your connected AI turn one outcome-oriented request into a
-bounded, multi-stage plan. Ask it to finish a track, build around a loop,
-transform a genre while preserving a vocal, work only on one section, or mix
-without changing notes. The AI submits the structured plan; PostFader validates
-scope, resolves references, applies supported operations, and records truthful
-receipts.
-
-Creation runs now begin with one silent readiness scorecard covering the live
-bridge, Piano Roll, generator pool, drum map, patterns, loaded processing, and
-known manual handoffs. A ready run keeps that bounded context through palette,
-composition, note application, processing, and finalization instead of
-rescanning the complete project before each change. Sound choices retain
-confidence and alternatives; generated notes can adapt to known articulation,
-envelope, register, and polyphony; supported loaded effects can be planned by
-semantic goal and applied through the existing verified setters.
-
-Autonomy belongs to that request only—there is no permanent autonomous-mode
-toggle. A plan-only request never changes FL Studio. An authorized execution
-run enables the existing session write gate once, then continues until the
-submitted plan completes or reaches a real blocker. Earlier verified changes
-remain visible if a later operation fails; PostFader never claims rollback,
-replays an ambiguous mutation, or saves the project automatically.
-
-The consolidated result reports technical execution, arrangement delivery,
-processing, manual handoff, and audible quality separately. Technical success
-never means PostFader heard or approved the song. See [Creation pipeline](docs/creation-pipeline.md),
-[Production Runs](docs/production-runs.md), and [Sound Selection](docs/sound-selection.md).
-
-See the [Production Runs guide](docs/production-runs.md) for chat examples,
-the supported MVP operation set, continuation and stop behavior, durable
-run lifetime, and FL Studio limitations.
-
-Production Runs now survive MCP restarts: `postfader_list_runs` finds retained
-plans and receipts, and `postfader_continue_run` resumes remaining work. An
-interrupted operation with an unknown outcome is never replayed.
-
-`piano_roll_read_notes` inspects existing note timing, pitch and expression
-through the Piano Roll script bridge without enabling musical edits.
-`postfader_render_saved_project` starts a separate WAV render from a saved
-`.flp`; inspect or cancel it through the render job tools. Unsaved live edits
-are not included. These new paths have synthetic coverage; live acceptance on
-FL Studio remains pending.
-
-Genre requests now supply editable instrument-role defaults, with ten style
-profiles and eighteen instrument families. Explicit preferences stay in control.
-
-## Creation Review, Revision, and Delivery
-
-After a Production Run creates a playable draft, export one bounce and ask the
-connected AI to review and improve it. PostFader validates and measures the
-selected file globally and by known song section, combines that evidence with
-your explicit feedback, protects accepted sounds or notes with independent
-locks, and compiles the smallest bounded revision into the existing Production
-Run executor. One revision pass uses one readiness preflight and one
-task-scoped write authorization.
-
-Export the revised bounce with matching settings and PostFader can compare the
-two versions, report improvements and regressions separately, and prepare an
-exact Playlist, export, and delivery handoff. Technical measurements and
-section-energy proxies never substitute for your artistic approval. Sessions
-can persist locally without storing audio bytes or paths you chose not to
-retain. The review workflow does not save, create Playlist clips, insert
-plug-ins, or hear FL Studio's live output. See the
-[Creation Review guide](docs/creation-review.md), which documents its 13 MCP
-tools and 9 corresponding Production Run operations.
-
-## Feature depth
-
-### Mix and finish
-
-- Run Mix Doctor on an exported bounce.
-- Compare loudness and tonal balance when candidate and reference inputs align
-  and pass readiness checks.
-- Examine synchronized vocal and instrumental renders for possible spectral
-  overlap.
-- Measure peaks, loudness, dynamics, tonal balance, and stereo behavior.
-- Watch sampled mixer peaks during a chosen observation window and build
-  gain-staging plans.
-- Run a finish assessment and use your AI to turn selected recommendations into
-  reviewable one-shot plans.
-
-### Control the session
-
-- Work with mixer inserts, sends, routing, and transport.
-- Inspect and organize Channel Rack generators, patterns, and Playlist tracks.
-- Read undo/redo history bounds and edit the current step sequence.
-- Discover and control supported parameters exposed by loaded effects and
-  generators.
-- Plan and apply a coherent sound palette with exact preset verification,
-  drum-pad mapping, continuity, and bounded novelty.
-- Read bundled Plugin Atlas product knowledge and compare it with observed
-  loaded plug-ins without turning the catalog into a runtime allowlist.
-
-### Create music
-
-- Generate deterministic chord progressions; melody, bass, and drums also
-  accept reproducible seeds.
-- Export multi-track Type-1 MIDI and verify the written content.
-- Estimate tempo and global major or minor key from an audio file.
-- Turn monophonic audio into a reviewable note sequence.
-
-### Edit and arrange
-
-- Append, replace, quantize, transpose, humanize, duplicate, delete, or clear
-  Piano Roll material through the separate FL Studio script workflow.
-- Find and prepare patterns FL Studio reports as empty, add section markers,
-  organize Playlist tracks, and record supported automation values.
-
-### Bring your own AI
-
-- **Claude:** Claude Desktop and Claude Code
-- **Codex:** CLI, IDE extension, and desktop Codex
-- **Cursor:** IDE and CLI
-- **OpenCode**
-- **Grok Build**
-- **T3 Code** through an MCP-capable provider
-- **Other local hosts** compatible with `stdio` MCP servers
-
-## More than a basic FL Studio MCP
-
-To make the distinction concrete, the baseline below is deliberately defined
-as a local MCP with transport commands, individual controls, point-in-time
-reads, predefined parameter mappings, and note dispatch. It is not a survey of
-every other project.
-
-| Capability | Narrow baseline used here | PostFader V10 |
-| --- | --- | --- |
-| **Play, stop, and change individual controls** | Transport and individual controls | Yes, plus wider session workflows |
-| **Read the open project** | Selected state only | Mixer, channels, loaded plug-ins, patterns, Playlist tracks, undo/redo history, steps, and transport |
-| **Diagnose exported audio** | Not part of the baseline | Mix Doctor, peaks, loudness, tonal balance, stereo analysis, masking, and references |
-| **Monitor levels through playback** | Point-in-time meter reads | Process-local per-insert peak watches sample across a chosen observation window |
-| **Move from diagnosis to a separate apply request** | Not part of the baseline | Diagnose → propose → review → apply → report |
-| **Work with loaded plug-ins** | Predefined controls | Runtime parameter discovery, exact controls, named options, and selected stock-effect profiles |
-| **Generate musical parts** | Individual note dispatch | Chords, melody, bass, drums, transcription, and Type-1 MIDI export |
-| **Transform Piano Roll content** | Not part of the baseline | Append, replace, quantize, transpose, humanize, duplicate, delete, and clear |
-| **Help organize an arrangement** | Not part of the baseline | Pattern preparation, markers, Playlist track tools, and automation helpers |
-| **Install on Windows and macOS** | Not part of the baseline | Guided platform packages for both |
-| **Work across AI clients** | Single-host setup | Claude, Codex, Cursor, OpenCode, Grok Build, and other local MCP hosts |
-| **Check supported changes** | Command dispatch only | Reads supported controls back from FL Studio after the change |
-
 ---
 
-## Quick installation
+PostFader is an **FL Studio MCP server**. It connects your AI assistant to the
+project you already have open, so the AI can read your mixer, channels,
+plug-ins and patterns, check your exported mix, write MIDI, and make changes
+for you. Every supported change is read back from FL Studio, so you see what
+actually happened.
 
-1. Download and extract the matching platform package.
-2. Run the guided installer and select your virtual MIDI endpoint.
-3. Complete the documented FL Studio MIDI Settings stage.
-4. Connect your local AI client.
+It runs on your computer. There is no PostFader account, cloud service, or
+telemetry.
 
-- **[Download PostFader for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-Windows.zip)**
-- **[Download PostFader for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v10.0.1-macOS.zip)**
-- [Open the complete setup and troubleshooting guide](docs/setup.md)
-- [See every v10.0.1 release asset](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v10.0.1)
+## What you can ask for
 
-Codex users can choose the dedicated Codex ZIP for guided `codex mcp add`
-registration. Claude Desktop users can add the `.mcpb` after completing the
-same platform setup. Advanced users can install the wheel or source archive.
+| | Ask your AI | What PostFader does |
+| --- | --- | --- |
+| 🔎 **Understand a project** | *"Which instruments aren't routed to the mixer?"* | Reads routing, effects, channels, patterns, Playlist tracks, and plug-in parameters. |
+| 🩺 **Fix a mix** | *"What are the three biggest problems in this bounce?"* | Measures loudness, peaks, tonal balance, stereo width, and vocal masking in the files you export, and compares them with a reference. |
+| 🎛️ **Change the session** | *"Pan the backing vocals wider and pull the reverb send down 3 dB."* | Sets faders, pan, sends, routing, names, colors, tempo, transport, and any parameter a loaded plug-in exposes, then reads each one back. |
+| 🎹 **Write music** | *"Add an 8-bar D Dorian bassline under my chords."* | Generates chords, melodies, basslines, and drums; writes them to the Piano Roll or exports MIDI files. |
+| 🎚️ **Pick sounds** | *"Choose the sounds yourself from what's loaded."* | Picks presets on the instruments in your project and confirms each selection. |
+| 🧱 **Run a whole task** | *"Turn this loop into a 16-bar draft, but keep my vocal."* | Runs the job as a checked plan you can resume. Export a bounce and it can review the draft and plan one revision. |
 
-> [!NOTE]
-> Codex ZIPs, the Claude Desktop MCPB, wheel, and source archive still use the
-> Universal Bridge, a virtual MIDI endpoint, and the documented FL Studio
-> setup. PostFader does not install virtual MIDI software.
+Browse all 135 tools in the [tool reference](docs/tools.md).
 
-Python 3.10–3.14 is required. Python 3.13/3.14 or Windows ARM64 may require a
-native compiler for `python-rtmidi`.
+## Quick start
 
-## Supported AI clients
+**You need:** FL Studio 2026 (26.1.3 or newer) on Windows or macOS,
+[Python](https://www.python.org/downloads/) 3.10 to 3.14, and a virtual MIDI
+port: the built-in **IAC Driver** on macOS, or a free app such as **loopMIDI**
+on Windows.
 
-PostFader runs as a local `stdio` MCP server, so the AI host must be able to
-launch it on the same computer as FL Studio.
+1. **Run the installer** for [Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip)
+   or [macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip).
+   It installs PostFader, copies the bridge script into FL Studio, and asks
+   which MIDI port to use.
+2. **In FL Studio**, open *Options → MIDI settings*. Enable your virtual port as
+   both input and output, set the input's controller type to
+   **Universal Bridge**, and give both the same port number.
+3. **Connect your AI client** with the configuration the installer prints (see
+   [Works with](#works-with)).
+4. **Ask a question first**, like *"Summarize my project."* PostFader starts
+   read-only, so nothing changes until you ask for an edit.
 
-| Client or host | V10 setup path |
-| --- | --- |
-| Claude Desktop | Use the Windows/macOS package and generated `claude-json`; the optional `.mcpb` is an additional Claude Desktop wrapper, not the platform setup. |
-| Claude Code | Use the Windows/macOS package and adapt the generated `claude-json` server values to Claude Code's MCP configuration. |
-| Codex CLI, IDE extension, and desktop Codex | Use a Codex ZIP, or run `postfader setup --client codex-toml --register-codex` from a Python/source install. |
-| Cursor IDE and Cursor CLI | Put the resolved executable, arguments, and environment values in Cursor's `mcp.json`. |
-| OpenCode | Adapt the resolved values to `opencode.json` or `opencode.jsonc`. |
-| T3 Code | Configure PostFader in the MCP-capable provider T3 Code is using; no T3-specific package is shipped. |
-| Grok Build | Configure the local `stdio` server in Grok Build's MCP settings; no Grok-specific package is shipped. |
-| Other local MCP hosts | Adapt the generated server values to the host's local `stdio` schema. |
-
-Grok on the web and Grok Bot require a publicly reachable remote HTTP MCP
-server and cannot use PostFader's current local packages directly.
-
-## Supported systems
-
-| Component | V10 support |
-| --- | --- |
-| PostFader | V10 / 10.0.1 |
-| FL Studio | FL Studio 2026, version 26.1.3 build 5336 or newer; live evidence is limited to the tested systems below. |
-| FL MIDI scripting API | Version 44 or newer |
-| Python | 3.10 through 3.14 |
-| macOS | Qualified on macOS 27.0 arm64 with FL Studio Producer Edition 26.1.3 build 5336 and the built-in IAC bus. |
-| Windows | Qualified on Windows 11 x64 with FL Studio Producer Edition 26.1.4 build 5589. |
-
-The [V10 release notes](docs/releases/v10.0.1.md) distinguish automated platform checks
-from the historical live qualification matrix and the remaining experimental
-host-adapter paths.
+Using Python directly? Run `pip install postfader-fl-studio-mcp`, then
+`postfader setup`. The [setup guide](docs/setup.md) covers every option, and
+`postfader-doctor` pinpoints anything that isn't connected.
 
 ## How it works
 
-~~~mermaid
-flowchart LR
-    A["Your AI client<br/>(MCP)"] --> B["PostFader<br/>runs locally"]
-    B -->|"Virtual MIDI"| C["Universal Bridge<br/>inside FL Studio"]
-    C --> D["Your open project"]
-    B -->|"Files you choose"| E["Exported audio<br/>analysis"]
-    B --> F["Mix and creative<br/>workflows"]
-    F -->|"Type-1 MIDI"| G["Generated MIDI files"]
-    F -->|"Optional script"| H["FL Piano Roll"]
-~~~
+<img src="https://raw.githubusercontent.com/synopsys0/postfader-fl-studio-mcp/main/docs/assets/how-it-works.svg" alt="Your AI client talks to PostFader on your computer; PostFader reaches the Universal Bridge script inside FL Studio over a virtual MIDI port; the bridge reads and changes your open project. Exported audio is analyzed by PostFader directly." width="100%">
 
-The AI client calls PostFader's named MCP tools. Live FL Studio communication
-travels over a local virtual MIDI endpoint to the Universal Bridge controller
-script. Audio tools analyze files you select because FL Studio's scripting API
-does not expose its live audio buffer.
+FL Studio only runs scripts from inside itself, so PostFader talks to a small
+controller script, the **Universal Bridge**, over a virtual MIDI port. Audio
+analysis works on files you export, because FL Studio doesn't expose its live
+output to scripts.
 
----
+## Why PostFader
 
-## Built for real projects without pretending FL Studio exposes more than it does
+- **Nothing changes until you ask.** PostFader starts read-only. Edits need
+  write mode, which the AI turns on for your session only when you ask for a
+  change. Reloading the project turns it off again.
+- **Changes are checked, not assumed.** After each supported edit, PostFader
+  reads the value back from FL Studio and reports what actually happened.
+- **Your project is never saved for you.** You decide when to save, and FL
+  Studio's undo history keeps working.
+- **It checks your mix, not just your settings.** Mix Doctor, loudness and
+  true-peak checks, reference comparison, and vocal masking run on the bounces
+  you choose.
+- **It doesn't crowd your AI's context.** Detailed plan formats load only when
+  the AI needs them, leaving room for your conversation.
+- **Windows and macOS, tested on both.** Every change runs the full test suite
+  on both systems before release.
 
-- PostFader starts read-only; opening or reloading a project resets write access.
-- It never saves the project automatically.
-- Supported direct changes are read back from FL Studio after they are made.
-- Workflows with narrower evidence say so instead of reporting full
-  verification.
-- PostFader runs locally, requires no PostFader account, and has no PostFader
-  telemetry.
+[See how PostFader compares with other FL Studio MCP servers →](docs/comparison.md)
 
-For the exact boundaries, read [What “verified” means](#what-verified-means),
-the [write response contract](docs/tool-contracts.md#write-response-contract),
-the [security policy](SECURITY.md), and
-[FL Studio API limitations](docs/fl-constraints.md).
+## Works with
 
-### What “verified” means
+PostFader is a local MCP server, so your AI client must run on the same
+computer as FL Studio. `postfader setup` prints ready-to-paste configuration.
 
-For a supported direct change, PostFader checks the target and current session,
-asks FL Studio to make the change, waits for a later controller update, and
-reads the control again. `verified: true` means the requested control state was
-observed afterward. It does not prove the choice sounds good or guarantee an
-undo point or rollback.
-
-Writes affect the open project immediately. Ask the AI client to enable write
-mode only when you want changes, use a blank or disposable project for the
-first write test, and disable write mode when you are done.
-
-## FL Studio MCP questions
-
-### What is PostFader?
-
-PostFader is an open-source FL Studio MCP server. It connects a local AI client
-to FL Studio through the Universal Bridge and virtual MIDI, with additional
-file-based audio analysis and composition workflows.
-
-### Does it work on Windows and macOS?
-
-Yes. The release includes standard and Codex setup ZIPs for both platforms,
-an optional Claude Desktop MCPB, and Python packages. FL Studio, matching bridge
-installation, and a bidirectional virtual MIDI endpoint are required.
-
-### Which features are released?
-
-V10 (10.0.1) exposes **134 tools and 8 resources**, including Plugin Atlas,
-Sound Selection, recoverable Production Runs, Creation Review, Piano Roll note
-inspection, macOS plug-in loading, and saved-project rendering. Read the
-[release notes](docs/releases/v10.0.1.md) for experimental feature boundaries.
-
-### Does it upload my music or save my project?
-
-PostFader has no hosted service or telemetry and never saves your project
-automatically. Audio analysis runs on files you select. Your AI client may send
-tool arguments and results to its model provider under that client's settings.
-Keep private project data and local run journals out of public reports.
+| Client | How to connect |
+| --- | --- |
+| **Claude Desktop** | Paste the generated `claude-json` config, or install the `.mcpb` extension from the release page. |
+| **Claude Code** | `claude mcp add-json fl-studio '<the fl-studio entry from claude-json>'` |
+| **Codex** (CLI, IDE, app) | Run the Codex installer ZIP, or `postfader setup --client codex-toml --register-codex`. |
+| **Cursor** | Paste the `claude-json` entry into `~/.cursor/mcp.json`. |
+| **Other MCP clients** | Any client that can launch a local stdio server. Use the same command, arguments, and environment. |
 
 ## Documentation
 
-| Guide | What it covers |
+| Guide | What's in it |
 | --- | --- |
-| [Setup and troubleshooting](docs/setup.md) | Full installation, virtual MIDI, bridge, client configuration, upgrades, and diagnostics |
-| [Tool contracts](docs/tool-contracts.md) | All current tools and 8 resources, exact arguments, results, refusals, and evidence boundaries |
-| [Sound Selection](docs/sound-selection.md) | Producer direction, coherent palettes, exact preset verification, drum maps, local history, and Production Run references |
-| [Production Runs](docs/production-runs.md) | Bounded execution, durable checkpoints, explicit resume, and recovery without replaying unknown writes |
-| [Creation Pipeline](docs/creation-pipeline.md) | Readiness, sound-aware composition, phase timing, and semantic processing |
-| [Creation Review](docs/creation-review.md) | Bounce evaluation, explicit feedback and locks, one bounded revision, before/after comparison, persistence, and delivery handoffs |
-| [Plug-in support](docs/plugin-support.md) | Parameter discovery, option controls, scan limits, troubleshooting, and compatibility evidence |
-| [Plug-in matrix](docs/plugin-matrix.md) | Evidence definitions, validated reports, and the contributor target backlog |
-| [Plugin Atlas](docs/plugin-atlas.md) | Offline product knowledge, runtime/evidence boundaries, and Atlas CLI usage |
-| [FL Studio constraints](docs/fl-constraints.md) | What FL Studio's scripting API allows and where PostFader stops |
-| [Distribution and listings](docs/distribution.md) | Published versions, development scope, and verified MCP directory status |
-| [Architecture](docs/architecture.md) | Components, transport, bridge behavior, resources, and trust boundaries |
-| [V10 release notes](docs/releases/v10.0.1.md) | Features, upgrades, platform support, and known live-validation gaps |
-| [Distribution and listings](docs/distribution.md) | Verified releases, canonical descriptions, and MCP directory status |
-| [Security](SECURITY.md) | Threat model, local trust boundaries, privacy, and vulnerability reporting |
-| [Early-user activation](docs/early-access-testing.md) | A privacy-safe first-session and return-session checklist |
-| [Contributing](CONTRIBUTING.md) | Development workflow and contribution guidelines |
-| [GitHub Discussions](https://github.com/synopsys0/postfader-fl-studio-mcp/discussions) | Setup help, workflow sharing, ideas, and plug-in compatibility conversations |
+| [Setup and troubleshooting](docs/setup.md) | Installers, MIDI settings, every client, upgrades, and the doctor |
+| [Tool reference](docs/tools.md) | All 135 tools and 8 resources, grouped by task |
+| [FAQ](docs/faq.md) | Short answers to common questions and problems |
+| [Comparison](docs/comparison.md) | PostFader next to other FL Studio MCP servers and Gopher |
+| [Production Runs](docs/production-runs.md) | Multi-step jobs, resuming, and stopping |
+| [Creation Review](docs/creation-review.md) | Reviewing a draft bounce, revising it, and preparing delivery |
+| [Sound Selection](docs/sound-selection.md) | How PostFader picks presets from loaded instruments |
+| [Plug-in support](docs/plugin-support.md) | Parameter control, presets, and compatibility reports |
+| [FL Studio limits](docs/fl-constraints.md) | What FL Studio's scripting API can't do |
+| [Security and privacy](SECURITY.md) | What runs where, and how to report a vulnerability |
+| [All documentation](docs/README.md) | Architecture, contracts, release notes, and more |
 
-## Detailed limitations
+## FAQ
 
-PostFader does not currently:
+### What is an FL Studio MCP server?
 
-- guarantee rollback or an FL Studio undo point;
-- save an FL Studio project or render unsaved live state;
-- hear or capture FL Studio's live audio output;
-- insert plug-ins on Windows, or remove or reorder them on either platform;
-- reliably control an effect slot's bypass or wet/dry mix;
-- create, move, or delete Playlist clips through the public scripting API;
-- read section-marker times or recorded automation points back from FL Studio;
-- infer named competing project tracks from a full-mix masking measurement; or
-- turn technical measurements into objective artistic truth.
+MCP (Model Context Protocol) is the open standard AI assistants use to call
+tools. An FL Studio MCP server gives the assistant tools for FL Studio, so it
+can read and change your project instead of only describing what to click.
 
-Batch application is bounded but not atomic: earlier changes are not rolled
-back if a later operation cannot be verified. A lost or ambiguous mutation
-response is never replayed automatically. The local virtual MIDI bus is shared
-and unauthenticated, so use PostFader on a trusted, single-user workstation.
+### Which FL Studio versions work?
 
-Audio and mix tools analyze files you explicitly select or recent bounces found
-in bounded FL Studio folders. Results can include paths, hashes, and
-measurements, but never audio samples. Your AI client is separate software and
-may send tool arguments and results to its model provider; review that client's
-privacy policy before using sensitive projects.
+FL Studio 2026, version 26.1.3 build 5336 or newer. Older builds are refused
+because they lack MIDI-scripting fixes PostFader relies on.
 
----
+### Do I need loopMIDI?
 
-## Contributing
+On Windows you need one virtual MIDI port; loopMIDI is a common free choice.
+On macOS, enable the built-in IAC Driver in Audio MIDI Setup.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow. To help
-expand real-world plug-in evidence, review the definitions and target backlog
-in the [plug-in matrix](docs/plugin-matrix.md), then submit a privacy-safe
-[plug-in validation report](https://github.com/synopsys0/postfader-fl-studio-mcp/issues/new?template=plugin-validation.yml).
+### Can it hear my song?
 
-Community setup help, workflow notes, feature ideas, and compatibility results
-belong in [GitHub Discussions](https://github.com/synopsys0/postfader-fl-studio-mcp/discussions).
+It analyzes audio files you export. FL Studio doesn't give scripts access to
+its live output, so PostFader can't listen in real time.
 
-## Security reporting
+### Can it load plug-ins?
 
-> [!IMPORTANT]
-> Do not open a public issue for a suspected vulnerability. Follow the private
-> reporting instructions in [SECURITY.md](SECURITY.md#reporting-a-vulnerability).
+On macOS, yes: it adds instruments and effects from FL Studio's Add menu
+(this needs Accessibility access). On Windows, load them yourself; PostFader
+can then control their parameters.
 
-## License
+### Will it mess up my project?
 
-PostFader is available under the [Apache License 2.0](LICENSE). See
-[NOTICE](NOTICE) for attribution details.
+It starts read-only, checks every supported change, and never saves. Use FL
+Studio's undo if you don't like an edit, and try your first edits on a copy.
+
+More in the [FAQ](docs/faq.md).
+
+## Contributing and security
+
+Bug reports, plug-in compatibility results, and pull requests are welcome; see
+[CONTRIBUTING.md](CONTRIBUTING.md) and
+[GitHub Discussions](https://github.com/synopsys0/postfader-fl-studio-mcp/discussions).
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
+PostFader is licensed under the [Apache License 2.0](LICENSE). FL Studio is a
+trademark of Image-Line, which does not make or endorse this project.
 
 <!-- mcp-name: io.github.synopsys0/postfader-fl-studio-mcp -->

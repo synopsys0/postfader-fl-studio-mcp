@@ -17,8 +17,8 @@ Both surfaces remain within the FL Studio API boundary: PostFader cannot use
 them to insert, remove, or reorder plug-ins, save or render a project, or read
 FL Studio's live audio output.
 
-The separate V10 `plugins_load` tool can insert a named macOS native
-Add-menu favorite and verify the new instance. This does not promote matrix
+The separate `plugins_load` tool can insert a named macOS native
+Add-menu favorite and verify the new instance once session write mode is on. This does not promote matrix
 rows or Atlas knowledge to loading evidence, and Windows insertion remains
 unavailable. See [plug-in support](plugin-support.md) for the host-adapter boundary.
 

@@ -1,6 +1,6 @@
 # Maintainability and module-decomposition plan
 
-Use this register to choose focused improvements to the current V10
+Use this register to choose focused improvements to the current
 branch. Prioritize complete production workflows, fewer bridge round trips and
 recoverable runs before mechanical file splitting. Routine refactoring and
 bug fixes proceed under the task's authorization. Document intentional public

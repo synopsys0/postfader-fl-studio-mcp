@@ -25,6 +25,7 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import build_mcpb  # noqa: E402
+import generate_tool_reference  # noqa: E402
 from build_mcpb import MCPB_NPM_PACKAGE  # noqa: E402
 from check_mcpb_bundle import inspect_bundle  # noqa: E402
 from sync_mcpb_manifest import discover_tools  # noqa: E402
@@ -53,10 +54,15 @@ class MCPBPackagingTests(unittest.TestCase):
             project["project"]["requires-python"],
         )
 
-    def test_manifest_tools_match_runtime_decorators(self) -> None:
+    def test_manifest_tools_and_tool_reference_match_runtime_decorators(self) -> None:
         self.assertEqual(self.manifest["tools"], discover_tools())
         names = [tool["name"] for tool in self.manifest["tools"]]
         self.assertEqual(len(names), len(set(names)))
+        self.assertEqual(
+            generate_tool_reference.REFERENCE.read_text(encoding="utf-8"),
+            generate_tool_reference.render(),
+            "docs/tools.md is stale; run python scripts/generate_tool_reference.py",
+        )
 
     def test_every_runtime_tool_has_protocol_annotations(self) -> None:
         server = ROOT / "fl_studio_mcp" / "mcp_server.py"

@@ -1,8 +1,8 @@
 # Tool-surface evaluation
 
-> V10 inventory: 134 tools and 8 resources, checked against the SDK listing.
+> V11 inventory: 135 tools and 8 resources, checked against the SDK listing.
 
-PostFader V10 exposes 134 MCP tools and 8 live resources. This document is a
+PostFader V11 exposes 135 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,
 profile rollout, telemetry, or a silent change to the default surface.
@@ -15,11 +15,11 @@ count from a model transcript alone.
 
 ## Current surface to evaluate
 
-The current contract groups the 134 tools as follows:
+The current contract groups the 135 tools as follows:
 
 | SDK annotation group | Count | Evaluation focus |
 | --- | ---: | --- |
-| Read-only tools | 62 | Project and audio observations, Plugin Atlas, Sound Selection, validation, retained runs, review evidence, and render status. |
+| Read-only tools | 63 | Project and audio observations, Plugin Atlas, Sound Selection, plan-operation schemas, validation, retained runs, review evidence, and render status. |
 | Destructive, non-idempotent tools | 56 | Direct setters, batches, Production Run execution/continuation, preset application, note writes, native plug-in loading, and revision/delivery mutations. |
 | Non-read-only, non-destructive tools | 14 | Audition, watches, preparation, native-menu discovery, Piano Roll inspection/navigation, render start/cancel, and workflow state. |
 | Destructive, idempotent tools | 2 | Session write-mode control and confirmed local Sound Selection history reset. |
@@ -170,6 +170,12 @@ Include the smallest sanitized schema fragment and the exact validation/refusal
 observed. Do not “fix” overload by weakening contracts, accepting unknown
 fields, widening bounds, or hiding partial evidence.
 
+V11 shrinks the advertised listing without touching validation: Production Run
+plan operations are listed by name and shared fields, and their exact schemas
+come from `postfader_describe_operations`. If a model builds a plan without
+asking for those schemas and then loops on validation errors, report it as a
+selection observation in this category.
+
 ### Client fails to expose all tools
 
 Record the server SDK listing and the client's displayed listing separately.
@@ -178,7 +184,7 @@ does not support resources, or failed to start the server. Attach the output of
 an explicit tool-listing check only after removing paths, environment values,
 and private metadata.
 
-The expected V10 values are 134 tools and 8 resources. A client
+The expected V11 values are 135 tools and 8 resources. A client
 showing fewer is not evidence that the repository should silently change its
 default surface. Escalate client limits or MCP SDK compatibility separately.
 
@@ -319,8 +325,9 @@ schemas, or client-specific documentation instead.
 ## What this guide does not claim
 
 - It does not claim that every model will choose the ideal tool.
-- It does not claim that a client exposing all 134 tools can fit them into every
-  model context window.
+- It does not claim that a client exposing all 135 tools can fit them into every
+  model context window, although V11 advertises compact schemas to make that
+  far more likely.
 - It does not claim that tool selection proves a live FL Studio mutation,
   audible quality, undo point, rollback, or project save.
 - It does not claim that a report from one client generalizes to all clients,

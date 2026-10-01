@@ -1,8 +1,8 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current V10 surface contains 134 tools and 8 resources.
-It is organized as a verified control kernel, a production-workflow layer, and
+controller script. The current surface contains 135 tools and 8 resources
+(see the [tool reference](tools.md)). It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
 ```text
@@ -51,11 +51,19 @@ separate.
 
 ### MCP server
 
-`fl_studio_mcp/mcp_server.py` defines all 134 tools, 8 resources, and their
-annotations. It
-uses strict generated argument models that reject unknown fields, so a
+`fl_studio_mcp/mcp_server.py` defines every tool, resource, and annotation.
+It uses strict generated argument models that reject unknown fields, so a
 misspelled argument fails instead of being silently ignored. Blocking bridge
 and audio work runs off the MCP event loop.
+
+The listing a client receives is smaller than those models.
+`fl_studio_mcp/tool_schemas.py` drops generated titles, merges union members
+that differ only in their `operation` constant, and advertises Production Run
+plan operations by name and shared fields; `postfader_describe_operations`
+returns any operation's exact schema on demand. Arguments that echo an earlier
+result, such as a Sound Palette or processing plan, are advertised as plain
+objects. None of this changes validation: every call is still checked against
+the full model.
 
 The server does not expose a generic bridge-command tool. Every operation is a
 named MCP tool with a bounded schema.
@@ -368,7 +376,8 @@ transactions and optimistic revisions; operation markers survive process death.
 complete WAV containers and decodes their audio, and reports application exit
 separately from file readiness. Its shutdown hook cancels active monitoring.
 
-`plugin_loading.py` reads the named macOS Add menu, dispatches one addition,
-and identifies its channel or effect slot through the bridge. It shares the
+`plugin_loading.py` refuses while session write mode is off, then reads the
+named macOS Add menu, dispatches one addition, and identifies its channel or
+effect slot through the bridge. It shares the
 Piano Roll desktop-dispatch lock. `sound_selection/direction.py` supplies
 explainable role defaults.
