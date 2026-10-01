@@ -720,8 +720,8 @@ class ReadOnlyInspector:
                     CapabilityEvidence(
                         kind=live,
                         detail=(
-                            "Current raw selection read probe succeeded; semantic promotion "
-                            "is disabled because meter and marker scope cannot be verified."
+                            "Current raw selection read probe succeeded; endpoints stay raw "
+                            "because their meter and marker scope cannot be verified."
                             if selection_probe
                             else "No successful current raw selection probe."
                         ),

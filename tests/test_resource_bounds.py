@@ -103,19 +103,41 @@ class DecodedAudioCeilingTests(unittest.TestCase):
 
 
 class SocketAccumulatorTests(unittest.TestCase):
-    def test_a_line_that_never_terminates_drops_the_connection(self):
+    def test_an_oversized_request_is_refused_before_the_connection_closes(self):
         server_side, sender = socket.socketpair()
         self.addCleanup(sender.close)
+        sender.settimeout(2)
         transport = bridge._SocketTransport()
         client = bridge._Client(server_side)
         client.inbox = b"x" * (bridge.MAX_TRANSPORT_REQUEST_BYTES - 16)
         transport.clients.append(client)
 
         sender.sendall(b"y" * 4096)
-
         self.assertEqual(transport.poll(), [])
+        transport.flush()
+        self.assertEqual(client.inbox, b"")
+
+        # The refusal arrives, followed by end of stream.
+        received = b""
+        while True:
+            chunk = sender.recv(65536)
+            if not chunk:
+                break
+            received += chunk
+        reply = json.loads(received)
+        self.assertIsNone(reply["id"])
+        self.assertIs(reply["ok"], False)
+        self.assertIn("size limit", reply["error"])
+
+        # The rest of the refused request is discarded, and the connection is
+        # dropped once the sender closes its side.
+        sender.sendall(b"z" * 4096)
+        transport.poll()
+        self.assertEqual(client.inbox, b"")
+        self.assertIn(client, transport.clients)
+        sender.close()
+        transport.poll()
         self.assertEqual(transport.clients, [])
-        self.assertLessEqual(len(client.inbox), bridge.MAX_TRANSPORT_REQUEST_BYTES)
 
 
 class FileTransportRequestTests(unittest.TestCase):

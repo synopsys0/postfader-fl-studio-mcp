@@ -842,7 +842,7 @@ class ClientFramingTests(unittest.TestCase):
         self.transport.midi_out = sink
         self.transport._open = lambda: True
 
-        with self.assertRaisesRegex(ValueError, "size limit"):
+        with self.assertRaisesRegex(bridge_client.BridgeError, "size limit"):
             self.transport.request(
                 7, {"id": 7, "payload": "X" * bridge_client.MAX_SYSEX_REQUEST_BYTES}
             )

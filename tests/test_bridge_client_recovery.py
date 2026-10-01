@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -890,6 +891,43 @@ class BridgeClientRecoveryTests(unittest.TestCase):
         self.assertIn("locked read-only", str(raised.exception))
         self.assertEqual(len(transport.request_calls), 1)
         self.assertEqual(transport.close_calls, 0)
+
+    def test_bridge_refusal_without_an_id_is_reported_and_not_replayed(self):
+        # The bridge answers a request it could not read (too large, or not
+        # JSON) without an id. That is a refusal of this request, not a broken
+        # link: even an idempotent read must not be replayed into it.
+        refusal = {
+            "id": None,
+            "ok": False,
+            "error": "request exceeds the transport size limit",
+        }
+        transport = ScriptedTransport(name="files", requests=[refusal])
+        client = client_with(transport)
+        client._active = transport
+        with self.assertRaises(BridgeError) as raised:
+            client.call("project.info")
+
+        self.assertNotIsInstance(raised.exception, bridge_client.BridgeUnavailableError)
+        self.assertIn("size limit", str(raised.exception))
+        self.assertEqual(len(transport.request_calls), 1)
+        self.assertEqual(transport.close_calls, 0)
+
+    def test_tcp_transport_hands_back_a_refusal_and_reconnects_next_time(self):
+        local, bridge_end = socket.socketpair()
+        self.addCleanup(bridge_end.close)
+        bridge_end.sendall(
+            b'{"id": null, "ok": false, "error": "request exceeds the '
+            b'transport size limit"}\n'
+        )
+        local.settimeout(2)
+        transport = bridge_client._TcpTransport("127.0.0.1", 1, timeout=2)
+        transport.sock = local
+
+        reply = transport.request(5, {"id": 5, "cmd": "ping", "args": {}})
+
+        self.assertIsNone(reply["id"])
+        self.assertIn("size limit", reply["error"])
+        self.assertIsNone(transport.sock)
 
     def test_midi_ownership_collision_remains_a_clear_terminal_error(self):
         class OwnedTransport(ScriptedTransport):
