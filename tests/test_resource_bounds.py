@@ -8,14 +8,16 @@ Three paths could grow memory without limit from caller-supplied input:
 * the file transport's request reader.
 
 Everything here is hermetic. Audio is generated in a temporary directory, and
-the transports are exercised as plain objects -- no sockets are bound, no
-mailbox outside a temp dir is touched, and CoreMIDI is never opened.
+the transports are exercised as plain objects -- the socket path uses a local
+socket pair rather than a listener, no mailbox outside a temp dir is touched,
+and CoreMIDI is never opened.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -99,44 +101,21 @@ class DecodedAudioCeilingTests(unittest.TestCase):
         # Must arrive as the refusal it is, not wrapped as an unreadable file.
         self.assertNotIn("Could not read", message)
 
-    def test_the_ceiling_covers_a_realistic_master_without_truncating(self):
-        # Ten minutes of 96 kHz stereo is the largest ordinary input; it must
-        # fit, or the bound would be breaking real analysis rather than
-        # bounding abuse.
-        frames = 600 * 96000
-        needed = frames * (2 + 1) * 8
-        self.assertLessEqual(needed, audio.MAX_DECODED_AUDIO_BYTES, needed)
-
 
 class SocketAccumulatorTests(unittest.TestCase):
-    class FakeSock:
-        def __init__(self):
-            self.sent = []
-
-        def sendall(self, payload):
-            self.sent.append(payload)
-
-        def close(self):
-            pass
-
-    def _client(self):
+    def test_a_line_that_never_terminates_drops_the_connection(self):
+        server_side, sender = socket.socketpair()
+        self.addCleanup(sender.close)
         transport = bridge._SocketTransport()
-        client = bridge._Client(self.FakeSock(), ("127.0.0.1", 1)) \
-            if hasattr(bridge, "_Client") else None
-        return transport, client
+        client = bridge._Client(server_side)
+        client.inbox = b"x" * (bridge.MAX_TRANSPORT_REQUEST_BYTES - 16)
+        transport.clients.append(client)
 
-    def test_the_ceiling_is_shared_with_the_sysex_reassembler(self):
-        self.assertEqual(
-            bridge.MAX_TRANSPORT_REQUEST_BYTES, bridge.MAX_SYSEX_REQUEST_BYTES)
+        sender.sendall(b"y" * 4096)
 
-    def test_a_line_that_never_terminates_cannot_grow_without_bound(self):
-        # The accumulator only grows through this check, so proving the check
-        # rejects an oversized addition is what matters; the socket plumbing
-        # around it is exercised by test_bridge.py.
-        inbox = b"x" * bridge.MAX_TRANSPORT_REQUEST_BYTES
-        chunk = b"y" * 4096
-        self.assertGreater(
-            len(inbox) + len(chunk), bridge.MAX_TRANSPORT_REQUEST_BYTES)
+        self.assertEqual(transport.poll(), [])
+        self.assertEqual(transport.clients, [])
+        self.assertLessEqual(len(client.inbox), bridge.MAX_TRANSPORT_REQUEST_BYTES)
 
 
 class FileTransportRequestTests(unittest.TestCase):

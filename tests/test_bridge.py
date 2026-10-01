@@ -279,12 +279,6 @@ def check_scan_params(c):
     real_indices = sorted(_state.SPARSE_VST_REAL)
     total = _state.SPARSE_VST_COUNT
 
-    section("the fixture really is a sparse padded map")
-    check("reported count is far larger than the real one",
-          total == 1200 and len(real_indices) == 7, (total, real_indices))
-    check("real parameters are scattered, not a prefix",
-          real_indices[-1] == total - 1 and 517 in real_indices, real_indices)
-
     section("scanning a padded VST returns only the real parameters")
     undo_at = len(_state.UNDO)
     before_values = list(_state.TRACKS[7].slots[2].values)

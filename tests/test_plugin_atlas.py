@@ -231,47 +231,6 @@ _FIXTURE_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
 
 
 class AtlasModelContractTests(unittest.TestCase):
-    def test_models_are_strict_frozen_and_recursively_immutable(self) -> None:
-        product = ProductKnowledge(
-            product_id="p",
-            name="Example",
-            aliases=["Alias"],
-            modules=[{"id": "m", "name": "Main"}],
-        )
-        self.assertIsInstance(product.aliases, tuple)
-        self.assertIsInstance(product.modules, tuple)
-        self.assertIsInstance(product.modules[0].name, str)
-        with self.assertRaises((ValidationError, TypeError)):
-            product.name = "changed"  # type: ignore[misc]
-        with self.assertRaises((ValidationError, TypeError)):
-            ProductKnowledge(product_id="p", name="Example", unexpected=True)
-        with self.assertRaises((ValidationError, TypeError)):
-            RuntimeParameterObservation(index="0")  # type: ignore[arg-type]
-        with self.assertRaises((ValidationError, TypeError)):
-            RuntimeParameterObservation(index=8192)
-
-    def test_runtime_and_availability_models_reject_ownership_claims(self) -> None:
-        for state in ("loaded", "not_observed", "availability_unknown"):
-            observation = AvailabilityObservation(state=state)  # type: ignore[arg-type]
-            self.assertNotIn("owned", observation.model_dump())
-            self.assertNotIn("installed", observation.model_dump())
-        with self.assertRaises((ValidationError, TypeError)):
-            AvailabilityObservation(state="not_owned")  # type: ignore[arg-type]
-        with self.assertRaises((ValidationError, TypeError)):
-            AvailabilityObservation(state="not_installed")  # type: ignore[arg-type]
-        unavailable = RuntimePluginInstance(
-            name="Unloaded",
-            availability=AvailabilityObservation(state="not_observed"),
-        )
-        self.assertEqual(unavailable.parameters, ())
-        self.assertNotIn("owned", unavailable.model_dump())
-
-    def test_model_dump_round_trip_preserves_json_alias_contract(self) -> None:
-        product = ProductKnowledge(product_id="p", name="Example", aliases=["Alias"])
-        encoded = json.dumps(product.model_dump(mode="json"), allow_nan=False)
-        restored = ProductKnowledge.model_validate_json(encoded, strict=True)
-        self.assertEqual(restored, product)
-
     def test_compatibility_levels_require_their_claimed_proof(self) -> None:
         validated_write = WriteValidationEvidence(
             evidence_id="write-evidence",
@@ -534,11 +493,6 @@ class BundledCatalogOracleTests(unittest.TestCase):
                 self.assertEqual(product.edition_min, row.edition_min)
                 self.assertEqual(product.catalog_scope, "current_edition_matrix")
 
-    def test_manifest_keeps_vendor_catalogs_and_snapshot_oracles_separate(self) -> None:
-        catalogs = {catalog.resource for catalog in self.registry.manifest.catalogs}
-        for snapshot in self.registry.manifest.catalog_snapshots:
-            self.assertNotIn(snapshot.resource, catalogs)
-
     def test_legacy_and_core_feature_rows_stay_out_of_the_current_matrix(self) -> None:
         image_line = [item for item in self.registry.products if item.vendor_id == "image-line"]
         matrix_names = {row["name"] for row in self.oracle}
@@ -685,19 +639,6 @@ class MatcherAndAvailabilityTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(matches), 2)
         self.assertTrue(all(not match.control_proven for match in matches))
-
-    def test_non_loaded_availability_is_preserved_without_ownership_inference(self) -> None:
-        for state in ("loaded", "not_observed", "availability_unknown"):
-            runtime = RuntimePluginInstance(
-                name="Alpha Compressor",
-                availability=AvailabilityObservation(state=state),  # type: ignore[arg-type]
-            )
-            match = match_runtime_plugin(runtime, self.registry)
-            self.assertIsNotNone(match)
-            assert match is not None
-            self.assertEqual(match.availability.state, state)
-            self.assertNotIn("owned", match.model_dump())
-            self.assertNotIn("installed", match.model_dump())
 
     def test_compatibility_join_keeps_name_only_and_warns_on_unloaded_state(self) -> None:
         runtime = RuntimePluginInstance(

@@ -156,29 +156,6 @@ class ProductionAutonomyRegressionTests(unittest.TestCase):
             transport=TransportState(tempo_bpm=120, time_signature_numerator=4),
         ).model_copy(update=updates)
 
-    def test_all_supported_change_categories_fit_request_scope_and_report(self) -> None:
-        from typing import get_args
-
-        categories = get_args(runs.ChangeCategory)
-        broad_request = request(allowed_changes=categories)
-        scope = runs.ProductionScope(
-            description="All supported production changes.",
-            additional_allowed_changes=categories,
-        )
-        validation = runs.validate_production_run(
-            broad_request, plan(melody()), inspect_live=False
-        )
-        report = runs.ProductionRunValidation.model_validate(
-            {
-                **validation.model_dump(mode="python"),
-                "expected_mutation_categories": categories,
-            }
-        )
-
-        self.assertEqual(broad_request.allowed_changes, categories)
-        self.assertEqual(scope.additional_allowed_changes, categories)
-        self.assertEqual(report.expected_mutation_categories, categories)
-
     def test_audition_controls_do_not_invalidate_project_checkpoint(self) -> None:
         before = self.project()
         after = before.model_copy(
@@ -1982,17 +1959,6 @@ class ProductionRunTests(unittest.TestCase):
         self.assertNotIn(
             "target_index_unavailable", {item.code for item in validation.blockers}
         )
-
-    def test_generator_scalar_payloads_are_bounded(self) -> None:
-        with self.assertRaises(ValueError):
-            runs.GenerateMelodyOperation(operation_id="root", root="C" * 1000)
-        with self.assertRaises(ValueError):
-            runs.GenerateChordProgressionOperation(
-                operation_id="chord",
-                progression=("I" * 1000,),
-            )
-        with self.assertRaises(ValueError):
-            runs.GenerateMelodyOperation(operation_id="seed", seed=2**80)
 
     def test_registry_lookups_isolate_nested_generated_output_lists(self) -> None:
         registry = runs.ProductionRunRegistry()

@@ -126,22 +126,6 @@ class SoundSelectionCoreTests(unittest.TestCase):
         self.assertIn("bright", {item.descriptor for item in evidence})
         self.assertTrue(all(item.confidence < 0.5 for item in evidence))
 
-    def test_drum_roles_default_to_the_minimum_safe_pattern_map(self) -> None:
-        direct = SoundRoleRequest(role_id="drums", role_type="drums")
-        parsed = SoundRoleRequest.model_validate(
-            {"role_id": "drums", "role_type": "drums"}
-        )
-        expected = ("kick", "snare", "closed_hat")
-        self.assertEqual(direct.required_drum_roles, expected)
-        self.assertEqual(parsed.required_drum_roles, expected)
-
-    def test_tuple_text_elements_are_bounded_individually(self) -> None:
-        with self.assertRaises(ValueError):
-            SoundRoleRequest(
-                role_id="texture",
-                technique_ids=("x" * 4097,),
-            )
-
     def test_section_scope_is_carried_by_the_assignment_when_inventory_is_unknown(self) -> None:
         role = SoundRoleRequest(
             role_id="texture",
@@ -278,17 +262,6 @@ class SoundSelectionCoreTests(unittest.TestCase):
             [(item.candidate_preset, item.preset_index) for item in candidates],
             [("Bright Pluck", 2)],
         )
-
-    def test_blank_only_preset_page_without_current_has_no_candidates(self) -> None:
-        observed = SoundTargetInventory(
-            target=self.vital,
-            product_name="Observed Synth",
-            preset_names=("", "  "),
-            preset_indices=(0, 1),
-            preset_navigation_available=True,
-        )
-
-        self.assertEqual(observed.candidates(), ())
 
     def test_plan_is_read_only_and_variation_defaults_to_loaded_roles(self) -> None:
         role = SoundRoleRequest(

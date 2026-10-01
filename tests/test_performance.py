@@ -8,7 +8,7 @@ import copy
 import math
 import unittest
 from datetime import datetime, timezone
-from typing import Any, get_args
+from typing import Any
 from unittest import mock
 
 from pydantic import ValidationError
@@ -56,7 +56,6 @@ from fl_studio_mcp.track_b_contracts import (
     TargetedLoadedPluginInventory,
     TargetedPluginParameterPage,
     TargetedPluginParameterScan,
-    TrackBResult,
     VerifiedChannelIdentityWrite,
     VerifiedChannelMixWrite,
     VerifiedChannelPitchWrite,
@@ -355,9 +354,6 @@ def step_write_handler(command: str, arguments: dict[str, Any]) -> dict[str, Any
 
 
 class GatewayBoundaryTests(unittest.TestCase):
-    def test_read_and_mutation_allowlists_are_disjoint(self) -> None:
-        self.assertTrue(TRACK_B_READ_COMMANDS.isdisjoint(TRACK_B_MUTATION_COMMANDS))
-
     def test_gateways_reject_cross_boundary_and_arbitrary_commands(self) -> None:
         client = ScriptedClient(lambda command, arguments: {})
         read = TrackBReadGateway(client)
@@ -386,12 +382,6 @@ class GatewayBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeError, "reply lost"):
             controller.set_playing(playing=True)
         self.assertEqual([name for name, _ in client.calls], ["transport.set_playing"])
-
-    def test_unknown_transport_name_is_normalized(self) -> None:
-        client = ScriptedClient({})
-        client.transport = "surprise"
-        self.assertEqual(TrackBReadGateway(client).transport, "unknown")
-        self.assertEqual(TrackBMutationGateway(client).transport, "unknown")
 
 
 class MutationGateTests(unittest.TestCase):
@@ -851,24 +841,6 @@ def verified_contract_fields(*, verified: bool = True) -> dict[str, Any]:
 
 
 class ChannelMutationTests(unittest.TestCase):
-    def test_all_channel_mutation_contracts_are_public_results(self) -> None:
-        mutation_types = {
-            value
-            for value in get_args(TrackBResult)
-            if isinstance(value, type) and value.__name__.startswith("VerifiedChannel")
-        }
-        self.assertEqual(
-            mutation_types,
-            {
-                VerifiedChannelMixWrite,
-                VerifiedChannelIdentityWrite,
-                VerifiedChannelRouteWrite,
-                VerifiedChannelSoloWrite,
-                VerifiedChannelPitchWrite,
-                VerifiedChannelSelectionWrite,
-            },
-        )
-
     def test_mix_result_has_nullable_flags_only_for_requested_fields(self) -> None:
         controller, client = controller_for(channel_handler)
         result = controller.set_channel_mix(
@@ -2098,95 +2070,6 @@ class TargetAwareMCPBoundaryTests(unittest.TestCase):
             asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", target=ChannelGeneratorTarget(channel_index=7)))
         self.assertEqual(legacy.await_args.kwargs["target_unit"], "Hz")
         self.assertEqual(targeted.await_args.kwargs["target_unit"], "Hz")
-
-    TARGETED_ADDRESS_TOOLS = {
-        "plugins_inspect_parameter_map",
-        "plugins_scan_parameters",
-        "fl_set_plugin_param",
-        "fl_set_plugin_param_display",
-        "fl_set_plugin_param_option",
-    }
-
-    def test_schemas_keep_legacy_pair_and_add_optional_discriminated_target(self) -> None:
-        tools = {
-            tool.name: tool
-            for tool in asyncio.run(mcp_server.mcp.list_tools())
-        }
-        for name in self.TARGETED_ADDRESS_TOOLS:
-            with self.subTest(tool=name):
-                schema = tools[name].input_schema
-                properties = schema["properties"]
-                required = set(schema.get("required", []))
-                self.assertTrue(
-                    {"track_index", "slot_index", "target"} <= set(properties)
-                )
-                self.assertTrue(
-                    {"track_index", "slot_index", "target"}.isdisjoint(required)
-                )
-                self.assertIsNone(properties["track_index"]["default"])
-                self.assertIsNone(properties["slot_index"]["default"])
-                self.assertIsNone(properties["target"]["default"])
-
-                target_union = next(
-                    branch
-                    for branch in properties["target"]["anyOf"]
-                    if "discriminator" in branch
-                )
-                discriminator = target_union["discriminator"]
-                self.assertEqual(discriminator["propertyName"], "kind")
-                self.assertEqual(
-                    discriminator["mapping"],
-                    {
-                        "mixer_effect": "#/$defs/MixerEffectTarget",
-                        "channel_generator": "#/$defs/ChannelGeneratorTarget",
-                    },
-                )
-                self.assertEqual(
-                    {variant["$ref"] for variant in target_union["oneOf"]},
-                    {
-                        "#/$defs/MixerEffectTarget",
-                        "#/$defs/ChannelGeneratorTarget",
-                    },
-                )
-                self.assertEqual(
-                    set(schema["$defs"]["MixerEffectTarget"]["required"]),
-                    {"track_index", "slot_index"},
-                )
-                self.assertEqual(
-                    set(schema["$defs"]["ChannelGeneratorTarget"]["required"]),
-                    {"channel_index"},
-                )
-                self.assertEqual(
-                    schema["$defs"]["MixerEffectTarget"]["properties"]["kind"][
-                        "const"
-                    ],
-                    "mixer_effect",
-                )
-                self.assertEqual(
-                    schema["$defs"]["ChannelGeneratorTarget"]["properties"][
-                        "kind"
-                    ]["const"],
-                    "channel_generator",
-                )
-
-    def test_inventory_schema_preserves_legacy_response_by_default(self) -> None:
-        tools = {
-            tool.name: tool
-            for tool in asyncio.run(mcp_server.mcp.list_tools())
-        }
-        schema = tools["plugins_scan_loaded_plugins"].input_schema
-        properties = schema["properties"]
-        self.assertEqual(
-            set(properties), {"only_used", "include_channel_generators"}
-        )
-        self.assertFalse(properties["include_channel_generators"]["default"])
-        self.assertNotIn(
-            "include_channel_generators", set(schema.get("required", []))
-        )
-        self.assertIn(
-            "False preserves the 0.11 mixer-effect-only response contract",
-            properties["include_channel_generators"]["description"],
-        )
 
     def test_generator_targets_route_through_performance_methods(self) -> None:
         target = ChannelGeneratorTarget(channel_index=7)

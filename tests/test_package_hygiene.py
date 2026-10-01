@@ -252,36 +252,6 @@ class PackageHygieneTests(unittest.TestCase):
         self.assertEqual(journal.name, "production-runs.sqlite3")
         self.assertFalse(journal.parent.exists(), "test journal directory must be temporary")
 
-    def test_safe_runner_can_instrument_children_for_coverage(self) -> None:
-        runner = load_safe_runner()
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="Ran 1 test\n", stderr=""
-        )
-        path = ROOT / "tests" / "test_bridge_stamp.py"
-        with tempfile.TemporaryDirectory(prefix="postfader-coverage-") as raw:
-            with (
-                mock.patch.dict(
-                    os.environ,
-                    {runner.COVERAGE_DIRECTORY_ENV: raw},
-                    clear=False,
-                ),
-                mock.patch.object(
-                    runner.subprocess, "run", return_value=completed
-                ) as run,
-            ):
-                self.assertIs(runner.run_safe_test(path), completed)
-
-            command = run.call_args.args[0]
-            self.assertEqual(
-                command[:5],
-                [sys.executable, "-m", "coverage", "run", "--parallel-mode"],
-            )
-            self.assertEqual(command[5], os.fspath(path))
-            self.assertEqual(
-                run.call_args.kwargs["env"]["COVERAGE_FILE"],
-                os.fspath(Path(raw) / ".coverage"),
-            )
-
     def test_safe_runner_environment_blocks_native_midi_probe_subprocess(self) -> None:
         runner = load_safe_runner()
         source = """

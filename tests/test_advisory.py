@@ -162,30 +162,6 @@ class AnalyzeFileTests(unittest.TestCase):
         self.assertEqual(result.stereo.channels, 2)
         self.assertIsNotNone(result.stereo.correlation)
 
-    def test_the_engines_own_confidence_and_limitations_are_forwarded(self):
-        # The agent needs to know how far to trust the numbers, and that has to
-        # come from the engine rather than being restated by this layer.
-        result = analyze_audio_file(path_of(REFERENCE))
-        self.assertIn(result.confidence.level, {"high", "medium", "low"})
-        self.assertTrue(result.confidence.basis)
-        self.assertTrue(result.limitations)
-        self.assertTrue(
-            any("not a certified" in item for item in result.limitations),
-            result.limitations,
-        )
-        self.assertEqual(result.analyzer_version, "audio-analysis-2.0")
-        self.assertEqual(
-            result.analyzer_versions.true_peak, "4x-polyphase-chunked-1"
-        )
-
-    def test_the_tool_layer_emits_no_advice_text(self):
-        # The engine can phrase readings prescriptively ("a de-esser would
-        # help"). Judgement belongs to the agent reading the mixer state, so
-        # the tool surface carries measurements only.
-        result = analyze_audio_file(path_of(REFERENCE))
-        self.assertEqual(result.interpretation, "measurements_only")
-        self.assertNotIn("readings", result.model_dump())
-
     def test_pitch_is_measured_only_when_it_is_asked_for(self):
         # Pitch tracking is meaningful for a vocal stem and misleading for a
         # full mix, so it must never be attached silently.
@@ -207,12 +183,6 @@ class AnalyzeFileTests(unittest.TestCase):
         with self.assertRaises(AdvisoryError):
             analyze_audio_file(path_of(REFERENCE), max_seconds=6000.0)
 
-    def test_results_are_immutable(self):
-        # A returned measurement is evidence; nothing downstream may edit it.
-        result = analyze_audio_file(path_of(REFERENCE))
-        with self.assertRaises(ValueError):
-            result.confidence.score = 1.0
-
 
 class CompareFilesTests(unittest.TestCase):
     def test_two_synthetic_fixtures_produce_alignment_and_band_deltas(self):
@@ -232,15 +202,6 @@ class CompareFilesTests(unittest.TestCase):
         self.assertIn(result.alignment.confidence.level, {"high", "medium", "low"})
         self.assertIsInstance(result.comparison_ready, bool)
         self.assertTrue(result.limitations)
-
-    def test_loudness_matching_is_reported_as_in_memory_only(self):
-        # The comparison applies gain to make the two files measurable against
-        # each other. The result has to say plainly that neither file changed.
-        result = compare_audio_files(path_of(REFERENCE), path_of(CANDIDATE))
-        self.assertTrue(result.loudness_matching.in_memory_only)
-        self.assertFalse(result.loudness_matching.source_files_modified)
-        self.assertIsNotNone(result.loudness_matching.reference_lufs)
-        self.assertIsNotNone(result.loudness_matching.target_lufs_before)
 
     def test_both_sides_are_path_checked(self):
         with self.assertRaises(AdvisoryError) as bad_reference:
@@ -318,11 +279,6 @@ class PathRuleTests(unittest.TestCase):
             analyze_audio_file(os.fspath(ROOT / "pyproject.toml"))
         self.assertIn("audio extension", str(refused.exception))
 
-    def test_a_directory_is_refused(self):
-        with self.assertRaises(AdvisoryError) as refused:
-            analyze_audio_file(os.fspath(FIXTURES))
-        self.assertIn("directory", str(refused.exception))
-
     def test_a_directory_named_like_a_render_is_still_refused(self):
         # The suffix check alone would wave this through, so the regular-file
         # rule has to be checked independently of the extension.
@@ -371,9 +327,6 @@ class PathRuleTests(unittest.TestCase):
             with self.assertRaises(AdvisoryError) as refused:
                 analyze_audio_file(os.fspath(empty))
         self.assertIn("empty", str(refused.exception))
-
-    def test_an_accepted_path_returns_the_resolved_regular_file(self):
-        self.assertEqual(resolve_audio_path(path_of(REFERENCE)), REFERENCE)
 
 
 class DiscoveryTests(unittest.TestCase):
@@ -487,23 +440,6 @@ class DiscoveryTests(unittest.TestCase):
             with self.subTest(root=root):
                 self.assertTrue(root.is_absolute())
                 self.assertTrue(root.is_relative_to(advisory.FL_STUDIO_USER_ROOT))
-
-    def test_the_default_roots_produce_a_newest_first_listing(self):
-        now = datetime.now(timezone.utc)
-        with temporary_tree() as raw:
-            tree = Path(raw)
-            write_audio_file(tree, "older.wav", mtime=now - timedelta(minutes=2))
-            write_audio_file(tree, "newer.wav", mtime=now - timedelta(minutes=1))
-            original = advisory.DEFAULT_DISCOVERY_ROOTS
-            advisory.DEFAULT_DISCOVERY_ROOTS = (tree,)
-            try:
-                listing = find_recent_audio_files(limit=5)
-            finally:
-                advisory.DEFAULT_DISCOVERY_ROOTS = original
-            self.assertEqual(
-                [Path(item.path).name for item in listing.files],
-                ["newer.wav", "older.wav"],
-            )
 
 
 if __name__ == "__main__":

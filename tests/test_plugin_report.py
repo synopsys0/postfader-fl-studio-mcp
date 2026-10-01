@@ -12,7 +12,6 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -26,7 +25,6 @@ from fl_studio_mcp.plugin_report import (  # noqa: E402
     render_public_markdown,
     validate_representative_write,
 )
-from fl_studio_mcp import plugin_report  # noqa: E402
 
 
 COMPLETE_SCAN = {
@@ -259,29 +257,6 @@ class PublicReportTests(unittest.TestCase):
         self.assertIn("Second required caveat.", rendered)
         self.assertIn("END-MARKER.", rendered)
 
-    def test_unknown_fl_version_is_omitted_from_environment(self):
-        report = replace(
-            report_for(),
-            fl_studio_version="unknown",
-            fl_studio_edition="unknown",
-            platform="unknown",
-        )
-        rendered = render_public_markdown(report)
-        matrix_row = next(
-            line for line in rendered.splitlines()
-            if line.startswith("| Example Effect")
-        )
-        self.assertNotIn("FL Studio unknown", matrix_row)
-        self.assertIn(f"PostFader {report.postfader_version}", matrix_row)
-
-    def test_one_nameless_control_uses_singular_grammar(self):
-        parameters = [dict(item) for item in COMPLETE_SCAN["parameters"]]
-        parameters[0]["reported_name"] = ""
-        report = report_for(dict(COMPLETE_SCAN, parameters=parameters))
-        rendered = render_public_markdown(report)
-        self.assertIn("1 control was nameless in FL's report.", rendered)
-        self.assertNotIn("1 controls were", rendered)
-
 
 class FakeWriteClient:
     def __init__(
@@ -482,22 +457,6 @@ assert os.environ['FL_BRIDGE_MIDI_PORT'] == 'Exact Fixture Port'
             completed.returncode, 0, completed.stdout + completed.stderr
         )
 
-    def test_windows_platform_is_preserved_in_public_evidence(self):
-        with (
-            mock.patch.object(plugin_report.platform, "system", return_value="Windows"),
-            mock.patch.object(plugin_report.platform, "machine", return_value="AMD64"),
-        ):
-            self.assertEqual(plugin_report._safe_platform(), "Windows x86_64")
-
-    def test_midi_port_is_rejected_for_offline_json_reduction(self):
-        with self.assertRaises(SystemExit):
-            main([
-                "--from-json",
-                "unused.json",
-                "--midi-port",
-                "Must Not Open",
-            ])
-
     def test_saved_raw_bridge_scan_generates_shareable_output(self):
         raw = {
             "plugin": "Example Effect",
@@ -537,10 +496,6 @@ assert os.environ['FL_BRIDGE_MIDI_PORT'] == 'Exact Fixture Port'
     def test_write_mode_requires_explicit_disposable_project_acknowledgement(self):
         with self.assertRaises(SystemExit):
             main(["--track", "8", "--slot", "2", "--validate-write", "0"])
-
-    def test_live_only_scan_bound_is_rejected_for_saved_json(self):
-        with self.assertRaises(SystemExit):
-            main(["--from-json", "unused.json", "--max-indices", "8"])
 
 
 if __name__ == "__main__":

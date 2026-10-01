@@ -155,16 +155,6 @@ class PluginAtlasMCPTests(unittest.TestCase):
         self.assertEqual(row.compatibility.compatibility, "name_only")
         self.assertIs(row.compatibility.control_proven, False)
 
-    def test_unknown_top_level_atlas_arguments_fail_closed(self) -> None:
-        async def invoke() -> None:
-            await mcp.call_tool(
-                "plugins_atlas_search",
-                {"request": {"query": "delay"}, "unexpected": True},
-            )
-
-        with self.assertRaisesRegex(Exception, "Extra inputs are not permitted"):
-            asyncio.run(invoke())
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

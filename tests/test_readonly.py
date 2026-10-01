@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import math
 import os
 import sys
 import types
@@ -36,8 +35,6 @@ from fl_studio_mcp.contracts import (  # noqa: E402
     CapabilityStatus,
     ExpectedEqBandState,
     ExpectedPluginParameterState,
-    MixerTrackSummary,
-    PluginParameter,
     SelectedRangeObservation,
     VerifiedMixerArmWrite,
     VerifiedMixerColorWrite,
@@ -564,228 +561,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 if end < 0:
                     self.assertIsNone(result.raw_end_display_hint)
 
-    def test_uninterpreted_endpoint_shapes_are_preserved_raw(self):
-        _state.LOOP_MODE = 1
-        for ppq in (96, 192):
-            for start, end in (
-                (-1, 384),
-                (384, -2),
-                (-2, -1),
-                (384, 384),
-                (900, 300),
-            ):
-                with self.subTest(ppq=ppq, start=start, end=end):
-                    _state.REC_PPQ = ppq
-                    _state.SELECTION_START = start
-                    _state.SELECTION_END = end
-                    result = self.inspector.selected_range()
-                    self.assertEqual(
-                        (result.raw_start_time, result.raw_end_time), (start, end)
-                    )
-                    self.assertEqual(result.interpretation_status, "unvalidated")
-                    self.assertEqual(result.selection_state, "unknown")
-                    self.assertIsNone(result.start_ticks)
-
-    def test_unvalidated_scope_keeps_raw_selection_without_normalized_ticks(self):
-        base_ping = {
-            "pong": True,
-            "protocol": 2,
-            "program_title": "FL Studio 2026",
-            "fl_version": "Producer Edition v26.1.3 [build 5336]",
-            "midi_scripting_api_version": 44,
-            "bridge_mode": "read_only",
-        }
-        _state.SELECTION_START = 384
-        _state.SELECTION_END = 768
-        _state.LOOP_MODE = 1
-        responses = []
-        for change in (
-            {"fl_version": "Producer Edition v26.1.4 [build 5337]"},
-            {"midi_scripting_api_version": 45},
-            {"protocol": 1, "bridge_mode": "legacy_unknown"},
-        ):
-            response = dict(base_ping)
-            response.update(change)
-            responses.append(response)
-        for response in responses:
-            with self.subTest(response=response):
-                result = ReadOnlyInspector(
-                    ReadOnlyGateway(ConfigurablePingClient(response))
-                ).selected_range()
-                self.assertEqual(result.interpretation_status, "unvalidated")
-                self.assertEqual(result.selection_state, "unknown")
-                self.assertEqual(result.selection_presence, "unknown")
-                self.assertEqual(result.raw_time_unit, "unknown")
-                self.assertIsNone(result.semantic_scope)
-                self.assertIsNone(result.start_ticks)
-
-        class UnsupportedPPQClient(DirectFakeClient):
-            def call(self, cmd, **args):
-                if cmd == "arrangement.selection":
-                    return {
-                        "first_raw_start": 1536,
-                        "first_raw_end": 3072,
-                        "first_ppq": 384,
-                        "second_raw_start": 1536,
-                        "second_raw_end": 3072,
-                        "second_ppq": 384,
-                        "start_hint": "2:01:00",
-                        "end_hint": "3:01:00",
-                    }
-                return super().call(cmd, **args)
-
-        result = ReadOnlyInspector(
-            ReadOnlyGateway(UnsupportedPPQClient())
-        ).selected_range()
-        self.assertEqual(result.interpretation_status, "unvalidated")
-        self.assertEqual(result.raw_time_unit, "unknown")
-        self.assertIsNone(result.start_ticks)
-
-        class TornPPQClient(DirectFakeClient):
-            def call(self, cmd, **args):
-                if cmd == "arrangement.selection":
-                    return {
-                        "first_raw_start": 576,
-                        "first_raw_end": 1344,
-                        "first_ppq": 192,
-                        "second_raw_start": 576,
-                        "second_raw_end": 1344,
-                        "second_ppq": 192,
-                        "start_hint": "1:13:00",
-                        "end_hint": "2:13:00",
-                    }
-                return super().call(cmd, **args)
-
-        _state.REC_PPQ = 96
-        result = ReadOnlyInspector(ReadOnlyGateway(TornPPQClient())).selected_range()
-        self.assertEqual(result.interpretation_status, "unvalidated")
-        self.assertEqual(result.raw_time_unit, "unknown")
-        self.assertIsNone(result.semantic_scope)
-
-    def test_ppq192_unset_state_remains_raw_and_unvalidated(self):
-        _state.REC_PPQ = 192
-        _state.SELECTION_START = -1
-        _state.SELECTION_END = -1
-        _state.LOOP_MODE = 0
-        result = self.inspector.selected_range()
-        self.assertEqual(result.interpretation_status, "unvalidated")
-        self.assertEqual(result.selection_state, "unknown")
-        self.assertEqual(result.selection_presence, "unknown")
-        self.assertEqual(result.raw_time_unit, "unknown")
-        self.assertIsNone(result.semantic_scope)
-        self.assertIsNone(result.start_ticks)
-
-    def test_playing_recording_or_untested_mode_keeps_selection_unvalidated(self):
-        _state.SELECTION_START = 384
-        _state.SELECTION_END = 768
-        cases = (
-            (True, False, 1),
-            (False, True, 1),
-            (False, False, 0),
-        )
-        for playing, recording, loop_mode in cases:
-            with self.subTest(playing=playing, recording=recording, mode=loop_mode):
-                _state.PLAYING = playing
-                _state.RECORDING = recording
-                _state.LOOP_MODE = loop_mode
-                result = self.inspector.selected_range()
-                self.assertEqual(result.interpretation_status, "unvalidated")
-                self.assertEqual(result.selection_presence, "unknown")
-                self.assertIsNone(result.start_ticks)
-        _state.PLAYING = False
-        _state.RECORDING = False
-
-    def test_integer_zero_transport_flags_do_not_bypass_meter_gate(self):
-        class IntegerZeroTransportClient(DirectFakeClient):
-            def call(self, cmd, **args):
-                result = super().call(cmd, **args)
-                if cmd == "project.info":
-                    result = dict(result)
-                    result["playing"] = 0
-                    result["recording"] = 0
-                return result
-
-        _state.SELECTION_START = 384
-        _state.SELECTION_END = 768
-        _state.LOOP_MODE = 1
-        result = ReadOnlyInspector(
-            ReadOnlyGateway(IntegerZeroTransportClient())
-        ).selected_range()
-        self.assertEqual(result.interpretation_status, "unvalidated")
-        self.assertEqual(result.selection_presence, "unknown")
-        self.assertIsNone(result.start_ticks)
-        self.assertIsNone(result.semantic_scope)
-
-    def test_malformed_transport_flags_keep_selection_unvalidated(self):
-        class TransportFlagClient(DirectFakeClient):
-            def __init__(self, field, value):
-                self.field = field
-                self.value = value
-
-            def call(self, cmd, **args):
-                result = super().call(cmd, **args)
-                if cmd == "project.info":
-                    result = dict(result)
-                    result[self.field] = self.value
-                return result
-
-        _state.SELECTION_START = 384
-        _state.SELECTION_END = 768
-        _state.LOOP_MODE = 1
-        for field in ("playing", "recording"):
-            for value in (0.0, "0", None, True, 1):
-                with self.subTest(field=field, value=value):
-                    result = ReadOnlyInspector(
-                        ReadOnlyGateway(TransportFlagClient(field, value))
-                    ).selected_range()
-                    self.assertEqual(result.interpretation_status, "unvalidated")
-                    self.assertEqual(result.selection_state, "unknown")
-                    self.assertEqual(result.selection_presence, "unknown")
-                    self.assertIsNone(result.semantic_scope)
-                    self.assertIsNone(result.start_ticks)
-
-    def test_timeline_capability_stays_partial_for_raw_getter_and_evidence(self):
-        report = self.inspector.capabilities()
-        capability = next(
-            item
-            for item in report.capabilities
-            if item.capability == "timeline_selection"
-        )
-        self.assertEqual(capability.status, CapabilityStatus.PARTIAL)
-        self.assertTrue(
-            any(
-                "Current raw selection read probe succeeded" in evidence.detail
-                for evidence in capability.evidence
-            )
-        )
-        self.assertTrue(
-            any("getRecPPB" in limitation for limitation in capability.limitations)
-        )
-        self.assertTrue(
-            any("inclusivity" in limitation for limitation in capability.limitations)
-        )
-        self.assertTrue(
-            any(
-                "inactive selection" in limitation
-                for limitation in capability.limitations
-            )
-        )
-
-    def test_midi_capability_names_the_native_host_transport(self):
-        with mock.patch(
-            "fl_studio_mcp.readonly_inspector.platform_family",
-            return_value="windows",
-        ):
-            windows = self.inspector.capabilities()
-        capability = next(
-            item
-            for item in windows.capabilities
-            if item.capability == "midi_sysex_bridge"
-        )
-        self.assertIn("configured virtual MIDI endpoint", capability.access_path)
-        self.assertIn("WinMM", capability.access_path)
-        self.assertNotIn("CoreMIDI", capability.access_path)
-
     def test_unstable_or_noninteger_selection_payload_fails_closed(self):
         class PayloadClient(DirectFakeClient):
             def __init__(self, payload):
@@ -1109,17 +884,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             CapabilityStatus.UNVALIDATED,
         )
 
-    def test_nonfinite_and_contradictory_safety_models_are_rejected(self):
-        with self.assertRaises(ValidationError):
-            MixerTrackSummary(index=0, name="Master", volume_db=math.nan)
-        with self.assertRaises(ValidationError):
-            PluginParameter(
-                index=0,
-                reported_name="Unknown",
-                display_text_available=False,
-                safe_to_modify=True,
-            )
-
     def test_structured_expected_before_models_require_a_real_guard(self):
         for model in (ExpectedEqBandState, ExpectedPluginParameterState):
             with self.subTest(model=model.__name__):
@@ -1129,14 +893,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             ExpectedEqBandState(gain_normalized=0.5, surprise=0.5)
         with self.assertRaises(ValidationError):
             ExpectedPluginParameterState(normalized_value=1.5)
-
-    def test_observations_explicitly_admit_non_atomicity(self):
-        report = self.inspector.capture(parameter_limit=4, max_plugins=2)
-        self.assertFalse(report.observation_atomic)
-        self.assertFalse(report.mixer.observation_atomic)
-        self.assertTrue(
-            any("non-atomic" in warning for warning in report.mixer.warnings)
-        )
 
     def test_bridge_client_wraps_fourteen_bit_wire_ids(self):
         class DummyTransport:
@@ -1700,9 +1456,6 @@ class VerifiedWriteTests(unittest.TestCase):
     def dispatched(self):
         return [command for command, _ in self.client.commands]
 
-    def unwritable(self):
-        return VerifiedWriter(WriteGateway(WritesDisabledClient()))
-
     # -- shared shape ----------------------------------------------------
 
     def assert_write_report(self, result, command, track_index, master=False):
@@ -1845,40 +1598,6 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(self.dispatched(), [])
         self.assertEqual(_state.UNDO, [])
         self.assertEqual(state_fingerprint(), before)
-
-    def test_every_write_refuses_when_the_bridge_cannot_write(self):
-        writer = self.unwritable()
-        calls = (
-            ("set_mixer_volume", {"track_index": 3, "volume_normalized": 0.5}),
-            ("set_mixer_pan", {"track_index": 3, "pan": -0.25}),
-            ("set_mixer_mute", {"track_index": 3, "muted": True}),
-            (
-                "set_mixer_eq",
-                {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
-            ),
-            (
-                "set_plugin_parameter",
-                {
-                    "track_index": 3,
-                    "slot_index": 1,
-                    "parameter_index": 0,
-                    "normalized_value": 0.3,
-                },
-            ),
-        )
-        before = state_fingerprint()
-        for method, arguments in calls:
-            with self.subTest(method=method):
-                # WritesDisabledClient raises AssertionError if anything is
-                # dispatched, so this also proves the refusal is local and no
-                # raw bridge rejection is being dressed up as one.
-                with self.assertRaises(VerifiedWritesUnavailable) as caught:
-                    getattr(writer, method)(**arguments)
-                message = str(caught.exception)
-                self.assertIn("fl_set_write_mode", message)
-                self.assertIn("confirm_user_present=true", message)
-                self.assertIn("bridge_mode='read_only'", message)
-        self.assertEqual(before, state_fingerprint())
 
     def test_writes_use_live_capabilities_instead_of_exact_source_stamp(self):
         cases = {

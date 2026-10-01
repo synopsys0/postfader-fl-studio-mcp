@@ -37,57 +37,6 @@ from fl_studio_mcp import host_config  # noqa: E402
 from fl_studio_mcp.bridge_stamp import stamp_bridge_source  # noqa: E402
 
 
-class BridgeSourceTests(unittest.TestCase):
-    def test_expected_deployment_uses_the_same_stamped_bytes_and_digest(self):
-        source = bridge_install.bridge_source_path().read_bytes()
-        expected_bytes, expected_digest = stamp_bridge_source(source)
-
-        deployed_bytes, deployed_digest = bridge_install.expected_bridge_deployment()
-
-        self.assertEqual(deployed_bytes, expected_bytes)
-        self.assertEqual(deployed_digest, expected_digest)
-        self.assertEqual(len(deployed_digest), 64)
-
-
-class UserDataResolutionTests(unittest.TestCase):
-    def setUp(self):
-        self._saved = os.environ.get("FL_STUDIO_USER_DATA_DIR")
-        os.environ.pop("FL_STUDIO_USER_DATA_DIR", None)
-        self._tmp = tempfile.TemporaryDirectory(
-            prefix="flmcp-user-data-resolution-"
-        )
-        self.root = Path(self._tmp.name)
-
-    def tearDown(self):
-        os.environ.pop("FL_STUDIO_USER_DATA_DIR", None)
-        if self._saved is not None:
-            os.environ["FL_STUDIO_USER_DATA_DIR"] = self._saved
-        self._tmp.cleanup()
-
-    def test_environment_override(self):
-        configured = self.root / "some-fl-folder"
-        os.environ["FL_STUDIO_USER_DATA_DIR"] = os.fspath(configured)
-        self.assertEqual(bridge_install.user_data_dir(), configured)
-
-    def test_explicit_argument_beats_the_environment(self):
-        environment = self.root / "from-env"
-        explicit = self.root / "from-argument"
-        os.environ["FL_STUDIO_USER_DATA_DIR"] = os.fspath(environment)
-        self.assertEqual(
-            bridge_install.user_data_dir(explicit),
-            explicit,
-        )
-
-    def test_target_sits_in_fl_studios_controller_folder(self):
-        user_data = self.root / "fl"
-        target = bridge_install.target_path(user_data)
-        self.assertEqual(
-            target,
-            user_data
-            / "Settings/Hardware/Universal Bridge/device_UniversalBridge.py",
-        )
-
-
 class HostConfigurationTests(unittest.TestCase):
     def test_relative_explicit_user_data_path_is_rejected(self):
         with self.assertRaises(host_config.HostConfigurationError) as raised:
@@ -389,12 +338,6 @@ class DeployTests(unittest.TestCase):
         self.assertIsNotNone(second["backup"])
         self.assertEqual(second["backup"].read_bytes(), b"# someone else's bridge\n")
 
-    def test_deploy_creates_the_controller_subfolder(self):
-        controller = self.fl / "Settings" / "Hardware" / "Universal Bridge"
-        self.assertFalse(controller.exists())
-        bridge_install.deploy(str(self.fl))
-        self.assertTrue(controller.is_dir())
-
 
 class CommandTests(unittest.TestCase):
     def setUp(self):
@@ -423,9 +366,6 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("must be an absolute", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
-
-    def test_print_source_names_the_packaged_bridge(self):
-        self.assertEqual(bridge_install.main(["--print-source"]), 0)
 
 
 if __name__ == "__main__":

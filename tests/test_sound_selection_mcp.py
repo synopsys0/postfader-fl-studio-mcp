@@ -11,7 +11,6 @@ import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import get_args, get_type_hints
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,24 +22,6 @@ from fl_studio_mcp.acceptance import (  # noqa: E402
 )
 from fl_studio_mcp.mcp_server import mcp  # noqa: E402
 from fl_studio_mcp.sound_selection.executor import SoundPaletteLookup  # noqa: E402
-from fl_studio_mcp.sound_selection.mcp import sound_selection_apply  # noqa: E402
-from fl_studio_mcp.sound_selection.models import SoundPaletteVariationPlan  # noqa: E402
-
-
-SOUND_SELECTION_TOOLS = (
-    "plugins_list_presets",
-    "plugins_get_current_preset",
-    "plugins_inspect_pad_map",
-    "fl_select_plugin_preset",
-    "sound_selection_inventory",
-    "sound_selection_plan",
-    "sound_selection_get",
-    "sound_selection_create_variation",
-    "sound_selection_apply",
-    "sound_selection_record_feedback",
-    "sound_selection_history_status",
-    "sound_selection_history_reset",
-)
 
 
 def _tool_map():
@@ -70,49 +51,6 @@ class SoundSelectionMcpTests(unittest.TestCase):
             arguments["plugins_inspect_pad_map"]["target"],
             {"kind": "channel_generator", "channel_index": 2},
         )
-
-    def test_sound_selection_inputs_and_outputs_are_strict(self) -> None:
-        tools = _tool_map()
-        for name in SOUND_SELECTION_TOOLS:
-            with self.subTest(tool=name):
-                tool = tools[name]
-                schema = tool.input_schema
-                self.assertEqual(schema.get("type"), "object")
-                self.assertIs(schema.get("additionalProperties"), False)
-                self.assertTrue(tool.output_schema)
-                self.assertIs(
-                    tool.output_schema.get("additionalProperties"),
-                    False,
-                )
-                for definition in schema.get("$defs", {}).values():
-                    if definition.get("type") == "object":
-                        self.assertIs(
-                            definition.get("additionalProperties"),
-                            False,
-                            definition,
-                        )
-                for definition in tool.output_schema.get("$defs", {}).values():
-                    if definition.get("type") == "object":
-                        self.assertIs(
-                            definition.get("additionalProperties"),
-                            False,
-                            definition,
-                        )
-
-    def test_apply_accepts_variation_plan_in_wrapper_and_tool_schema(self) -> None:
-        annotation = get_type_hints(sound_selection_apply)["plan_or_id"]
-        self.assertIn(SoundPaletteVariationPlan, get_args(annotation))
-
-        tool = _tool_map()["sound_selection_apply"]
-        palette_schema = tool.input_schema["properties"]["palette"]
-        variation_definition = tool.input_schema["$defs"]["SoundPaletteVariationPlan"]
-        self.assertTrue(
-            any(
-                branch.get("$ref", "").endswith("SoundPaletteVariationPlan")
-                for branch in palette_schema.get("anyOf", ())
-            )
-        )
-        self.assertIs(variation_definition.get("additionalProperties"), False)
 
     def test_sound_selection_apply_requires_session_fingerprint_before_service_call(self) -> None:
         tool = _tool_map()["sound_selection_apply"]

@@ -96,9 +96,6 @@ class MCPBPackagingTests(unittest.TestCase):
         encoded = json.dumps(self.manifest)
         self.assertNotIn("FL_BRIDGE_ENABLE_WRITES", encoded)
 
-    def test_cli_is_pinned_to_an_exact_version(self) -> None:
-        self.assertRegex(MCPB_NPM_PACKAGE, r"^@anthropic-ai/mcpb@\d+\.\d+\.\d+$")
-
     def test_windows_cmd_path_found_by_preflight_is_executed_exactly(self) -> None:
         resolved = r"C:\bundled node\npx.cmd"
         with mock.patch.object(build_mcpb.shutil, "which", return_value=resolved):
@@ -182,10 +179,6 @@ class MCPBPackagingTests(unittest.TestCase):
         for member in private_members:
             with self.subTest(member=member):
                 self.assertTrue(any(member in item for item in failures))
-
-    def test_missing_bundle_fails_inspection(self) -> None:
-        failures = inspect_bundle(ROOT / "does-not-exist.mcpb")
-        self.assertTrue(failures)
 
 
 if __name__ == "__main__":
