@@ -6120,14 +6120,18 @@ class _SocketTransport:
                 try:
                     chunk = c.sock.recv(65536)
                 except BlockingIOError:
-                    chunk = b""
+                    # Readiness can be spurious. Nothing arrived; this is not
+                    # the end of the stream, so keep the client.
+                    chunk = None
                 except Exception:
                     self._drop(c)
                     continue
                 if chunk == b"":
                     self._drop(c)
                     continue
-                if c.closing:
+                if chunk is None:
+                    pass
+                elif c.closing:
                     pass  # the rest of a refused request; discard it
                 elif len(c.inbox) + len(chunk) > MAX_TRANSPORT_REQUEST_BYTES:
                     # A sender that never terminates a line would otherwise

@@ -22,6 +22,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -138,6 +139,26 @@ class SocketAccumulatorTests(unittest.TestCase):
         sender.close()
         transport.poll()
         self.assertEqual(transport.clients, [])
+
+    def test_spurious_readiness_keeps_the_client_and_its_pending_request(self):
+        class NothingYet:
+            def setblocking(self, _flag):
+                pass
+
+            def recv(self, _size):
+                raise BlockingIOError
+
+        sock = NothingYet()
+        transport = bridge._SocketTransport()
+        client = bridge._Client(sock)
+        client.inbox = b'{"id": 7, "cmd": "ping", "args": {}}\n'
+        transport.clients.append(client)
+
+        with mock.patch.object(bridge.select, "select", return_value=([sock], [], [])):
+            requests = transport.poll()
+
+        self.assertEqual(transport.clients, [client])
+        self.assertEqual([request["id"] for _handle, request in requests], [7])
 
 
 class FileTransportRequestTests(unittest.TestCase):
