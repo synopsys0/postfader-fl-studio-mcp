@@ -7,13 +7,14 @@ builds and inspects the Python distributions, validates the MCPB and platform
 bundles, publishes to PyPI and the MCP Registry, and attaches the verified
 assets and SHA-256 checksums to GitHub.
 
-## V10 publication
+## V11 publication
 
-V10 uses package version `10.0.0` and exposes 134 tools and 8 resources.
+V11 uses package version `11.0.0` and exposes 135 tools and 8 resources.
 Publish the reviewed dev feature set through a main pull request, then the
-matching version tag. The new host-adapter paths retain explicit live-validation
-limitations; do not imply a new complete hardware qualification matrix.
-The previous v0.20.0 assets and tags remain immutable.
+matching version tag. The host-adapter paths keep their documented
+live-validation limits; do not imply a new hardware qualification matrix.
+Earlier assets and tags remain immutable. Version 10.0.1 was never tagged; its
+changes ship in 11.0.0.
 
 ## Before preparing a version
 
@@ -22,8 +23,10 @@ The previous v0.20.0 assets and tags remain immutable.
 - Review the current [setup guide](docs/setup.md), [security policy](SECURITY.md),
   tool contracts, plug-in evidence, and the previous release page. Keep the
   public claims aligned with observed evidence.
-- Run `python scripts/sync_mcpb_manifest.py` after tool changes, verify SDK tool
-  and resource counts, and update current guides and directory copy together.
+- Run `python scripts/sync_mcpb_manifest.py` and
+  `python scripts/generate_tool_reference.py` after tool changes, verify SDK
+  tool and resource counts, and update current guides and directory copy
+  together.
 - Prepare `docs/releases/vX.Y.Z.md` with user-facing notes. Explain package
   selection, upgrade steps, qualified environments, limitations, and checksums;
   do not rely on GitHub's generated pull-request list as the final page.
@@ -130,10 +133,12 @@ gh release edit vX.Y.Z \
 
 ## GitHub download-link and installation check
 
-Before calling a release complete, check every README download URL against the
-actual release assets. The `latest/download` links must resolve to the intended
-generic and Codex package names. Also test one fresh installation path on each
-qualified platform:
+Before calling a release complete, open the README's download buttons: they
+link to the latest release page, which must list the generic and Codex ZIPs.
+The release workflow runs `scripts/pin_readme_links.py` before building, so
+the PyPI page's README links and images point at the release tag; check that
+the banner and diagram render there. Also test one fresh installation path on
+each qualified platform:
 
 - download the matching ZIP into a stable writable folder and run its dry-run
   installer before accepting changes;

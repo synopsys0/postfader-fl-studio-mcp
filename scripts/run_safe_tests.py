@@ -18,7 +18,8 @@ from pathlib import Path
 
 
 # The suite mixes two harnesses: unittest files report "Ran N tests" and the
-# hand-rolled check files report "N passed, M failed". Both are counted so the
+# script-style files (tests/_checks.py) report "N passed, M failed", one result
+# per scenario section rather than per assertion. Both are counted so the
 # documented total is derived from the run instead of maintained by hand.
 UNITTEST_TOTAL = re.compile(r"^Ran (\d+) tests?\b", re.MULTILINE)
 CHECK_TOTAL = re.compile(r"^(\d+) passed, (\d+) failed$", re.MULTILINE)

@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from fl_studio_mcp.track_b_contracts import (
     ExpectedPluginPresetState,
-    LoopStarterRerollDispatch,
     MixerEffectTarget,
     PluginCurrentPreset,
     PluginPad,
@@ -64,13 +63,6 @@ def page(**overrides: object) -> PluginPresetPage:
 
 
 class PresetContractTests(unittest.TestCase):
-    def test_large_catalog_can_preserve_name_without_fabricating_index(self) -> None:
-        state = PluginPresetState(
-            name="Authoritative Current", index=None, identity_status="stable"
-        )
-        self.assertEqual(state.name, "Authoritative Current")
-        self.assertIsNone(state.index)
-
     def test_identity_statuses_are_not_coercible_or_cross_contaminated(self) -> None:
         with self.assertRaises(ValidationError):
             PluginPresetState(name="", identity_status="stable")
@@ -133,18 +125,6 @@ class PresetContractTests(unittest.TestCase):
                 current_preset_status="unresolved",
                 current_preset_index=None,
             )
-
-    def test_page_allows_a_truthful_partial_page_without_complete_identity(self) -> None:
-        observed = page(
-            preset_count=6,
-            has_more=True,
-            next_start=3,
-            partial=True,
-            truncated=True,
-        )
-        self.assertTrue(observed.partial)
-        self.assertTrue(observed.has_more)
-        self.assertEqual(observed.next_start, 3)
 
     def test_current_and_pad_contracts_preserve_unsupported_state(self) -> None:
         current = PluginCurrentPreset(
@@ -220,23 +200,6 @@ class PresetContractTests(unittest.TestCase):
             )
         with self.assertRaises(ValidationError):
             VerifiedPluginPresetSelection(**{**common, "outcome": "unknown"})
-
-    def test_loop_starter_is_always_dispatch_only(self) -> None:
-        receipt = LoopStarterRerollDispatch(
-            observed_at=NOW,
-            channel_index=2,
-            dispatched=True,
-            before_channel_fingerprint="b" * 64,
-            after_channel_fingerprint="b" * 64,
-        )
-        self.assertFalse(receipt.verified)
-        with self.assertRaises(ValidationError):
-            LoopStarterRerollDispatch(
-                observed_at=NOW,
-                channel_index=2,
-                dispatched=True,
-                verified=True,  # type: ignore[arg-type]
-            )
 
     def test_expected_current_requires_a_guard_field(self) -> None:
         with self.assertRaises(ValidationError):

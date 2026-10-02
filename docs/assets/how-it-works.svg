@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="372" viewBox="0 0 1280 372" role="img" aria-labelledby="title desc">
+  <title id="title">How PostFader works</title>
+  <desc id="desc">Your AI client talks to the PostFader MCP server on your computer. PostFader reaches the Universal Bridge script inside FL Studio over a virtual MIDI port, and the bridge reads and changes your open project through the FL Studio API. Exported audio you choose is analyzed by PostFader directly.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+  </defs>
+  <g font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, Helvetica, Arial, sans-serif">
+    <rect x="8" y="40" width="224" height="136" rx="18" fill="#7c3aed"/>
+    <text x="120.0" y="92" text-anchor="middle" font-size="23" font-weight="700" fill="#ffffff">Your AI client</text>
+    <text x="120.0" y="126" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">Claude · Codex · Cursor</text>
+    <text x="120.0" y="150" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">or any MCP client</text>
+    <rect x="356" y="40" width="224" height="136" rx="18" fill="#ea580c"/>
+    <text x="468.0" y="92" text-anchor="middle" font-size="23" font-weight="700" fill="#ffffff">PostFader</text>
+    <text x="468.0" y="126" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">MCP server running</text>
+    <text x="468.0" y="150" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">on your computer</text>
+    <rect x="704" y="40" width="224" height="136" rx="18" fill="#2563eb"/>
+    <text x="816.0" y="92" text-anchor="middle" font-size="23" font-weight="700" fill="#ffffff">Universal Bridge</text>
+    <text x="816.0" y="126" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">controller script</text>
+    <text x="816.0" y="150" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">inside FL Studio</text>
+    <rect x="1052" y="40" width="224" height="136" rx="18" fill="#15803d"/>
+    <text x="1164.0" y="92" text-anchor="middle" font-size="23" font-weight="700" fill="#ffffff">Your open project</text>
+    <text x="1164.0" y="126" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">mixer · channels · plug-ins</text>
+    <text x="1164.0" y="150" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">patterns · Piano Roll</text>
+    <line x1="244" y1="108.0" x2="344" y2="108.0" stroke="#8b949e" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="294.0" y="92.0" text-anchor="middle" font-size="16" font-weight="600" fill="#8b949e">MCP</text>
+    <line x1="592" y1="108.0" x2="692" y2="108.0" stroke="#8b949e" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="642.0" y="92.0" text-anchor="middle" font-size="16" font-weight="600" fill="#8b949e">virtual MIDI</text>
+    <line x1="940" y1="108.0" x2="1040" y2="108.0" stroke="#8b949e" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <text x="990.0" y="92.0" text-anchor="middle" font-size="16" font-weight="600" fill="#8b949e">FL Studio API</text>
+    <rect x="356" y="262" width="224" height="96" rx="18" fill="#475569"/>
+    <text x="468.0" y="302" text-anchor="middle" font-size="22" font-weight="700" fill="#ffffff">Exported audio</text>
+    <text x="468.0" y="332" text-anchor="middle" font-size="16" fill="#ffffff" fill-opacity="0.9">bounces you choose</text>
+    <line x1="468.0" y1="252" x2="468.0" y2="186" stroke="#8b949e" stroke-width="3" marker-end="url(#arrow)"/>
+    <text x="482.0" y="222" font-size="16" font-weight="600" fill="#8b949e">analysis</text>
+    <text x="1164.0" y="216" text-anchor="middle" font-size="17" fill="#8b949e">✓ Read-only by default</text>
+    <text x="1164.0" y="246" text-anchor="middle" font-size="17" fill="#8b949e">✓ Edits checked in FL</text>
+    <text x="1164.0" y="276" text-anchor="middle" font-size="17" fill="#8b949e">✓ Never saves your project</text>
+  </g>
+</svg>

@@ -43,8 +43,9 @@ class PluginLoadingTests(unittest.TestCase):
     def setUp(self):
         _state.reset()
         self.previous_mode = bridge.LEAN_WRITES_ENABLED, bridge.WRITE_MODE_ORIGIN
-        bridge.LEAN_WRITES_ENABLED = False
-        bridge.WRITE_MODE_ORIGIN = "disabled"
+        # Loading changes the project, so these tests start with write mode on.
+        bridge.LEAN_WRITES_ENABLED = True
+        bridge.WRITE_MODE_ORIGIN = "runtime_request"
         self.client = DirectFakeClient()
         for name in ("plugin_loading", "performance", "verified_writer"):
             guard = patch(f"fl_studio_mcp.{name}.get_client", return_value=self.client)
@@ -72,23 +73,26 @@ class PluginLoadingTests(unittest.TestCase):
         self.assertEqual(result.loaded_plugin.index, count)
         self.assertEqual(result.loaded_plugin.name, "3xOsc")
         self.assertEqual(len(menu.calls), 1)
-        self.assertFalse(bridge.LEAN_WRITES_ENABLED)
 
-    def test_effect_selects_requested_track_and_releases_temporary_write_mode(self):
+    def test_effect_selects_requested_track_and_leaves_write_mode_alone(self):
         menu = FakeMenu()
         before = len(_state.TRACKS[1].slots)
         result = loading.load_plugin(loading.PluginLoadRequest(name=EFFECT.name, kind="effect", track_index=1), backend=menu)
         self.assertEqual(result.status, "loaded", result.warnings)
         self.assertEqual(len(_state.TRACKS[1].slots), before + 1)
         self.assertEqual(result.loaded_plugin.name, EFFECT.name)
-        self.assertFalse(bridge.LEAN_WRITES_ENABLED)
-
-    def test_existing_write_mode_is_preserved(self):
-        bridge.LEAN_WRITES_ENABLED = True
-        bridge.WRITE_MODE_ORIGIN = "runtime_request"
-        result = loading.load_plugin(loading.PluginLoadRequest(name=EFFECT.name, kind="effect", track_index=1), backend=FakeMenu())
-        self.assertTrue(result.verified, result.warnings)
         self.assertTrue(bridge.LEAN_WRITES_ENABLED)
+
+    def test_loading_is_refused_while_write_mode_is_off(self):
+        bridge.LEAN_WRITES_ENABLED = False
+        bridge.WRITE_MODE_ORIGIN = "disabled"
+        for request in (self.request(), loading.PluginLoadRequest(name=EFFECT.name, kind="effect", track_index=1)):
+            menu = FakeMenu()
+            menu.entries = lambda: self.fail("the menu must not be opened")
+            with self.subTest(kind=request.kind), self.assertRaisesRegex(loading.PluginLoadingError, "Write mode is off"):
+                loading.load_plugin(request, backend=menu)
+            self.assertEqual(menu.calls, [])
+        self.assertFalse(bridge.LEAN_WRITES_ENABLED)
 
     def test_wrong_kind_missing_and_ambiguous_names_never_click(self):
         for entries in ((EFFECT,), (), (INSTRUMENT, INSTRUMENT)):

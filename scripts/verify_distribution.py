@@ -60,7 +60,6 @@ RUNTIME_MODULES = V013_REQUIRED_RUNTIME_MODULES | {
     "fl_studio_mcp/%s" % path.name
     for path in (ROOT / "fl_studio_mcp").glob("*.py")
 } | {"fl_studio_mcp/_bridge/device_UniversalBridge.py"} | ATLAS_RUNTIME_MODULES | SOUND_SELECTION_RUNTIME_MODULES | CREATION_PIPELINE_RUNTIME_MODULES | CREATION_REVIEW_RUNTIME_MODULES
-EXPECTED_TOOL_COUNT = 134
 EXPECTED_RESOURCE_COUNT = 8
 CONSOLE_SCRIPTS = {
     "fl-studio-mcp = fl_studio_mcp.mcp_server:main",
@@ -260,15 +259,11 @@ def version_failures(version: str) -> list[str]:
     failures: list[str] = []
     if any(value != version for value in versions):
         failures.append("public version declarations disagree: %r" % versions)
+    # The manifest's tool list is kept in sync with the @mcp.tool decorators
+    # by scripts/sync_mcpb_manifest.py and tests/test_mcpb.py.
     tools = manifest.get("tools")
-    if not isinstance(tools, list) or len(tools) != EXPECTED_TOOL_COUNT:
-        failures.append(
-            "manifest tool count is not %d: %s"
-            % (
-                EXPECTED_TOOL_COUNT,
-                len(tools) if isinstance(tools, list) else "invalid",
-            )
-        )
+    if not isinstance(tools, list) or not tools:
+        failures.append("manifest tool list is missing or empty")
     server_tree = ast.parse(
         (ROOT / "fl_studio_mcp" / "mcp_server.py").read_text(encoding="utf-8")
     )

@@ -41,8 +41,8 @@ The components in scope are:
   typed results. The client and any model provider it uses are outside
   PostFader's trust boundary; a client may send tool arguments and results to a
   remote provider according to its own policy.
-- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers 134 MCP
-  tools and 8 live resources. It routes reads, bounded audio analysis,
+- **Local stdio server.** `fl_studio_mcp/mcp_server.py` registers the MCP
+  tools and 8 live resources listed in [the tool reference](tools.md). It routes reads, bounded audio analysis,
   creative/file workflows, verified mutations, and session write-mode control
   through typed contracts. It must not become a generic bridge-command or
   unrestricted filesystem interface.

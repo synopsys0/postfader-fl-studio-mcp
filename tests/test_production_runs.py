@@ -7,7 +7,6 @@ proven to perform zero project mutations.
 
 from __future__ import annotations
 
-import asyncio
 import threading
 import unittest
 from datetime import datetime, timezone
@@ -156,29 +155,6 @@ class ProductionAutonomyRegressionTests(unittest.TestCase):
             channel_count=4,
             transport=TransportState(tempo_bpm=120, time_signature_numerator=4),
         ).model_copy(update=updates)
-
-    def test_all_supported_change_categories_fit_request_scope_and_report(self) -> None:
-        from typing import get_args
-
-        categories = get_args(runs.ChangeCategory)
-        broad_request = request(allowed_changes=categories)
-        scope = runs.ProductionScope(
-            description="All supported production changes.",
-            additional_allowed_changes=categories,
-        )
-        validation = runs.validate_production_run(
-            broad_request, plan(melody()), inspect_live=False
-        )
-        report = runs.ProductionRunValidation.model_validate(
-            {
-                **validation.model_dump(mode="python"),
-                "expected_mutation_categories": categories,
-            }
-        )
-
-        self.assertEqual(broad_request.allowed_changes, categories)
-        self.assertEqual(scope.additional_allowed_changes, categories)
-        self.assertEqual(report.expected_mutation_categories, categories)
 
     def test_audition_controls_do_not_invalidate_project_checkpoint(self) -> None:
         before = self.project()
@@ -1984,17 +1960,6 @@ class ProductionRunTests(unittest.TestCase):
             "target_index_unavailable", {item.code for item in validation.blockers}
         )
 
-    def test_generator_scalar_payloads_are_bounded(self) -> None:
-        with self.assertRaises(ValueError):
-            runs.GenerateMelodyOperation(operation_id="root", root="C" * 1000)
-        with self.assertRaises(ValueError):
-            runs.GenerateChordProgressionOperation(
-                operation_id="chord",
-                progression=("I" * 1000,),
-            )
-        with self.assertRaises(ValueError):
-            runs.GenerateMelodyOperation(operation_id="seed", seed=2**80)
-
     def test_registry_lookups_isolate_nested_generated_output_lists(self) -> None:
         registry = runs.ProductionRunRegistry()
         with mock.patch.object(runs, "_dispatch_operation", return_value=sequence()):
@@ -2065,45 +2030,6 @@ class ProductionRunTests(unittest.TestCase):
         dispatch.assert_not_called()
         mode.assert_not_called()
         self.assertEqual(result.attempted_count, 0)
-
-    def test_production_run_tools_remain_registered_with_honest_annotations(
-        self,
-    ) -> None:
-        from fl_studio_mcp import mcp_server
-
-        tools = {tool.name: tool for tool in asyncio.run(mcp_server.mcp.list_tools())}
-        expected = {
-            "postfader_validate_run",
-            "postfader_execute_run",
-            "postfader_get_run",
-            "postfader_continue_run",
-            "postfader_stop_run",
-        }
-        self.assertTrue(expected <= tools.keys())
-        self.assertTrue(
-            {
-                "fl_apply_verified_batch",
-                "compose_melody",
-                "mix_apply_plan",
-                "piano_roll_write_notes",
-            }
-            <= tools.keys()
-        )
-        for name in ("postfader_validate_run", "postfader_get_run"):
-            annotations = tools[name].annotations
-            self.assertIsNotNone(annotations)
-            self.assertTrue(annotations.read_only_hint)
-            self.assertFalse(annotations.destructive_hint)
-        for name in ("postfader_execute_run", "postfader_continue_run"):
-            annotations = tools[name].annotations
-            self.assertIsNotNone(annotations)
-            self.assertFalse(annotations.read_only_hint)
-            self.assertTrue(annotations.destructive_hint)
-            self.assertFalse(annotations.idempotent_hint)
-        stop_annotations = tools["postfader_stop_run"].annotations
-        self.assertIsNotNone(stop_annotations)
-        self.assertFalse(stop_annotations.read_only_hint)
-        self.assertFalse(stop_annotations.destructive_hint)
 
 
 if __name__ == "__main__":

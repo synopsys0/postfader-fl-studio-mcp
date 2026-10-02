@@ -246,9 +246,9 @@ third-party integration surface and this project does not depend on them.
 
 The macOS host adapter supplies insertion through FL's named native Add menu:
 `plugins_list_available` enumerates menu entries and `plugins_load` adds one
-instrument or a mixer effect. Bridge inventory verifies the new instance.
-This is a desktop capability separate from the MIDI API. It requires
-Accessibility access, supports the observed English menu structure, and does
+instrument or a mixer effect once session write mode is on. Bridge inventory
+verifies the new instance. This is a desktop capability separate from the MIDI
+API. It requires Accessibility access, supports the observed English menu structure, and does
 not implement Windows insertion, removal, replacement or reordering.
 
 Audio must be exported or recorded through FL Studio before the audio-analysis

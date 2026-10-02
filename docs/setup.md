@@ -64,8 +64,8 @@ postfader setup
 ```
 
 For Codex, the release also provides dedicated
-`PostFader-v10.0.0-Codex-Windows.zip` and
-`PostFader-v10.0.0-Codex-macOS.zip` packages. Their launchers run the same base
+`PostFader-vX.Y.Z-Codex-Windows.zip` and
+`PostFader-vX.Y.Z-Codex-macOS.zip` packages. Their launchers run the same base
 installation, preselect `codex-toml`, and request a separate confirmation
 before registering the resolved server through the Codex CLI. The equivalent
 command for a source or Python installation is:
@@ -204,7 +204,7 @@ can then call `postfader_review_start`, `postfader_review_attach_assets`, and
 `postfader_review_evaluate`; attach a reference or synchronized stem only when
 the requested finding needs that evidence. Review never captures FL's live
 audio and never renders or saves the live project. For an already-saved FLP,
-use the separate V10 saved-project rendering tools described below;
+use the separate saved-project rendering tools described below;
 that export excludes unsaved changes.
 
 Review Sessions are process-local by default. Set `persist_session=true` when
@@ -272,9 +272,19 @@ Available formats:
 - `codex-command` emits a PowerShell-safe `codex mcp add` command;
 - `claude-json` emits the `mcpServers` JSON shape.
 
+Where each client reads the configuration:
+
+| Client | Where it goes |
+| --- | --- |
+| Claude Desktop | Merge the `claude-json` output into `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`; Windows: `%APPDATA%\Claude\`), or install the release `.mcpb` instead. Restart Claude Desktop. |
+| Claude Code | `claude mcp add-json fl-studio '<the fl-studio object from claude-json>'`, or put the `claude-json` output in a project `.mcp.json`. |
+| Codex | `postfader setup --client codex-toml --register-codex`, or paste the `codex-toml` block into `~/.codex/config.toml`. |
+| Cursor | Merge the `claude-json` output into `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project). |
+| Other clients | Copy the command, arguments, and environment from either format into the client's local `stdio` server settings. |
+
 These formats all configure the same local `stdio` server. The dedicated Codex
 Windows/macOS ZIPs add guided `codex mcp add` registration; the `.mcpb` is a
-Claude Desktop-only convenience. v0.20 does not ship separate Cursor, T3 Code,
+Claude Desktop-only convenience. PostFader does not ship separate Cursor, T3 Code,
 OpenCode, or Grok packages. Cursor, OpenCode, Grok Build, and other hosts must
 place the generated executable, arguments, and environment values into their
 own schemas. Include `cwd` only when that host documents it; Cursor and Grok
@@ -282,7 +292,7 @@ Build do not need it because the interpreter path is absolute. T3 Code users
 configure whichever MCP-capable provider T3 launches. Grok on the web and Grok
 Bot require a remote HTTP MCP server and cannot use PostFader's current local
 packages directly. See the README's
-[client/package matrix](../README.md#supported-ai-clients).
+[client table](../README.md#works-with).
 
 Automatic mode emits only `FL_STUDIO_USER_DATA_DIR`. It is an offline,
 fail-closed configuration with no native MIDI transport, not the ordinary live
@@ -498,10 +508,10 @@ are create-only. Choose a new output directory or filename and inspect the
 read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
 manifest and will not save the FL Studio project.
 
-## V10 host workflows
+## Host workflows
 
-These tools are included in V10. Upgrade the
-server and bridge together before using them.
+These tools work outside FL Studio's MIDI scripting API. Upgrade the server
+and bridge together before using them.
 
 - **Read existing notes:** prepare and arm the Piano Roll script once per MCP
   process, then call `piano_roll_read_notes` with the channel, pattern, offset,
@@ -511,8 +521,8 @@ server and bridge together before using them.
 - **Load a plug-in on macOS:** grant macOS Accessibility access to the launching
   host when using the native-menu adapter. `plugins_list_available` reads the
   current English Add-menu favorites; `plugins_load` adds one exact named
-  instrument or effect. Effects need a mixer destination; Master requires
-  explicit permission. Windows loading and plug-in removal/reordering are not
+  instrument or effect once session write mode is on. Effects need a mixer
+  destination; Master requires explicit permission. Windows loading and plug-in removal/reordering are not
   implemented. Stop after an unknown outcome and inspect the session.
 - **Recover a run:** `postfader_list_runs` and `postfader_get_run` read the local
   journal. Explicit continuation revalidates the saved plan, current targets,

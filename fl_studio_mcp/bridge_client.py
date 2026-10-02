@@ -539,6 +539,12 @@ class _TcpTransport:
                 if not line.strip():
                     continue
                 resp = json.loads(line.decode("utf-8"))
+                if resp.get("id") is None and resp.get("ok") is False:
+                    # The bridge refused this request before reading an id
+                    # from it (too large, or not JSON) and may be closing the
+                    # connection, so the next call reconnects.
+                    self.close()
+                    return resp
                 if resp.get("id") != rid:
                     continue          # reply to an abandoned request
                 return resp
@@ -1015,15 +1021,17 @@ class _MidiTransport:
             raise OSError("MIDI port %r unavailable" % self.port_name)
         text = json.dumps(payload)
         if len(text) > MAX_SYSEX_REQUEST_BYTES:
-            raise ValueError(
-                "MIDI request exceeds the %d-byte size limit"
+            raise BridgeError(
+                "MIDI request exceeds the %d-byte size limit; nothing was sent"
                 % MAX_SYSEX_REQUEST_BYTES
             )
         chunks = [text[i:i + SYSEX_CHUNK]
                   for i in range(0, len(text), SYSEX_CHUNK)] or [""]
         total = len(chunks)
         if total > MAX_SYSEX_REQUEST_PARTS:
-            raise ValueError("MIDI request has too many SysEx chunks")
+            raise BridgeError(
+                "MIDI request has too many SysEx chunks; nothing was sent"
+            )
 
         self._drop_partial(rid)
         self.replies.pop(rid, None)
@@ -1183,8 +1191,9 @@ class BridgeClient:
                 except BridgeUnavailableError as exc:
                     link_error = exc
                 except BridgeError:
-                    # FL returned a command-level rejection. The transport is
-                    # still coherent, and replay cannot make that safer.
+                    # A rejection, from FL or of a request the bridge cannot
+                    # carry. The transport is still coherent, and replay
+                    # cannot make that safer.
                     raise
                 except (OSError, TimeoutError, ValueError) as exc:
                     link_error = exc
@@ -1240,6 +1249,15 @@ class BridgeClient:
                 "request_token": request_token,
             },
         )
+        if (
+            isinstance(resp, dict)
+            and resp.get("id") is None
+            and resp.get("ok") is False
+        ):
+            raise BridgeError(
+                "FL Studio bridge refused '%s' before running it: %s"
+                % (cmd, resp.get("error", "unknown error"))
+            )
         if not isinstance(resp, dict) or resp.get("id") != rid:
             raise ValueError(
                 "bridge returned a malformed or mismatched response envelope"

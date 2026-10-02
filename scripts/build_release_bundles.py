@@ -353,9 +353,9 @@ installer window itself is Command Prompt and uses different quoting.
     title_suffix = " for Codex" if codex else ""
     text = f"""# Start here — PostFader v{version}{title_suffix} on {platform}
 
-PostFader is the verified AI copilot for FL Studio. It starts read-only, never
-saves your project automatically, and reports whether FL Studio actually
-accepted each supported change.
+PostFader is an FL Studio MCP server: it lets your AI client read and edit the
+project you have open. It starts read-only, never saves your project, and
+reads each supported change back from FL Studio.
 
 ## Before installing
 

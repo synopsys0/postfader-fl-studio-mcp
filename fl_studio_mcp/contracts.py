@@ -166,7 +166,7 @@ class TransportState(ContractModel):
 
 
 class SelectedRangeObservation(ContractModel):
-    """Raw-only selection observation with semantic promotion disabled."""
+    """Raw Playlist selection endpoints; units and render semantics stay unknown."""
 
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     observed_at: datetime

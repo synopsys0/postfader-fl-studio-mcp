@@ -16,7 +16,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp.types import ToolAnnotations
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, WithJsonSchema
 
 from . import __version__
 from .advisory import (
@@ -290,6 +290,13 @@ from .track_b_contracts import (
     VerifiedTempoWrite,
     VerifiedTimeSignatureNumeratorWrite,
 )
+from .tool_schemas import (
+    MAX_DESCRIBED_OPERATIONS,
+    OperationCatalog,
+    ProductionOperationName,
+    compact_input_schema,
+    describe_operations,
+)
 from .verified_writer import VerifiedWriter, WriteModeManager
 from .workflows import (
     MAX_BATCH_OPERATIONS,
@@ -341,9 +348,9 @@ RequiredSoundSelectionSessionFingerprintArg = Annotated[
 
 
 INSTRUCTIONS = """\
-PostFader is an FL Studio production connector with 149 tools and 8 live
-resources. Use focused project, channel, mixer, pattern and plug-in reads to
-understand the user's task, then carry it through with the relevant workflow.
+PostFader is an FL Studio production connector. Use focused project, channel,
+mixer, pattern and plug-in reads to understand the user's task, then carry it
+through with the relevant workflow.
 The connected AI makes creative decisions; PostFader executes and reports FL
 state. Prefer fl:// resources for initial context when the client exposes them.
 
@@ -354,6 +361,8 @@ readiness checks and enables writes internally once. Do not ask separately to
 enable write mode, repeat authorization inside the run, or call validation and
 readiness tools again before execution. Use postfader_creation_readiness or
 postfader_validate_run when the user actually wants a diagnostic or a plan.
+Plan schemas list operation names only: call postfader_describe_operations
+with the operations you will use to get their exact fields.
 For individual setters, enable fl_set_write_mode(enabled=true,
 confirm_user_present=true) once when needed; the user's request to edit is the
 confirmation. Analysis and ideas alone do not authorize project changes.
@@ -394,7 +403,8 @@ then express the user's specific style through descriptors and role requests.
 On macOS, use plugins_list_available and plugins_load to add missing instruments
 or effects from FL's native Add menu. Match exact observed menu names, then use
 the verified new channel/slot for preset selection or processing. Menu presence
-does not prove licensing. Loading is a separate host tool, outside Run operations.
+does not prove licensing. Loading is a separate host tool, outside Run operations,
+and needs write mode like any setter.
 
 Use piano_roll_read_notes to inspect existing notes, timing, velocity and
 expression before composing around them. It opens the requested editor without
@@ -521,7 +531,32 @@ FILE_MUTATING = ToolAnnotations(
     openWorldHint=False,
 )
 
-mcp = MCPServer(
+
+class PostFaderServer(MCPServer):
+    """Serve compact input schemas; validation still uses the full models.
+
+    Clients commonly load every tool definition into the model's context, so
+    the listing advertises the reduced form from ``tool_schemas``. Calls are
+    validated by the SDK against each tool's complete argument model.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._advertised_schemas: dict[str, dict] = {}
+
+    async def list_tools(self):
+        tools = await super().list_tools()
+        listed = []
+        for tool in tools:
+            schema = self._advertised_schemas.get(tool.name)
+            if schema is None:
+                schema = compact_input_schema(tool.input_schema)
+                self._advertised_schemas[tool.name] = schema
+            listed.append(tool.model_copy(update={"input_schema": schema}))
+        return listed
+
+
+mcp = PostFaderServer(
     name="postfader-fl-studio-mcp",
     version=__version__,
     instructions=INSTRUCTIONS,
@@ -765,7 +800,13 @@ async def fl_get_transport_state() -> TransportState:
     ),
 )
 async def fl_get_selected_range() -> SelectedRangeObservation:
-    """Read raw endpoints and PPQ without claiming meter or rendering semantics."""
+    """Read the current Playlist timeline selection and project PPQ from FL Studio.
+
+    Returns raw selection endpoints and observation evidence without changing
+    the selection. PPQ is ticks per quarter note; endpoints are not interpreted
+    as bars, time-signature boundaries, or guaranteed render limits. Inspect the
+    returned validity and consistency evidence before using them. Use
+    fl_get_transport_state for playback position and transport state."""
     return await _run("selected_range")
 
 
@@ -1025,9 +1066,16 @@ async def plugins_scan_parameters(
     annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Search Plugin Atlas"}),
 )
 async def plugins_atlas_search(
-    request: AtlasSearchRequest,
+    request: Annotated[AtlasSearchRequest, Field(description="Offline catalog text search and optional narrowing filters; omit filters to search all products.")],
 ) -> AtlasSearchResponse:
-    """Search bundled static plug-in knowledge without contacting FL Studio."""
+    """Find products in the bundled offline Plugin Atlas by text and filters.
+
+    Use query for product knowledge search; vendor_id, origin, kind,
+    technique_id, and stock_only narrow results, while limit caps returned hits.
+    No live FL connection is needed, and results do not establish installation
+    or ownership. Use plugins_atlas_get_product with a returned product ID for
+    details, plugins_atlas_recommend for production-goal recommendations, or
+    plugins_atlas_inspect_loaded to match plugins in the current project."""
     return await _mix(search_atlas, request)
 
 
@@ -1036,9 +1084,15 @@ async def plugins_atlas_search(
     annotations=LOCAL_READ_ONLY.model_copy(update={"title": "Get Plugin Atlas product"}),
 )
 async def plugins_atlas_get_product(
-    request: AtlasGetProductRequest,
+    request: Annotated[AtlasGetProductRequest, Field(description="Exact catalog product ID obtained from Atlas search, recommendations, or a live match.")],
 ) -> AtlasProductResponse:
-    """Read one static Atlas product and its related descriptive records."""
+    """Read a bundled Plugin Atlas product by its exact product_id.
+
+    Obtain the ID from plugins_atlas_search or plugins_atlas_recommend. Returns
+    product and vendor knowledge, adapters, evidence, and stock alternatives.
+    This offline lookup neither inspects nor changes FL Studio; catalog adapter
+    records do not prove that a currently loaded plugin is writable. Use
+    plugins_atlas_inspect_loaded to join catalog knowledge to live targets."""
     return await _mix(get_atlas_product, request)
 
 
@@ -1049,9 +1103,16 @@ async def plugins_atlas_get_product(
     ),
 )
 async def plugins_atlas_recommend(
-    request: AtlasRecommendRequest,
+    request: Annotated[AtlasRecommendRequest, Field(description="Production-goal criteria, or product_id plus stock_alternatives=True for a known product's stock alternatives.")],
 ) -> AtlasRecommendationResponse:
-    """Rank static plug-in choices or stock alternatives without changing FL."""
+    """Rank bundled Plugin Atlas products for a production problem or technique.
+
+    Supply query, problems, techniques, sources, and kind to describe the task;
+    prefer_stock favors stock choices and limit bounds results. Supply product_id
+    together with stock_alternatives=True for alternatives to a known product. Recommendations are static knowledge,
+    not proof of availability or ownership, and do not change FL. Use
+    plugins_atlas_search for factual lookup or sound_selection_plan to assign
+    sounds from the live loaded-target pool."""
     return await _mix(recommend_atlas, request)
 
 
@@ -1062,9 +1123,17 @@ async def plugins_atlas_recommend(
     ),
 )
 async def plugins_atlas_inspect_loaded(
-    request: AtlasInspectLoadedRequest,
+    request: Annotated[AtlasInspectLoadedRequest, Field(description="Live inventory scope and catalog-match limits; an empty request uses conservative matching defaults.")],
 ) -> AtlasInspectLoadedResponse:
-    """Match the target-aware live Track B inventory to static Atlas knowledge."""
+    """Match loaded effects and generators to bundled Plugin Atlas knowledge.
+
+    Requires a live bridge. only_used restricts the mixer-track inventory;
+    match_limit caps candidates per loaded plugin. include_weak=False omits weak
+    matches; enable it only to inspect uncertain candidates. Results retain each
+    live target, candidate matches, and compatibility evidence. A catalog match
+    is not proof of ownership, installation elsewhere, or writable controls.
+    Use plugins_atlas_search for offline catalog lookup and
+    plugins_scan_parameters to inspect a live plugin's exposed controls."""
     return await _mix(inspect_loaded_atlas, request)
 
 
@@ -1215,7 +1284,14 @@ async def fl_set_mixer_volume_db(
         Field(default=None, description="Optional expected normalized and/or dB state."),
     ] = None,
 ) -> VerifiedMixerVolumeDbWrite:
-    """Search FL's fader curve and prove the requested dB value on a later tick."""
+    """Set one mixer fader to a target dB readback, between -60 and +6 dB.
+
+    Requires enabled writes and a live bridge; Master index 0 also requires
+    allow_master=True. Searches the fader curve, which moves the fader during
+    calibration, and reports later-tick readback within tolerance_db. Inspect
+    verified rather than assuming success. Optional session_fingerprint and
+    expected_before reject stale observations. Use fl_set_mixer_volume only
+    when the desired value is normalized rather than dB. Does not save FL."""
     return await _write(
         "set_mixer_volume_db",
         track_index=track_index,
@@ -2010,7 +2086,15 @@ async def fl_set_plugin_param(
         ),
     ] = None,
 ) -> VerifiedPluginParameterWrite | VerifiedTargetedPluginParameterWrite:
-    """Set one plug-in parameter; verified from FL's display string changing."""
+    """Set one inspected plugin parameter to a known normalized value from 0 to 1.
+
+    Read plugins_inspect_parameter_map first for the parameter index and current
+    state. Use fl_set_plugin_param_display for numeric units such as Hz or dB,
+    and fl_set_plugin_param_option for named choices; do not guess a unit-to-0..1
+    mapping. Supply either target or both legacy track_index and slot_index.
+    Requires enabled writes; Master also requires allow_master. Optional session
+    and expected-state guards reject stale reads. Inspect the returned verified
+    and readback evidence; this tool does not save the project."""
     if target is not None:
         return await _performance_write(
             "set_plugin_parameter",
@@ -2066,7 +2150,15 @@ async def fl_apply_verified_batch(
     ] = True,
     session_fingerprint: SessionFingerprintArg = None,
 ) -> VerifiedBatchResult:
-    """Apply a closed-union batch after one session preflight, without replay."""
+    """Apply an ordered list of supported absolute writes to the current FL session.
+
+    Use a direct setter for one change, or mix_create_plan when changes need a
+    stored review step before application. Requires enabled writes and passes
+    through each operation's target and safety checks. Operations must have
+    unique IDs and non-overlapping written fields. This is non-atomic: earlier
+    changes remain if a later item fails. stop_on_unverified=True skips remaining
+    items after an unverified receipt. Inspect each receipt; never replay an
+    ambiguous batch. No rollback or project save is performed."""
     return await _apply_batch(
         operations=operations,
         stop_on_unverified=stop_on_unverified,
@@ -2433,7 +2525,16 @@ async def fl_select_plugin_preset(
         Field(default=1, ge=1, le=8, description="Later idle ticks allowed for plug-in settling."),
     ] = 1,
 ) -> VerifiedPluginPresetSelection:
-    """Navigate to an exact preset and require later-idle-tick identity readback."""
+    """Select a known preset on one loaded mixer effect or Channel Rack generator.
+
+    Read plugins_list_presets and plugins_get_current_preset first; supply an
+    exact reported preset name and/or index. Requires enabled writes. Optional
+    session, target, and current-preset guards reject stale observations.
+    Navigation can change the sound through intermediate presets and is bounded
+    by max_navigation_steps; settle_tick_limit bounds later-tick identity checks.
+    Inspect verified and warnings before continuing. Use sound_selection_plan
+    and sound_selection_apply to coordinate choices across multiple roles.
+    This selects a preset, not an individual parameter or a new plugin."""
     return await _performance_write(
         "select_plugin_preset",
         target=target,
@@ -3179,12 +3280,43 @@ async def mix_resolve_processing_intent(
     annotations=WORKFLOW_STATE.model_copy(update={"title": "Create a reviewable mix plan"}),
 )
 async def mix_create_plan(
-    title: Annotated[str, Field(min_length=1, max_length=128)],
-    operations: Annotated[list[BatchOperation], Field(min_length=1, max_length=32)],
-    rationale: Annotated[list[str] | None, Field(default=None, max_length=32)] = None,
+    title: Annotated[str, Field(
+        min_length=1, max_length=128,
+        description="Short human-readable purpose for the proposed changes; this labels the review plan and is not a project filename.",
+        examples=["Balance two mixer tracks"],
+    )],
+    operations: Annotated[list[BatchOperation], Field(
+        min_length=1, max_length=32,
+        description=(
+            "Ordered absolute writes to propose, not execute. Each item needs a unique "
+            "operation_id and an operation discriminator selecting one of the listed "
+            "schemas. Mixer, channel, pattern, Playlist, plugin-parameter, and tempo "
+            "operations have different target fields and units: follow that variant's "
+            "schema. Do not write the same target field twice. expected_before is an "
+            "optional stale-state guard; mixer index 0 requires allow_master=True. "
+            "Applying the reviewed plan is non-atomic and does not roll back."
+        ),
+        examples=[[
+            {"operation_id": "level-1", "operation": "mixer_volume_db", "track_index": 1, "volume_db": -6.0},
+            {"operation_id": "pan-2", "operation": "mixer_pan", "track_index": 2, "pan": 0.2},
+        ]],
+    )],
+    rationale: Annotated[list[str] | None, Field(
+        default=None, max_length=32,
+        description="Optional review notes explaining the intended result and evidence for the proposed writes; each entry must be non-empty and at most 512 characters. Omit when no notes are needed.",
+        examples=[["Reduce the first track's level and move the second slightly right."]],
+    )] = None,
     session_fingerprint: SessionFingerprintArg = None,
 ) -> MixPlan:
-    """Store a session-bound closed-union plan; no project value changes."""
+    """Store proposed mixer/plugin changes for review without applying them.
+
+    Supply a title, 1..32 supported batch operations, and optional rationale.
+    Requires a compatible live bridge to bind the plan to its current session;
+    optional session_fingerprint rejects a different session. Returns a draft
+    plan and plan_id stored only in this server process. Use mix_get_plan to
+    review it, then mix_apply_plan after authorization. Use
+    fl_apply_verified_batch when an already-approved batch should run immediately;
+    use sound_selection_plan to choose sound/preset assignments instead."""
     return await _mix(
         MIX_PLANS.create,
         title=title,
@@ -3201,7 +3333,13 @@ async def mix_create_plan(
 async def mix_get_plan(
     plan_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
 ) -> MixPlan:
-    """Read one process-local reviewable plan."""
+    """Retrieve a stored mix plan's operations, rationale, session, and status.
+
+    Pass the plan_id returned by mix_create_plan or mix_create_gain_stage_plan.
+    The lookup does not apply changes or reread current FL values. Plans are
+    process-local and IDs can expire; a restarted server cannot recover them.
+    Review a draft before mix_apply_plan. Applied, partial, or failed plans must
+    not be treated as safe to replay."""
     return await _mix(MIX_PLANS.get, plan_id)
 
 
@@ -3213,7 +3351,14 @@ async def mix_apply_plan(
     plan_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")],
     stop_on_unverified: Annotated[bool, Field(description="Skip remaining plan items after unverified proof.")] = True,
 ) -> MixPlanApplication:
-    """Apply a plan once through the verified batch kernel."""
+    """Apply a previously reviewed draft mix plan once to its bound FL session.
+
+    Use mix_get_plan to review the plan_id first. Requires enabled writes and
+    the original bridge session. Applies operations in order; it is non-atomic,
+    so earlier changes remain after a later failure. stop_on_unverified=True
+    skips remaining operations after an unverified receipt. Inspect the returned
+    plan status and per-operation evidence. A plan cannot be applied again after
+    an attempt, even on failure. Does not roll back or save the project."""
     return await _mix(
         MIX_PLANS.apply,
         plan_id,
@@ -3339,7 +3484,14 @@ async def sound_selection_create_variation(
         Field(default=(), max_length=128, description="Roles explicitly allowed to replace."),
     ] = (),
 ) -> SoundPaletteVariationPlan:
-    """Return a section delta instead of replacing the existing palette."""
+    """Plan a section-specific change to an existing sound palette without applying it.
+
+    Pass an existing palette_id and a new structured request; section labels the
+    intended section. Existing anchors are preserved by default; replace_roles
+    explicitly permits replacements for those roles. Returns a variation plan
+    rather than overwriting the base palette. Uses live sound inventory but does
+    not change FL or persist history. Use sound_selection_plan for a new palette,
+    then sound_selection_apply only after reviewing the proposed assignments."""
     return await _mix(
         create_sound_selection_variation,
         palette_id,
@@ -3356,10 +3508,22 @@ async def sound_selection_create_variation(
 async def sound_selection_apply(
     palette: Annotated[
         SoundPalettePlan | SoundPaletteVariationPlan | str,
+        # Advertised as an opaque echo of an earlier result; validated in full.
+        WithJsonSchema(
+            {
+                "anyOf": [
+                    {"type": "string", "minLength": 1},
+                    {"type": "object"},
+                ]
+            }
+        ),
         Field(
             description=(
-                "A validated palette plan, section variation, or its "
-                "process-local palette ID."
+                "The palette_id from sound_selection_plan, or the full palette plan "
+                "or section-variation object returned by sound_selection_plan or "
+                "sound_selection_create_variation, passed back unchanged. A "
+                "variation_id is not accepted; the base palette ID selects base "
+                "assignments, not a variation."
             )
         ),
     ],
@@ -3379,7 +3543,18 @@ async def sound_selection_apply(
         Field(default=None, description="Override this palette's task-scoped history policy."),
     ] = None,
 ) -> SoundSelectionApplyResult:
-    """Apply exact presets in deterministic order and stop on unknown or unverified outcomes."""
+    """Apply exact preset assignments from a reviewed sound palette or variation.
+
+    Pass a palette plan, its palette_id, or the full variation object. A variation_id
+    cannot be applied; its base_palette_id selects the base assignments instead.
+    Supply the observed session_fingerprint and
+    authorized_to_modify=True only after explicit user authorization. Enabled
+    writes are required. role_ids limits application to chosen roles; navigation
+    and settle limits bound preset selection. Applies in deterministic order and
+    stops on unknown or unverified outcomes; earlier changes can remain. This
+    does not install recommended plugins. persist_history overrides the palette's
+    local-history policy. Inspect receipts before any further attempt. Use
+    fl_select_plugin_preset for a single known preset without palette planning."""
     return await _mix(
         apply_sound_selection,
         palette,
@@ -3407,7 +3582,14 @@ async def sound_selection_record_feedback(
         Field(description="Explicit accepted, rejected, or neutral palette feedback."),
     ],
 ) -> SoundFeedbackResult:
-    """Update bounded local ranking feedback; silence is never inferred."""
+    """Record a user's explicit accepted, rejected, or neutral sound-palette feedback.
+
+    Supply palette_id and optionally role_id or assignment_id to scope feedback.
+    Descriptors express preferred or unwanted qualities for future ranking.
+    Persistence follows the request's persist/persistence settings and may write
+    local history; no FL project or preset is changed. Never infer acceptance
+    from silence. Use sound_selection_create_variation to request new choices;
+    feedback alone does not generate or apply a replacement palette."""
     return await _mix(record_sound_selection_feedback, request)
 
 
@@ -3496,7 +3678,13 @@ async def processing_plan(
 async def processing_apply_plan(
     plan: Annotated[
         ProcessingPlan,
-        Field(description="Bounded semantic plan returned by processing_plan."),
+        # Advertised as an opaque echo of an earlier result; validated in full.
+        WithJsonSchema({"type": "object"}),
+        Field(
+            description=(
+                "The plan object returned by processing_plan, passed back unchanged."
+            )
+        ),
     ],
     session_fingerprint: RequiredSoundSelectionSessionFingerprintArg,
     authorized_to_modify: Annotated[
@@ -3562,6 +3750,33 @@ async def processing_apply_plan(
         ),
     )
     return await _mix(PRODUCTION_RUNS.execute, request, run_plan)
+
+
+@mcp.tool(
+    name="postfader_describe_operations",
+    annotations=LOCAL_READ_ONLY.model_copy(
+        update={"title": "Describe Production Run operations"}
+    ),
+)
+async def postfader_describe_operations(
+    operations: Annotated[
+        tuple[ProductionOperationName, ...],
+        Field(
+            default=(),
+            max_length=MAX_DESCRIBED_OPERATIONS,
+            description=(
+                "Operations whose exact JSON Schema you need before building a plan. "
+                "Omit to list every operation with its summary and required fields."
+            ),
+        ),
+    ] = (),
+) -> OperationCatalog:
+    """List Production Run operations and return exact schemas for the ones named.
+
+    Call this before building a plan for postfader_validate_run,
+    postfader_execute_run, postfader_creation_readiness or postfader_continue_run;
+    their plan schemas name operations without listing each one's fields."""
+    return describe_operations(operations)
 
 
 @mcp.tool(
@@ -3935,10 +4150,10 @@ async def plugins_load(
 ) -> PluginLoadResult:
     """Load one macOS Add-menu plugin, then identify its new channel or effect slot.
 
-    Use plugins_list_available first. The task request authorizes the addition;
-    effect loading temporarily enables bridge writes only to select its track.
-    Unknown outcomes must be inspected before any new load attempt. Does not
-    save the project; Windows insertion is not implemented by this adapter.
+    Use plugins_list_available first. Loading changes the project, so session
+    write mode must be on (fl_set_write_mode); an effect load first selects its
+    mixer track. Unknown outcomes must be inspected before any new load attempt.
+    Does not save the project; Windows insertion is not implemented.
     """
     return await _mix(load_plugin, request)
 
@@ -3957,7 +4172,13 @@ async def piano_roll_bridge(
         Field(description="Required only for action='confirm', after the user manually ran Postfader Apply."),
     ] = False,
 ) -> PianoRollBridgeStatus:
-    """Manage the one-time-per-process arm for FL's separate Piano Roll script runtime."""
+    """Prepare the separate FL Studio Piano Roll scripting connection.
+
+    Use status to inspect readiness without writing files. prepare writes the
+    bootstrap script; the user must run Postfader Apply once in FL's Piano Roll.
+    Only then use confirm with confirm_user_ran_script=True to arm this process.
+    This setup does not insert notes. Use piano_roll_read_notes for inspection,
+    piano_roll_write_notes for new notes, and piano_roll_transform for edits."""
     return await _mix(
         PIANO_ROLL.bridge_action,
         action,
@@ -4044,7 +4265,16 @@ async def piano_roll_write_notes(
         Field(description="Send FL's run-last-Piano-Roll-script shortcut after verified target selection."),
     ] = True,
 ) -> PianoRollDispatch:
-    """Generate a typed Piano Roll script, select its target, and report hotkey dispatch honestly."""
+    """Add supplied notes to a channel's Piano Roll in the specified pattern.
+
+    Automatic execution requires live FL Studio, enabled writes, and piano_roll_bridge
+    setup. Notes use quarter-note beats. mode='append' keeps existing notes;
+    mode='replace' clears the score before inserting the supplied notes.
+    This writes a local script. auto_trigger=False leaves target selection and
+    execution to the user; True selects the target and dispatches FL's run-last-script shortcut.
+    Dispatch is not proof of note application: inspect the returned evidence.
+    Use piano_roll_transform to edit existing notes, piano_roll_read_notes to
+    inspect them, or compose_* plus midi_export_type1 for offline MIDI creation."""
     return await _mix(
         write_piano_roll_notes,
         notes,
@@ -4065,7 +4295,17 @@ async def piano_roll_transform(
     pattern_number: Annotated[int, Field(ge=1, le=999, description="Pattern to select before triggering the script.")],
     auto_trigger: Annotated[bool, Field(description="Automatically send the run-last-script shortcut.")] = True,
 ) -> PianoRollDispatch:
-    """Quantize, transpose, humanize, duplicate, delete, or clear selected/all notes."""
+    """Transform existing Piano Roll notes in the requested selection or whole score.
+
+    Supports quantize, transpose, humanize, duplicate, delete, and clear.
+
+    Automatic execution requires live FL Studio, enabled writes, and piano_roll_bridge
+    setup. Read
+    notes first with piano_roll_read_notes to establish the target and scope.
+    The request selects the operation; delete/clear remove notes in that scope.
+    Writes a local script. auto_trigger=False requires manual target selection
+    and execution; True selects the channel/pattern and dispatches the shortcut. Dispatch alone
+    does not verify the edit. Use piano_roll_write_notes to insert supplied notes."""
     return await _mix(
         transform_piano_roll,
         request,

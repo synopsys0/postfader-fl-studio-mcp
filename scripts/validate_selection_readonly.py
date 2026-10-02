@@ -125,15 +125,6 @@ def main(argv: list[str] | None = None) -> int:
             "timebase_ppq": item.timebase_ppq,
             "raw_start_display_hint": item.raw_start_display_hint,
             "raw_end_display_hint": item.raw_end_display_hint,
-            "repeated_read_consistent": item.repeated_read_consistent,
-            "interpretation_status": item.interpretation_status,
-            "selection_state": item.selection_state,
-            "selection_presence": item.selection_presence,
-            "raw_time_unit": item.raw_time_unit,
-            "start_ticks": item.start_ticks,
-            "end_ticks": item.end_ticks,
-            "duration_ticks": item.duration_ticks,
-            "safe_for_rendering": item.safe_for_rendering,
         }
         for item in observations
     ]
@@ -153,14 +144,6 @@ def main(argv: list[str] | None = None) -> int:
     after_transport_token = transport_token(after)
     all_samples_identical = len(comparable) == 1
     project_token_stable = before_project_token == after_project_token
-    interpretation_statuses = sorted(
-        {item.interpretation_status for item in observations}
-    )
-    selection_states = sorted({item.selection_state for item in observations})
-    selection_presence = sorted(
-        {item.selection_presence for item in observations}
-    )
-    raw_time_units = sorted({item.raw_time_unit for item in observations})
     transport_mode_stable = (
         before_transport_token["playing"] == after_transport_token["playing"]
         and before_transport_token["recording"]
@@ -183,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     result = {
         "ok": ok,
-        "schema_version": "1.0",
+        "schema_version": "2.0",
         "sample_count": len(observations),
         "all_samples_identical": all_samples_identical,
         "project_token_stable": project_token_stable,
@@ -194,13 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         "before_transport_token": before_transport_token,
         "after_transport_token": after_transport_token,
         "samples": sample_values,
-        "interpretation_statuses": interpretation_statuses,
-        "selection_states": selection_states,
-        "selection_presence": selection_presence,
-        "raw_time_units": raw_time_units,
-        "safe_for_rendering": False,
         "warnings": [
-            "Bounded repeatability does not widen the exact semantic scope reported by each observation.",
+            "Repeatable raw endpoints are not render boundaries; their units and selection state remain unknown.",
             "The public dirty and undo fields are a coarse token, not an atomic project revision.",
             "Export endpoint inclusivity remains unvalidated.",
         ],

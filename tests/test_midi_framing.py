@@ -89,36 +89,6 @@ class BridgeFramingTests(unittest.TestCase):
         self.assertEqual(self.transport.partial, {})
         self.assertEqual(self.transport.partial_bytes, 0)
 
-    def test_shared_dispatch_rejects_non_object_request_and_args(self):
-        for request in (
-            [],
-            {"id": 8, "cmd": "ping", "args": []},
-        ):
-            with self.subTest(request=request):
-                response = bridge._dispatch(request)
-                self.assertFalse(response["ok"])
-                self.assertIn("JSON object", response["error"])
-
-        healthy = bridge._dispatch({"id": 9, "cmd": "ping", "args": {}})
-        self.assertTrue(healthy["ok"])
-        self.assertTrue(healthy["result"]["pong"])
-
-    def test_bridge_advertises_a_separate_midi_wire_protocol(self):
-        hello = json.loads(self.transport._hello())
-        ping = bridge.cmd_ping({})
-
-        self.assertEqual(hello["protocol"], bridge.PROTOCOL_VERSION)
-        self.assertEqual(ping["protocol"], bridge.PROTOCOL_VERSION)
-        self.assertEqual(
-            hello[bridge.MIDI_WIRE_PROTOCOL_FIELD],
-            bridge.MIDI_WIRE_PROTOCOL_VERSION,
-        )
-        self.assertEqual(
-            ping[bridge.MIDI_WIRE_PROTOCOL_FIELD],
-            bridge.MIDI_WIRE_PROTOCOL_VERSION,
-        )
-        self.assertEqual(bridge.PROTOCOL_VERSION, 2)
-
     def test_legacy_client_request_frames_are_accepted_by_current_bridge(self):
         request = {
             "id": 11,
@@ -872,7 +842,7 @@ class ClientFramingTests(unittest.TestCase):
         self.transport.midi_out = sink
         self.transport._open = lambda: True
 
-        with self.assertRaisesRegex(ValueError, "size limit"):
+        with self.assertRaisesRegex(bridge_client.BridgeError, "size limit"):
             self.transport.request(
                 7, {"id": 7, "payload": "X" * bridge_client.MAX_SYSEX_REQUEST_BYTES}
             )

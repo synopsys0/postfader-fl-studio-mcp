@@ -13,6 +13,8 @@ import tempfile
 import threading
 import time
 
+from _checks import check, section, summary
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(HERE, "fakefl"))
@@ -25,19 +27,7 @@ os.environ["FL_BRIDGE_ENABLE_WRITES"] = "1"
 import _state  # noqa: E402
 import device_UniversalBridge as bridge  # noqa: E402
 
-PASS = 0
-FAIL = 0
 MAILBOX = tempfile.mkdtemp(prefix="flmcp-mailbox-")
-
-
-def check(label, cond, detail=""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
 
 
 def force_file_transport():
@@ -61,10 +51,9 @@ def force_file_transport():
 
 
 def main():
-    global FAIL
     _state.reset()
 
-    print("\n-- transport selection --")
+    section("transport selection")
     force_file_transport()
     check("fell back to the file transport",
           bridge._transport.name == "files", bridge._transport.name)
@@ -88,13 +77,13 @@ def main():
     client = BridgeClient(port=1, mailbox=MAILBOX, timeout=15,
                            midi_port="no-such-midi-port")
 
-    print("\n-- client picks the mailbox when TCP is dead --")
+    section("client picks the mailbox when TCP is dead")
     info = client.ping()
     check("ping answered", info.get("pong") is True, info)
     check("client reports the file transport", client.transport == "files",
           client.transport)
 
-    print("\n-- malformed envelopes over files --")
+    section("malformed envelopes over files")
     token = "non-object"
     request_path = os.path.join(
         MAILBOX, bridge.REQ_PREFIX + token + ".json"
@@ -118,7 +107,7 @@ def main():
     check("file bridge remains alive after malformed envelope",
           client.ping().get("pong") is True)
 
-    print("\n-- commands round trip --")
+    section("commands round trip")
     proj = client.call("project.info")
     check("project.info", proj["tempo_bpm"] == 140.0, proj)
     mix = client.call("mixer.list")
@@ -126,27 +115,27 @@ def main():
     vox = [t for t in mix["tracks"] if t["index"] == 3][0]
     check("plugins visible", len(vox["plugins"]) == 3, vox["plugins"])
 
-    print("\n-- chunked job over files --")
+    section("chunked job over files")
     t0 = time.time()
     full = client.call("mixer.list", only_used=False)
     elapsed = time.time() - t0
     check("full scan completed", len(full["tracks"]) == 126, len(full["tracks"]))
     check("scan finished promptly (%.2fs)" % elapsed, elapsed < 10, elapsed)
 
-    print("\n-- large payload survives the file round trip --")
+    section("large payload survives the file round trip")
     big = client.call("mixer.list", only_used=False, peaks=True)
     check("peaks included", big["tracks"][0].get("peak_l") is not None,
           big["tracks"][0])
     check("payload intact", all("plugins" in t for t in big["tracks"]))
 
-    print("\n-- writes --")
+    section("writes")
     changed = client.call("mixer.set_volume", track=3, value=0.6)
     check("verified write applied",
           changed["verified"] is True
           and abs(_state.TRACKS[3].volume - 0.6) < 1e-9,
           changed)
 
-    print("\n-- errors propagate --")
+    section("errors propagate")
     try:
         client.call("plugin.set_param", track=3, slot=1,
                     index=999, value=0.5)
@@ -160,7 +149,7 @@ def main():
         check("unknown command lists options", "available commands" in str(e),
               str(e)[:80])
 
-    print("\n-- mailbox hygiene --")
+    section("mailbox hygiene")
     # The liveness marker is meant to persist; nothing else should.
     #
     # The pump thread is still running and still refreshing that marker, and
@@ -178,7 +167,7 @@ def main():
         time.sleep(0.01)
     check("no request or reply files left behind", not leftovers, leftovers)
 
-    print("\n-- concurrent clients --")
+    section("concurrent clients")
     other = BridgeClient(port=1, mailbox=MAILBOX, timeout=15,
                            midi_port="no-such-midi-port")
     results = {}
@@ -205,7 +194,7 @@ def main():
           isinstance(results.get("ping"), dict)
           and results["ping"].get("pong"), results.get("ping"))
 
-    print("\n-- staleness detection --")
+    section("staleness detection")
     stop.set()
     t.join(timeout=2)
     bridge.OnDeInit()
@@ -221,8 +210,7 @@ def main():
         check("dead bridge reports clearly", "Could not reach" in str(e), str(e)[:60])
 
     shutil.rmtree(MAILBOX, ignore_errors=True)
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":

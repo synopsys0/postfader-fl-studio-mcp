@@ -60,6 +60,12 @@ PORT = 20202
 MAX_COMMANDS_PER_TICK = 8
 MAX_SEND_PER_TICK = 262144
 MAX_CLIENTS = 4
+# A refused socket request is answered, then the rest of it is read and thrown
+# away before the connection closes: closing with bytes still unread resets
+# the connection, and a reset can discard the refusal before the sender reads
+# it. Bounded (about five seconds of ticks) so a sender that never stops
+# cannot hold a client slot.
+REFUSED_REQUEST_DRAIN_TICKS = 250
 
 # Scanning the whole mixer costs roughly 24 API calls per track (10 of them
 # probing effect slots), so a full 126-track listing is ~3000 calls. Run in one
@@ -366,6 +372,10 @@ class _Client:
         self.sock.setblocking(False)
         self.inbox = b""
         self.outbox = b""
+        # Ticks left to deliver a refusal and drain the refused request before
+        # closing; zero while the connection accepts requests.
+        self.closing = 0
+        self.write_shut = False
 
     def fileno(self):
         return self.sock.fileno()
@@ -6110,23 +6120,38 @@ class _SocketTransport:
                 try:
                     chunk = c.sock.recv(65536)
                 except BlockingIOError:
-                    chunk = b""
+                    # Readiness can be spurious. Nothing arrived; this is not
+                    # the end of the stream, so keep the client.
+                    chunk = None
                 except Exception:
                     self._drop(c)
                     continue
                 if chunk == b"":
                     self._drop(c)
                     continue
-                if len(c.inbox) + len(chunk) > MAX_TRANSPORT_REQUEST_BYTES:
+                if chunk is None:
+                    pass
+                elif c.closing:
+                    pass  # the rest of a refused request; discard it
+                elif len(c.inbox) + len(chunk) > MAX_TRANSPORT_REQUEST_BYTES:
                     # A sender that never terminates a line would otherwise
                     # grow this buffer until the interpreter died. There is no
-                    # partial request worth keeping, so drop the connection.
+                    # partial request worth keeping: refuse it and close.
                     self.respond(c, {"id": None, "ok": False,
                                      "error": "request exceeds the transport "
                                               "size limit"})
+                    c.inbox = b""
+                    c.closing = REFUSED_REQUEST_DRAIN_TICKS
+                else:
+                    c.inbox += chunk
+            if c.closing:
+                # flush() sends the refusal and half-closes. The connection is
+                # dropped when the sender closes its side, or when the drain
+                # budget runs out.
+                c.closing -= 1
+                if c.closing == 0:
                     self._drop(c)
-                    continue
-                c.inbox += chunk
+                continue
             n = 0
             while n < MAX_COMMANDS_PER_TICK and b"\n" in c.inbox:
                 line, c.inbox = c.inbox.split(b"\n", 1)
@@ -6146,15 +6171,23 @@ class _SocketTransport:
 
     def flush(self):
         for c in list(self.clients):
-            if not c.outbox:
-                continue
-            try:
-                sent = c.sock.send(c.outbox[:MAX_SEND_PER_TICK])
-                c.outbox = c.outbox[sent:]
-            except BlockingIOError:
-                pass
-            except Exception:
-                self._drop(c)
+            if c.outbox:
+                try:
+                    sent = c.sock.send(c.outbox[:MAX_SEND_PER_TICK])
+                    c.outbox = c.outbox[sent:]
+                except BlockingIOError:
+                    pass
+                except Exception:
+                    self._drop(c)
+                    continue
+            if c.closing and not c.outbox and not c.write_shut:
+                # The refusal is out; end this side so the sender sees EOF
+                # right after it.
+                try:
+                    c.sock.shutdown(socket.SHUT_WR)
+                except Exception:
+                    pass
+                c.write_shut = True
 
     def _accept(self):
         if self.server is None:

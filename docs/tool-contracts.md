@@ -1,8 +1,16 @@
 # Tool and command reference
 
-PostFader exposes 134 MCP tools and 8 MCP resources on the V10 release. The MCP layer is the supported
+PostFader V11 exposes 135 MCP tools and 8 MCP resources; the
+[tool reference](tools.md) lists them by task. The MCP layer is the supported
 public interface; the bridge commands are its local implementation protocol.
 There is no generic command-dispatch tool.
+
+Arguments are validated against their full models, but the schemas a client
+lists are compacted to save the model's context: generated titles are dropped,
+union members that differ only in `operation` are merged, Production Run plan
+operations are advertised by name and shared fields, and arguments that echo
+an earlier result are advertised as plain objects. Use
+`postfader_describe_operations` for the exact schema of any plan operation.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
 and non-finite numbers. Tool annotations distinguish read-only inspection,
@@ -12,6 +20,50 @@ below.
 `fl_set_write_mode` changes the session write capability;
 `sound_selection_history_reset` deletes only the bounded local history after
 explicit confirmation.
+
+## Choosing between related tools
+
+| Goal | Tool and distinction |
+| --- | --- |
+| Set a known normalized plugin value | `fl_set_plugin_param`; inspect the parameter index first. |
+| Set Hz, dB, ms, or another displayed number | `fl_set_plugin_param_display`; searches displayed values instead of assuming a normalized curve. |
+| Select a named control option | `fl_set_plugin_param_option`; moves the control during discovery, so it is not a read-only option listing. |
+| Select a whole preset | `fl_select_plugin_preset`; use exact names/indices from preset inspection. |
+| Apply already-reviewed writes | `fl_apply_verified_batch`; ordered and non-atomic, with per-operation receipts. |
+| Store writes for review first | `mix_create_plan` → `mix_get_plan` → `mix_apply_plan`; process-local, session-bound, one application attempt. |
+| Choose sounds for multiple roles | `sound_selection_plan`; use `sound_selection_create_variation` to preserve anchors while planning a section change, then `sound_selection_apply` after review. |
+| Record a user's sound preferences | `sound_selection_record_feedback`; updates local ranking history according to persistence settings, without applying presets. |
+| Search product knowledge offline | `plugins_atlas_search` → `plugins_atlas_get_product`; `plugins_atlas_recommend` ranks choices for a production goal. |
+| Identify currently loaded products | `plugins_atlas_inspect_loaded`; catalog matches do not prove writable controls or ownership. |
+| Insert supplied score notes | `piano_roll_write_notes`; append preserves notes, replace clears the score. |
+| Edit or inspect existing score notes | `piano_roll_transform` edits; `piano_roll_read_notes` inspects. Automatic script dispatch requires the Piano Roll setup handshake. |
+| Generate a MIDI file offline | `compose_*` generates notes; `midi_export_type1` writes a file without editing a live score. |
+
+For Piano Roll writes, `auto_trigger=False` prepares a script and leaves target
+selection and execution to the user. A dispatched shortcut alone is not proof
+that notes were applied. For batches and plans, earlier changes remain after a
+later failure; inspect receipts before continuing and never replay an ambiguous
+write automatically. These tools do not imply a project save.
+
+`mix_create_plan.operations` is an ordered discriminated union: each item needs
+a unique `operation_id` and an `operation` name selecting its target fields and
+units. For example, `mixer_volume_db` uses a zero-based `track_index` and
+`volume_db`, while `mixer_pan` uses `pan` from -1 (left) to 1 (right). The
+exported input schema describes each supported variant and includes a valid
+two-operation example. The title labels the review plan; rationale entries
+explain its intended result. Creating the plan does not execute the example
+or any supplied operation.
+
+To apply a Sound Selection variation, pass the full variation object to
+`sound_selection_apply`. Passing a `variation_id` is unsupported, and passing
+its `base_palette_id` selects the base palette's assignments instead of the
+section delta. Review the returned assignments before applying either.
+
+Atlas request fields document catalog filters separately from live matching.
+The response's `registry_digest` identifies the bundled catalog; `observed_at`
+dates the live inventory. Candidate scores and `best_match` describe catalog
+matching, while `compatibility` contains scoped evidence. None of these alone
+proves that a live control is writable, or that the user owns a product.
 
 ## Inspection tools
 
@@ -445,6 +497,7 @@ receipts; continuation still requires fresh live context.
 
 | Tool | Purpose |
 | --- | --- |
+| `postfader_describe_operations` | List every plan operation with its summary and required fields, and return the exact JSON Schema for up to 8 named operations. Local and read-only; it does not contact FL Studio. |
 | `postfader_creation_readiness` | Aggregate all detectable creation blockers and limitations without enabling writes or changing FL Studio. |
 | `postfader_validate_run` | Read-only structural and live-capability validation. Returns the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers without enabling writes. |
 | `postfader_execute_run` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
@@ -571,9 +624,10 @@ are estimates, not project metadata.
 
 Loading requires macOS Accessibility access and the observed English menu
 structure. Availability covers Add-menu favorites, not all installed products
-or license ownership. No hash approval is required. The task request authorizes
-the addition; effect loading selects its mixer destination with temporary
-write mode when needed. A `loaded` receipt includes new-instance evidence;
+or license ownership. No hash approval is required. Loading changes the
+project, so it is refused, before the menu is opened, unless session write mode
+is on (`fl_set_write_mode`), like every other setter. An effect load first
+selects its mixer destination. A `loaded` receipt includes new-instance evidence;
 `unknown_outcome` must be inspected before any further load attempt. Existing
 instances must remain unchanged, and no dispatched click is retried. The
 adapter does not save the project or claim an undo point.
