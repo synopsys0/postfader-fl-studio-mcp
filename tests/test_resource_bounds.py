@@ -8,18 +8,21 @@ Three paths could grow memory without limit from caller-supplied input:
 * the file transport's request reader.
 
 Everything here is hermetic. Audio is generated in a temporary directory, and
-the transports are exercised as plain objects -- no sockets are bound, no
-mailbox outside a temp dir is touched, and CoreMIDI is never opened.
+the transports are exercised as plain objects -- the socket path uses a local
+socket pair rather than a listener, no mailbox outside a temp dir is touched,
+and CoreMIDI is never opened.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -99,44 +102,63 @@ class DecodedAudioCeilingTests(unittest.TestCase):
         # Must arrive as the refusal it is, not wrapped as an unreadable file.
         self.assertNotIn("Could not read", message)
 
-    def test_the_ceiling_covers_a_realistic_master_without_truncating(self):
-        # Ten minutes of 96 kHz stereo is the largest ordinary input; it must
-        # fit, or the bound would be breaking real analysis rather than
-        # bounding abuse.
-        frames = 600 * 96000
-        needed = frames * (2 + 1) * 8
-        self.assertLessEqual(needed, audio.MAX_DECODED_AUDIO_BYTES, needed)
-
 
 class SocketAccumulatorTests(unittest.TestCase):
-    class FakeSock:
-        def __init__(self):
-            self.sent = []
-
-        def sendall(self, payload):
-            self.sent.append(payload)
-
-        def close(self):
-            pass
-
-    def _client(self):
+    def test_an_oversized_request_is_refused_before_the_connection_closes(self):
+        server_side, sender = socket.socketpair()
+        self.addCleanup(sender.close)
+        sender.settimeout(2)
         transport = bridge._SocketTransport()
-        client = bridge._Client(self.FakeSock(), ("127.0.0.1", 1)) \
-            if hasattr(bridge, "_Client") else None
-        return transport, client
+        client = bridge._Client(server_side)
+        client.inbox = b"x" * (bridge.MAX_TRANSPORT_REQUEST_BYTES - 16)
+        transport.clients.append(client)
 
-    def test_the_ceiling_is_shared_with_the_sysex_reassembler(self):
-        self.assertEqual(
-            bridge.MAX_TRANSPORT_REQUEST_BYTES, bridge.MAX_SYSEX_REQUEST_BYTES)
+        sender.sendall(b"y" * 4096)
+        self.assertEqual(transport.poll(), [])
+        transport.flush()
+        self.assertEqual(client.inbox, b"")
 
-    def test_a_line_that_never_terminates_cannot_grow_without_bound(self):
-        # The accumulator only grows through this check, so proving the check
-        # rejects an oversized addition is what matters; the socket plumbing
-        # around it is exercised by test_bridge.py.
-        inbox = b"x" * bridge.MAX_TRANSPORT_REQUEST_BYTES
-        chunk = b"y" * 4096
-        self.assertGreater(
-            len(inbox) + len(chunk), bridge.MAX_TRANSPORT_REQUEST_BYTES)
+        # The refusal arrives, followed by end of stream.
+        received = b""
+        while True:
+            chunk = sender.recv(65536)
+            if not chunk:
+                break
+            received += chunk
+        reply = json.loads(received)
+        self.assertIsNone(reply["id"])
+        self.assertIs(reply["ok"], False)
+        self.assertIn("size limit", reply["error"])
+
+        # The rest of the refused request is discarded, and the connection is
+        # dropped once the sender closes its side.
+        sender.sendall(b"z" * 4096)
+        transport.poll()
+        self.assertEqual(client.inbox, b"")
+        self.assertIn(client, transport.clients)
+        sender.close()
+        transport.poll()
+        self.assertEqual(transport.clients, [])
+
+    def test_spurious_readiness_keeps_the_client_and_its_pending_request(self):
+        class NothingYet:
+            def setblocking(self, _flag):
+                pass
+
+            def recv(self, _size):
+                raise BlockingIOError
+
+        sock = NothingYet()
+        transport = bridge._SocketTransport()
+        client = bridge._Client(sock)
+        client.inbox = b'{"id": 7, "cmd": "ping", "args": {}}\n'
+        transport.clients.append(client)
+
+        with mock.patch.object(bridge.select, "select", return_value=([sock], [], [])):
+            requests = transport.poll()
+
+        self.assertEqual(transport.clients, [client])
+        self.assertEqual([request["id"] for _handle, request in requests], [7])
 
 
 class FileTransportRequestTests(unittest.TestCase):

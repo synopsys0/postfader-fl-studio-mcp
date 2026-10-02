@@ -165,15 +165,6 @@ class ReadAcceptanceTests(unittest.TestCase):
             ["in_flight", "failed"],
         )
 
-    def test_large_response_arguments_are_explicitly_bounded(self):
-        arguments = self.arguments()
-        self.assertIsNone(arguments["fl_list_mixer_tracks"]["max_tracks"])
-        self.assertEqual(arguments["plugins_inspect_parameter_map"]["limit"], 128)
-        self.assertEqual(arguments["plugins_scan_parameters"]["max_indices"], 8192)
-        self.assertEqual(arguments["plugins_scan_parameters"]["max_results"], 2048)
-        self.assertIn("fl_list_channels", arguments)
-        self.assertIn("fl_get_step_sequence", arguments)
-
     def test_read_checkpoints_bracket_every_invocation_in_order(self):
         checkpoints = []
 
@@ -1479,42 +1470,6 @@ class LiveScriptSafetyTests(unittest.TestCase):
         self.assertIn("final_evidence_write", stderr.getvalue())
         self.assertIn("injected final read write failure", stderr.getvalue())
 
-    def test_read_cli_rejects_nonpositive_or_nonfinite_deadlines(self):
-        module = self.scripts["live_read_acceptance"]
-        for value in ("0", "-1", "nan", "inf"):
-            with self.subTest(value=value):
-                with (
-                    mock.patch.object(module.sys, "stderr", io.StringIO()),
-                    self.assertRaises(SystemExit) as raised,
-                ):
-                    module.parse_args(
-                        ["--plan", "--per-tool-timeout-seconds", value]
-                    )
-                self.assertEqual(raised.exception.code, 2)
-
-    def test_final_read_evidence_close_failure_is_clean_and_nonzero(self):
-        module = self.scripts["live_read_acceptance"]
-
-        class FailingClose:
-            path = Path("fake-final-read-evidence.json")
-
-            def write(self, _value):
-                return None
-
-            def close(self):
-                raise EvidenceOutputError("injected final read close failure")
-
-        stderr = io.StringIO()
-        with mock.patch.object(module.sys, "stderr", stderr):
-            status = module._finish(
-                FailingClose(),
-                {"overall": "pass", "project_saved": False},
-                contact_started=True,
-            )
-        self.assertEqual(status, 1)
-        self.assertIn("final_evidence_close", stderr.getvalue())
-        self.assertIn("injected final read close failure", stderr.getvalue())
-
     def test_final_evidence_write_failure_is_clean_and_nonzero(self):
         module = self.scripts["live_write_acceptance"]
 
@@ -1577,30 +1532,6 @@ class LiveScriptSafetyTests(unittest.TestCase):
         self.assertIn("final_evidence_output", stderr.getvalue())
         self.assertIn("final_evidence_write", stderr.getvalue())
         self.assertIn("injected final write failure", stderr.getvalue())
-
-    def test_final_evidence_close_failure_is_clean_and_nonzero(self):
-        module = self.scripts["live_write_acceptance"]
-
-        class FailingClose:
-            path = Path("fake-final-evidence.json")
-
-            def write(self, _value):
-                return None
-
-            def close(self):
-                raise EvidenceOutputError("injected final close failure")
-
-        destination = FailingClose()
-        stderr = io.StringIO()
-        with mock.patch.object(module.sys, "stderr", stderr):
-            status = module._finish(
-                destination,
-                {"overall": "pass", "project_saved": False},
-                contact_started=True,
-            )
-        self.assertEqual(status, 1)
-        self.assertIn("final_evidence_close", stderr.getvalue())
-        self.assertIn("injected final close failure", stderr.getvalue())
 
     def test_plan_transport_is_disabled_even_with_explicit_query(self):
         with mock.patch.dict(

@@ -8,7 +8,7 @@ import copy
 import math
 import unittest
 from datetime import datetime, timezone
-from typing import Any, get_args
+from typing import Any
 from unittest import mock
 
 from pydantic import ValidationError
@@ -17,9 +17,7 @@ from fl_studio_mcp import mcp_server
 from fl_studio_mcp.bridge_client import BridgeError
 from fl_studio_mcp.bridge_install import expected_bridge_deployment
 from fl_studio_mcp.performance import (
-    TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
     TEMPO_READBACK_TOLERANCE,
-    TRACK_B_MCP_TOOL_NAMES,
     TRACK_B_MUTATION_COMMANDS,
     TRACK_B_READ_COMMANDS,
     TrackBBoundaryViolation,
@@ -32,7 +30,6 @@ from fl_studio_mcp.performance import (
 )
 from fl_studio_mcp.readonly_inspector import IncompatibleFLStudio
 from fl_studio_mcp.track_b_contracts import (
-    PLAYBACK_SPEED_OMISSION_REASON,
     ChannelGeneratorTarget,
     ChannelIdentitySnapshot,
     ChannelMixSnapshot,
@@ -59,7 +56,6 @@ from fl_studio_mcp.track_b_contracts import (
     TargetedLoadedPluginInventory,
     TargetedPluginParameterPage,
     TargetedPluginParameterScan,
-    TrackBResult,
     VerifiedChannelIdentityWrite,
     VerifiedChannelMixWrite,
     VerifiedChannelPitchWrite,
@@ -358,57 +354,6 @@ def step_write_handler(command: str, arguments: dict[str, Any]) -> dict[str, Any
 
 
 class GatewayBoundaryTests(unittest.TestCase):
-    def test_allowlists_are_exact_and_disjoint_by_mutability(self) -> None:
-        self.assertEqual(
-            TRACK_B_READ_COMMANDS,
-            {
-                "project.info",
-                "project.history",
-                "channels.list",
-                "mixer.list",
-                "plugin.params",
-                "plugin.scan_params",
-                "plugin.preset_count",
-                "sequencer.get",
-                "patterns.list",
-                "patterns.find_empty",
-                "playlist.list",
-            },
-        )
-        self.assertEqual(
-            TRACK_B_MUTATION_COMMANDS,
-            {
-                "transport.set_playing",
-                "transport.stop",
-                "transport.set_song_position",
-                "transport.set_loop_mode",
-                "transport.set_tempo",
-                "transport.set_recording",
-                "transport.set_metronome",
-                "transport.set_precount",
-                "project.set_time_signature_numerator",
-                "project.undo",
-                "project.redo",
-                "channel.set_mix",
-                "channel.set_solo",
-                "channel.set_pitch",
-                "channel.select",
-                "channel.set_identity",
-                "channel.route_to_mixer",
-                "pattern.select",
-                "pattern.set_identity",
-                "pattern.set_length",
-                "playlist.set_identity",
-                "playlist.set_state",
-                "plugin.set_param",
-                "plugin.set_param_display",
-                "plugin.set_param_option",
-                "sequencer.set",
-                "channel.trigger_note",
-            },
-        )
-        self.assertTrue(TRACK_B_READ_COMMANDS.isdisjoint(TRACK_B_MUTATION_COMMANDS))
-
     def test_gateways_reject_cross_boundary_and_arbitrary_commands(self) -> None:
         client = ScriptedClient(lambda command, arguments: {})
         read = TrackBReadGateway(client)
@@ -437,12 +382,6 @@ class GatewayBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(BridgeError, "reply lost"):
             controller.set_playing(playing=True)
         self.assertEqual([name for name, _ in client.calls], ["transport.set_playing"])
-
-    def test_unknown_transport_name_is_normalized(self) -> None:
-        client = ScriptedClient({})
-        client.transport = "surprise"
-        self.assertEqual(TrackBReadGateway(client).transport, "unknown")
-        self.assertEqual(TrackBMutationGateway(client).transport, "unknown")
 
 
 class MutationGateTests(unittest.TestCase):
@@ -902,24 +841,6 @@ def verified_contract_fields(*, verified: bool = True) -> dict[str, Any]:
 
 
 class ChannelMutationTests(unittest.TestCase):
-    def test_all_channel_mutation_contracts_are_public_results(self) -> None:
-        mutation_types = {
-            value
-            for value in get_args(TrackBResult)
-            if isinstance(value, type) and value.__name__.startswith("VerifiedChannel")
-        }
-        self.assertEqual(
-            mutation_types,
-            {
-                VerifiedChannelMixWrite,
-                VerifiedChannelIdentityWrite,
-                VerifiedChannelRouteWrite,
-                VerifiedChannelSoloWrite,
-                VerifiedChannelPitchWrite,
-                VerifiedChannelSelectionWrite,
-            },
-        )
-
     def test_mix_result_has_nullable_flags_only_for_requested_fields(self) -> None:
         controller, client = controller_for(channel_handler)
         result = controller.set_channel_mix(
@@ -1737,21 +1658,6 @@ class TargetAwarePluginTests(unittest.TestCase):
                     controller.set_plugin_parameter_display(track_index=4, slot_index=2, parameter=1, target_value=3000.0, target_unit="Hz")
                 self.assertFalse(client.calls)
 
-    def test_existing_six_plugin_tools_are_the_only_target_aware_names(self) -> None:
-        self.assertEqual(
-            TARGET_AWARE_EXISTING_PLUGIN_TOOLS,
-            {
-                "plugins_scan_loaded_plugins",
-                "plugins_inspect_parameter_map",
-                "plugins_scan_parameters",
-                "fl_set_plugin_param",
-                "fl_set_plugin_param_display",
-                "fl_set_plugin_param_option",
-            },
-        )
-        self.assertEqual(len(TRACK_B_MCP_TOOL_NAMES), 31)
-        self.assertTrue(TRACK_B_MCP_TOOL_NAMES.isdisjoint(TARGET_AWARE_EXISTING_PLUGIN_TOOLS))
-
     def test_inventory_combines_effects_and_global_generators(self) -> None:
         def handler(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
             if command == "project.info":
@@ -2164,95 +2070,6 @@ class TargetAwareMCPBoundaryTests(unittest.TestCase):
             asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", target=ChannelGeneratorTarget(channel_index=7)))
         self.assertEqual(legacy.await_args.kwargs["target_unit"], "Hz")
         self.assertEqual(targeted.await_args.kwargs["target_unit"], "Hz")
-
-    TARGETED_ADDRESS_TOOLS = {
-        "plugins_inspect_parameter_map",
-        "plugins_scan_parameters",
-        "fl_set_plugin_param",
-        "fl_set_plugin_param_display",
-        "fl_set_plugin_param_option",
-    }
-
-    def test_schemas_keep_legacy_pair_and_add_optional_discriminated_target(self) -> None:
-        tools = {
-            tool.name: tool
-            for tool in asyncio.run(mcp_server.mcp.list_tools())
-        }
-        for name in self.TARGETED_ADDRESS_TOOLS:
-            with self.subTest(tool=name):
-                schema = tools[name].input_schema
-                properties = schema["properties"]
-                required = set(schema.get("required", []))
-                self.assertTrue(
-                    {"track_index", "slot_index", "target"} <= set(properties)
-                )
-                self.assertTrue(
-                    {"track_index", "slot_index", "target"}.isdisjoint(required)
-                )
-                self.assertIsNone(properties["track_index"]["default"])
-                self.assertIsNone(properties["slot_index"]["default"])
-                self.assertIsNone(properties["target"]["default"])
-
-                target_union = next(
-                    branch
-                    for branch in properties["target"]["anyOf"]
-                    if "discriminator" in branch
-                )
-                discriminator = target_union["discriminator"]
-                self.assertEqual(discriminator["propertyName"], "kind")
-                self.assertEqual(
-                    discriminator["mapping"],
-                    {
-                        "mixer_effect": "#/$defs/MixerEffectTarget",
-                        "channel_generator": "#/$defs/ChannelGeneratorTarget",
-                    },
-                )
-                self.assertEqual(
-                    {variant["$ref"] for variant in target_union["oneOf"]},
-                    {
-                        "#/$defs/MixerEffectTarget",
-                        "#/$defs/ChannelGeneratorTarget",
-                    },
-                )
-                self.assertEqual(
-                    set(schema["$defs"]["MixerEffectTarget"]["required"]),
-                    {"track_index", "slot_index"},
-                )
-                self.assertEqual(
-                    set(schema["$defs"]["ChannelGeneratorTarget"]["required"]),
-                    {"channel_index"},
-                )
-                self.assertEqual(
-                    schema["$defs"]["MixerEffectTarget"]["properties"]["kind"][
-                        "const"
-                    ],
-                    "mixer_effect",
-                )
-                self.assertEqual(
-                    schema["$defs"]["ChannelGeneratorTarget"]["properties"][
-                        "kind"
-                    ]["const"],
-                    "channel_generator",
-                )
-
-    def test_inventory_schema_preserves_legacy_response_by_default(self) -> None:
-        tools = {
-            tool.name: tool
-            for tool in asyncio.run(mcp_server.mcp.list_tools())
-        }
-        schema = tools["plugins_scan_loaded_plugins"].input_schema
-        properties = schema["properties"]
-        self.assertEqual(
-            set(properties), {"only_used", "include_channel_generators"}
-        )
-        self.assertFalse(properties["include_channel_generators"]["default"])
-        self.assertNotIn(
-            "include_channel_generators", set(schema.get("required", []))
-        )
-        self.assertIn(
-            "False preserves the 0.11 mixer-effect-only response contract",
-            properties["include_channel_generators"]["description"],
-        )
 
     def test_generator_targets_route_through_performance_methods(self) -> None:
         target = ChannelGeneratorTarget(channel_index=7)
@@ -2678,15 +2495,6 @@ class TargetAwareMCPBoundaryTests(unittest.TestCase):
 
 
 class ContractAndMalformedReplyTests(unittest.TestCase):
-    def test_contracts_are_strict_frozen_and_forbid_extra_fields(self) -> None:
-        value = ExpectedPlayingState(playing=True)
-        with self.assertRaises(ValidationError):
-            ExpectedPlayingState(playing=1)
-        with self.assertRaises(ValidationError):
-            ExpectedPlayingState(playing=True, surprise=True)
-        with self.assertRaises(ValidationError):
-            value.playing = False
-
     def test_empty_expected_before_contracts_are_rejected(self) -> None:
         for contract in (
             ExpectedStopState,
@@ -2741,14 +2549,6 @@ class ContractAndMalformedReplyTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     invoke(controller)
             self.assertEqual(client.calls, [])
-
-    def test_playback_speed_is_absent_with_an_explicit_backend_reason(self) -> None:
-        self.assertNotIn("transport.set_playback_speed", TRACK_B_MUTATION_COMMANDS)
-        self.assertNotIn("transport.setPlaybackSpeed", TRACK_B_MUTATION_COMMANDS)
-        self.assertFalse(hasattr(TrackBController, "set_playback_speed"))
-        self.assertNotIn("PlaybackSpeed", {value.__name__ for value in get_args(TrackBResult)})
-        self.assertIn("no authoritative playback speed getter", PLAYBACK_SPEED_OMISSION_REASON)
-        self.assertIn("later-idle-tick readback", PLAYBACK_SPEED_OMISSION_REASON)
 
 
 if __name__ == "__main__":

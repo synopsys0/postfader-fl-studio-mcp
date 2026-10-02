@@ -108,22 +108,27 @@ class BatchOperationBase(TrackBContract):
         min_length=1,
         max_length=64,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+        description="Caller-chosen unique ID within this batch, used to associate the operation with its receipt.",
     )
     operation: BatchOperationName
 
 
 class MixerBatchOperationBase(BatchOperationBase):
-    track_index: int = Field(ge=0)
-    allow_master: bool = False
+    track_index: int = Field(ge=0, description="Zero-based mixer track index; 0 is Master and requires allow_master=True.")
+    allow_master: bool = Field(default=False, description="Explicitly permit this operation to target mixer track 0 (Master).")
 
 
 class BatchMixerVolume(MixerBatchOperationBase):
+    """Set a mixer fader to an absolute normalized value from 0 to 1."""
+
     operation: Literal["mixer_volume"] = "mixer_volume"
     volume_normalized: float = Field(ge=0.0, le=1.0)
     expected_before: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class BatchMixerVolumeDb(MixerBatchOperationBase):
+    """Set a mixer fader in dB by bounded calibration and later readback."""
+
     operation: Literal["mixer_volume_db"] = "mixer_volume_db"
     volume_db: float = Field(ge=-60.0, le=6.0)
     tolerance_db: float = Field(default=0.1, ge=0.01, le=1.0)
@@ -131,48 +136,64 @@ class BatchMixerVolumeDb(MixerBatchOperationBase):
 
 
 class BatchMixerPan(MixerBatchOperationBase):
+    """Set mixer pan from -1 (left) through 0 (center) to 1 (right)."""
+
     operation: Literal["mixer_pan"] = "mixer_pan"
     pan: float = Field(ge=-1.0, le=1.0)
     expected_before: float | None = Field(default=None, ge=-1.0, le=1.0)
 
 
 class BatchMixerMute(MixerBatchOperationBase):
+    """Set the absolute mixer mute state; true mutes and false unmutes."""
+
     operation: Literal["mixer_mute"] = "mixer_mute"
     muted: bool
     expected_before: bool | None = None
 
 
 class BatchMixerSolo(MixerBatchOperationBase):
+    """Set the absolute mixer solo state, rather than toggling it."""
+
     operation: Literal["mixer_solo"] = "mixer_solo"
     soloed: bool
     expected_before: bool | None = None
 
 
 class BatchMixerArm(MixerBatchOperationBase):
+    """Set a mixer's recording-arm state without starting recording."""
+
     operation: Literal["mixer_arm"] = "mixer_arm"
     armed: bool
     expected_before: bool | None = None
 
 
 class BatchMixerColor(MixerBatchOperationBase):
+    """Set mixer color using an FL color word, not a CSS color string."""
+
     operation: Literal["mixer_color"] = "mixer_color"
     color: int = Field(ge=0, le=FL_COLOR_WORD_MAX)
     expected_before: int | None = Field(default=None, ge=0, le=FL_COLOR_WORD_MAX)
 
 
 class BatchMixerStereoSeparation(MixerBatchOperationBase):
+    """Set FL's normalized stereo-separation control from -1 to 1."""
+
     operation: Literal["mixer_stereo_separation"] = "mixer_stereo_separation"
     stereo_separation: float = Field(ge=-1.0, le=1.0)
     expected_before: float | None = Field(default=None, ge=-1.0, le=1.0)
 
 
 class BatchMixerName(MixerBatchOperationBase):
+    """Set a mixer track name; an empty name restores FL's default."""
+
     operation: Literal["mixer_name"] = "mixer_name"
     name: str = Field(max_length=64)
     expected_before: str | None = Field(default=None, max_length=64)
 
 
 class BatchMixerSend(MixerBatchOperationBase):
+    """Enable or disable a mixer send to destination_track_index."""
+
     operation: Literal["mixer_send"] = "mixer_send"
     destination_track_index: int = Field(ge=0)
     enabled: bool
@@ -180,6 +201,8 @@ class BatchMixerSend(MixerBatchOperationBase):
 
 
 class BatchMixerSendLevel(MixerBatchOperationBase):
+    """Set a mixer send's normalized level from 0 to 1; 0.8 is unity."""
+
     operation: Literal["mixer_send_level"] = "mixer_send_level"
     destination_track_index: int = Field(ge=0)
     level_normalized: float = Field(ge=0.0, le=1.0)
@@ -187,6 +210,8 @@ class BatchMixerSendLevel(MixerBatchOperationBase):
 
 
 class BatchMixerEq(MixerBatchOperationBase):
+    """Set normalized gain and/or frequency for one built-in mixer EQ band."""
+
     operation: Literal["mixer_eq"] = "mixer_eq"
     band_index: int = Field(ge=0, le=2)
     gain_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -201,6 +226,8 @@ class BatchMixerEq(MixerBatchOperationBase):
 
 
 class BatchPluginParameter(BatchOperationBase):
+    """Set an inspected effect/generator parameter to a normalized 0..1 value."""
+
     operation: Literal["plugin_parameter"] = "plugin_parameter"
     target: PluginTarget
     parameter_index: int = Field(ge=0)
@@ -209,6 +236,8 @@ class BatchPluginParameter(BatchOperationBase):
 
 
 class BatchChannelMix(BatchOperationBase):
+    """Set channel volume (0..1), pan (-1..1), and/or absolute mute state."""
+
     operation: Literal["channel_mix"] = "channel_mix"
     channel_index: int = Field(ge=0)
     volume_normalized: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -224,6 +253,8 @@ class BatchChannelMix(BatchOperationBase):
 
 
 class BatchChannelSolo(BatchOperationBase):
+    """Set the absolute solo state of a global Channel Rack index."""
+
     operation: Literal["channel_solo"] = "channel_solo"
     channel_index: int = Field(ge=0)
     soloed: bool
@@ -231,6 +262,8 @@ class BatchChannelSolo(BatchOperationBase):
 
 
 class BatchChannelPitch(BatchOperationBase):
+    """Set a channel's normalized pitch from -1 to 1, not a semitone count."""
+
     operation: Literal["channel_pitch"] = "channel_pitch"
     channel_index: int = Field(ge=0)
     pitch_normalized: float = Field(ge=-1.0, le=1.0)
@@ -238,6 +271,8 @@ class BatchChannelPitch(BatchOperationBase):
 
 
 class BatchChannelIdentity(BatchOperationBase):
+    """Set a global Channel Rack channel's name and/or FL color word."""
+
     operation: Literal["channel_identity"] = "channel_identity"
     channel_index: int = Field(ge=0)
     name: str | None = Field(default=None, max_length=MAX_CHANNEL_NAME_LENGTH)
@@ -252,6 +287,8 @@ class BatchChannelIdentity(BatchOperationBase):
 
 
 class BatchChannelRoute(BatchOperationBase):
+    """Route a global Channel Rack channel to a mixer destination index."""
+
     operation: Literal["channel_route"] = "channel_route"
     channel_index: int = Field(ge=0)
     mixer_destination: int = Field(ge=-1)
@@ -259,6 +296,8 @@ class BatchChannelRoute(BatchOperationBase):
 
 
 class BatchPatternIdentity(BatchOperationBase):
+    """Set a one-based pattern number's name and/or FL color word."""
+
     operation: Literal["pattern_identity"] = "pattern_identity"
     pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
     name: str | None = Field(default=None, max_length=MAX_PATTERN_NAME_LENGTH)
@@ -273,6 +312,8 @@ class BatchPatternIdentity(BatchOperationBase):
 
 
 class BatchPatternLength(BatchOperationBase):
+    """Set a one-based pattern number's length in quarter-note beats."""
+
     operation: Literal["pattern_length"] = "pattern_length"
     pattern_number: int = Field(ge=1, le=MAX_PATTERN_NUMBER)
     length_beats: int = Field(ge=1, le=MAX_PATTERN_LENGTH_BEATS)
@@ -280,6 +321,8 @@ class BatchPatternLength(BatchOperationBase):
 
 
 class BatchPlaylistIdentity(BatchOperationBase):
+    """Set a one-based Playlist track's name and/or FL color word."""
+
     operation: Literal["playlist_identity"] = "playlist_identity"
     track_index: int = Field(ge=1)
     name: str | None = Field(default=None, max_length=MAX_PLAYLIST_TRACK_NAME_LENGTH)
@@ -294,6 +337,8 @@ class BatchPlaylistIdentity(BatchOperationBase):
 
 
 class BatchPlaylistState(BatchOperationBase):
+    """Set absolute mute, solo, and/or selection for a one-based Playlist track."""
+
     operation: Literal["playlist_state"] = "playlist_state"
     track_index: int = Field(ge=1)
     muted: bool | None = None
@@ -309,6 +354,8 @@ class BatchPlaylistState(BatchOperationBase):
 
 
 class BatchTempo(BatchOperationBase):
+    """Set project tempo in beats per minute, with optional expected-state guard."""
+
     operation: Literal["tempo"] = "tempo"
     tempo_bpm: float = Field(ge=10.0, le=522.0)
     expected_before: ExpectedTempoState | None = None

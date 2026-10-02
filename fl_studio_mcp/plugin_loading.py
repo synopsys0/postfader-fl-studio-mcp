@@ -22,7 +22,7 @@ from .creative import _PIANO_ROLL_DISPATCH_LOCK
 from .performance import TrackBInspector
 from .plugin_atlas.registry import normalize_search_text
 from .readonly_inspector import connection_from_ping
-from .verified_writer import VerifiedWriter, WriteModeManager
+from .verified_writer import VerifiedWriter
 
 
 PluginKind = Literal["instrument", "effect"]
@@ -269,6 +269,14 @@ def load_plugin(request: PluginLoadRequest, *, backend: MenuBackend | None = Non
             raise PluginLoadingError(connection.error or connection.compatibility_reason)
         if request.session_fingerprint is not None and request.session_fingerprint != session:
             raise PluginLoadingError("The requested FL session changed")
+        if not connection.verified_writes_enabled:
+            # Loading changes the project like any setter, so it needs the
+            # same session write mode. Refuse before the menu is opened.
+            raise PluginLoadingError(
+                "Write mode is off. Loading a plugin changes the project: when the "
+                "user asked for it, enable fl_set_write_mode(enabled=true, "
+                "confirm_user_present=true) and retry."
+            )
         matches = [row for row in menu.entries() if row.kind == request.kind and _name_key(row.name) == _name_key(request.name)]
         if len(matches) != 1:
             return PluginLoadResult(observed_at=_now(), request=request, status="not_dispatched",
@@ -277,16 +285,12 @@ def load_plugin(request: PluginLoadRequest, *, backend: MenuBackend | None = Non
         before = _observe(request)
         if request.kind == "effect" and len(before) >= 10:
             raise PluginLoadingError("The selected mixer track has no free effect slot")
-        owned_mode = False
         warning: list[str] = []
         dispatch = MenuDispatch(status="not_dispatched")
         added = None
         try:
             if request.kind == "effect":
                 assert request.track_index is not None
-                if not connection.verified_writes_enabled:
-                    owned_mode = True
-                    WriteModeManager().set_write_mode(enabled=True, confirm_user_present=True, session_fingerprint=session)
                 receipt = VerifiedWriter().select_mixer_track(track_index=request.track_index, allow_master=request.allow_master, session_fingerprint=session)
                 if not receipt.verified:
                     raise PluginLoadingError("FL did not select the requested mixer track")
@@ -312,12 +316,6 @@ def load_plugin(request: PluginLoadRequest, *, backend: MenuBackend | None = Non
                     time.sleep(0.2)
         except Exception as exc:
             warning.append(str(exc)[:1024])
-        finally:
-            if owned_mode:
-                try:
-                    WriteModeManager().set_write_mode(enabled=False, session_fingerprint=session)
-                except Exception as exc:
-                    warning.append("Could not close the temporary write mode: " + str(exc)[:512])
         if dispatch.error:
             warning.append(dispatch.error)
         status = "loaded" if added else "not_dispatched" if dispatch.status == "not_dispatched" else "unknown_outcome"

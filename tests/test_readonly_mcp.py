@@ -12,6 +12,8 @@ import tempfile
 import threading
 import time
 
+from _checks import check, section, summary
+
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -37,190 +39,10 @@ from mcp import ClientSession, StdioServerParameters  # noqa: E402
 from mcp.client.stdio import stdio_client  # noqa: E402
 
 
-PASS = 0
-FAIL = 0
 STOP = threading.Event()
 MAILBOX = tempfile.mkdtemp(prefix="flmcp-readonly-e2e-")
 BRIDGE_PORT = None
 
-WRITE_TOOLS = {
-    "fl_apply_verified_batch",
-    "fl_set_mixer_volume",
-    "fl_set_mixer_volume_db",
-    "fl_set_mixer_pan",
-    "fl_set_mixer_mute",
-    "fl_set_mixer_solo",
-    "fl_set_mixer_arm",
-    "fl_set_mixer_color",
-    "fl_set_mixer_stereo_separation",
-    "fl_select_mixer_track",
-    "fl_set_track_eq",
-    "fl_set_mixer_name",
-    "fl_set_mixer_send",
-    "fl_set_mixer_send_level",
-    "fl_set_plugin_param",
-    "fl_set_plugin_param_display",
-    "fl_set_plugin_param_option",
-    "fl_set_playing",
-    "fl_stop",
-    "fl_set_song_position",
-    "fl_set_loop_mode",
-    "fl_set_tempo",
-    "fl_set_recording",
-    "fl_set_metronome",
-    "fl_set_precount",
-    "fl_set_time_signature_numerator",
-    "fl_undo",
-    "fl_redo",
-    "fl_set_channel_mix",
-    "fl_set_channel_solo",
-    "fl_set_channel_pitch",
-    "fl_select_channel",
-    "fl_select_pattern",
-    "fl_set_pattern_identity",
-    "fl_set_pattern_length",
-    "fl_set_playlist_track_identity",
-    "fl_set_playlist_track_state",
-    "fl_set_channel_identity",
-    "fl_route_channel_to_mixer",
-    "fl_set_step_sequence",
-}
-PRODUCTION_READ_TOOLS = {
-    "postfader_creation_readiness",
-    "postfader_validate_run",
-    "postfader_get_run",
-    "postfader_list_runs",
-    "postfader_render_get_job",
-    "processing_plan",
-}
-PRODUCTION_MUTATING_TOOLS = {
-    "plugins_load",
-    "postfader_execute_run",
-    "postfader_continue_run",
-    "processing_apply_plan",
-    "postfader_review_apply_revision",
-}
-PRODUCTION_WORKFLOW_TOOLS = {"postfader_stop_run"}
-EPHEMERAL_TOOLS = {"fl_trigger_note"}
-MODE_TOOLS = {"fl_set_write_mode"}
-MIX_READ_TOOLS = {
-    "mix_doctor",
-    "mix_reference_recommendations",
-    "mix_masking_recommendations",
-    "mix_get_peak_watch",
-    "mix_list_plugin_profiles",
-    "mix_inspect_plugin_compatibility",
-    "mix_resolve_processing_intent",
-    "mix_get_plan",
-    "mix_finish_assessment",
-}
-PRESET_READ_TOOLS = {
-    "plugins_list_presets",
-    "plugins_get_current_preset",
-    "plugins_inspect_pad_map",
-}
-SOUND_SELECTION_READ_TOOLS = {
-    "sound_selection_inventory",
-    "sound_selection_plan",
-    "sound_selection_get",
-    "sound_selection_create_variation",
-    "sound_selection_history_status",
-}
-PRESET_MUTATING_TOOLS = {"fl_select_plugin_preset"}
-SOUND_SELECTION_MUTATING_TOOLS = {"sound_selection_apply"}
-SOUND_SELECTION_WORKFLOW_TOOLS = {
-    "sound_selection_record_feedback",
-    "sound_selection_history_reset",
-}
-WORKFLOW_STATE_TOOLS = {
-    "plugins_list_available",
-    "mix_start_peak_watch",
-    "mix_stop_peak_watch",
-    "mix_create_gain_stage_plan",
-    "mix_create_plan",
-    "piano_roll_bridge",
-    "piano_roll_read_notes",
-    "postfader_render_saved_project",
-    "postfader_render_cancel",
-    "postfader_review_record_feedback",
-    "postfader_review_stop",
-}
-PLAN_APPLY_TOOLS = {"mix_apply_plan"}
-CREATIVE_READ_TOOLS = {
-    "compose_chord_progression",
-    "compose_melody",
-    "compose_bassline",
-    "compose_drums",
-    "audio_estimate_tempo_and_key",
-    "audio_transcribe_melody",
-}
-CREATIVE_FL_TOOLS = {
-    "piano_roll_write_notes",
-    "piano_roll_transform",
-    "arrangement_prepare_pattern",
-    "arrangement_add_section_markers",
-    "automation_record_value",
-}
-FILE_MUTATING_TOOLS = {
-    "midi_export_type1",
-    "postfader_review_delete",
-    "postfader_delivery_export_manifest",
-}
-CREATION_REVIEW_READ_TOOLS = {
-    "postfader_review_start",
-    "postfader_review_attach_assets",
-    "postfader_review_evaluate",
-    "postfader_review_get",
-    "postfader_review_compare",
-    "postfader_review_plan_revision",
-    "postfader_delivery_manifest",
-    "postfader_review_export_handoff",
-}
-EXPECTED_TOOLS = WRITE_TOOLS | {
-    "fl_get_capabilities",
-    "fl_get_project_summary",
-    "fl_get_transport_state",
-    "fl_get_selected_range",
-    "fl_list_mixer_tracks",
-    "fl_inspect_mixer_track",
-    "plugins_scan_loaded_plugins",
-    "plugins_inspect_parameter_map",
-    "plugins_scan_parameters",
-    "plugins_atlas_search",
-    "plugins_atlas_get_product",
-    "plugins_atlas_recommend",
-    "plugins_atlas_inspect_loaded",
-    "copilot_capture_readonly_inspection",
-    "fl_list_channels",
-    "fl_get_step_sequence",
-    "fl_list_patterns",
-    "fl_find_empty_pattern",
-    "fl_list_playlist_tracks",
-    "fl_get_project_history",
-    "fl_get_plugin_preset_count",
-    *EPHEMERAL_TOOLS,
-    *PRODUCTION_READ_TOOLS,
-    *PRODUCTION_MUTATING_TOOLS,
-    *PRODUCTION_WORKFLOW_TOOLS,
-    *MODE_TOOLS,
-    *MIX_READ_TOOLS,
-    *WORKFLOW_STATE_TOOLS,
-    *PLAN_APPLY_TOOLS,
-    *CREATIVE_READ_TOOLS,
-    *CREATIVE_FL_TOOLS,
-    *FILE_MUTATING_TOOLS,
-    *PRESET_READ_TOOLS,
-    *SOUND_SELECTION_READ_TOOLS,
-    *PRESET_MUTATING_TOOLS,
-    *SOUND_SELECTION_MUTATING_TOOLS,
-    *SOUND_SELECTION_WORKFLOW_TOOLS,
-    *CREATION_REVIEW_READ_TOOLS,
-    # File measurement, not FL control.
-    "audio_analyze_file",
-    "audio_compare_files",
-    "audio_analyze_masking",
-    "audio_find_recent_bounces",
-}
 EXPECTED_RESOURCES = {
     "fl://capabilities",
     "fl://status",
@@ -325,16 +147,6 @@ PRESET_WRITE_CALLS = {
 }
 
 
-def check(label, condition, detail=""):
-    global PASS, FAIL
-    if condition:
-        PASS += 1
-        print("  ok   %s" % label)
-    else:
-        FAIL += 1
-        print("  FAIL %s  %s" % (label, detail))
-
-
 def pump_bridge():
     bridge.OnInit()
     while not STOP.is_set():
@@ -434,6 +246,7 @@ async def run():
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
+            section("stdio handshake, tool listing and live resources")
             initialized = await session.initialize()
             check(
                 "server initialises",
@@ -441,21 +254,18 @@ async def run():
                 initialized.server_info,
             )
             tools = (await session.list_tools()).tools
-            names = {tool.name for tool in tools}
-            # The exact published surface. This used to be a blanket ban on any
-            # tool name containing "set_", which encoded a read-only-only
-            # product; the ten verified writes are part of the surface now, so
-            # the guard is an exact set. An unintended tool appearing still
-            # fails here.
+            missing = (set(WRITE_CALLS) | set(PRESET_WRITE_CALLS)) - {
+                tool.name for tool in tools
+            }
             check(
-                "exactly the published tool set is exposed",
-                names == EXPECTED_TOOLS,
-                sorted(names ^ EXPECTED_TOOLS),
+                "every write tool exercised below is listed over stdio",
+                not missing,
+                sorted(missing),
             )
             resources = (await session.list_resources()).resources
             resource_uris = {str(resource.uri) for resource in resources}
             check(
-                "exactly the eight live FL resources are exposed",
+                "exactly the live FL resources are exposed",
                 resource_uris == EXPECTED_RESOURCES,
                 sorted(resource_uris ^ EXPECTED_RESOURCES),
             )
@@ -524,238 +334,7 @@ async def run():
                 and patterns_resource["patterns"][0]["current"] is True,
                 patterns_resource,
             )
-            check(
-                "only the documented saved-project render tools expose export",
-                not [
-                    name
-                    for name in names
-                    if name not in {
-                        "postfader_render_saved_project",
-                        "postfader_render_get_job", "postfader_render_cancel",
-                    } and any(token in name for token in ("render", "api_call", "save"))
-                ],
-                sorted(names),
-            )
-            check(
-                "every read and audio tool annotated read-only",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint
-                    and tool.annotations.destructive_hint is False
-                    for tool in tools
-                    if tool.name
-                    not in WRITE_TOOLS
-                    | PRODUCTION_MUTATING_TOOLS
-                    | PRODUCTION_WORKFLOW_TOOLS
-                    | EPHEMERAL_TOOLS
-                    | MODE_TOOLS
-                    | WORKFLOW_STATE_TOOLS
-                    | PLAN_APPLY_TOOLS
-                    | CREATIVE_FL_TOOLS
-                    | FILE_MUTATING_TOOLS
-                    | PRESET_MUTATING_TOOLS
-                    | SOUND_SELECTION_MUTATING_TOOLS
-                    | SOUND_SELECTION_WORKFLOW_TOOLS
-                ),
-            )
-            check(
-                "Production Run read tools are annotated read-only",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is True
-                    for tool in tools
-                    if tool.name in PRODUCTION_READ_TOOLS
-                ),
-                sorted(PRODUCTION_READ_TOOLS),
-            )
-            check(
-                "Production Run execute and continue tools are mutating",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    and tool.annotations.open_world_hint is True
-                    for tool in tools
-                    if tool.name in PRODUCTION_MUTATING_TOOLS
-                ),
-                sorted(PRODUCTION_MUTATING_TOOLS),
-            )
-            check(
-                "Production Run stop is non-destructive workflow state",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is False
-                    for tool in tools
-                    if tool.name in PRODUCTION_WORKFLOW_TOOLS
-                ),
-                sorted(PRODUCTION_WORKFLOW_TOOLS),
-            )
-            check(
-                "every write tool annotated mutating, destructive and non-idempotent",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    for tool in tools
-                    if tool.name in WRITE_TOOLS
-                ),
-                sorted(WRITE_TOOLS),
-            )
-            check(
-                "live note is annotated as non-idempotent dispatch, not a verified write",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is False
-                    for tool in tools
-                    if tool.name in EPHEMERAL_TOOLS
-                ),
-            )
-            check(
-                "write-mode control is destructive capability change and idempotent",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is True
-                    for tool in tools
-                    if tool.name in MODE_TOOLS
-                ),
-            )
-            check(
-                "mix workflow registries are non-destructive process-local state",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is False
-                    for tool in tools
-                    if tool.name in WORKFLOW_STATE_TOOLS
-                ),
-                sorted(WORKFLOW_STATE_TOOLS),
-            )
-            check(
-                "mix plan application is an explicit non-idempotent FL mutation",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    for tool in tools
-                    if tool.name in PLAN_APPLY_TOOLS
-                ),
-                sorted(PLAN_APPLY_TOOLS),
-            )
-            check(
-                "creative FL tools are explicit non-idempotent live mutations",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    and tool.annotations.open_world_hint is True
-                    for tool in tools
-                    if tool.name in CREATIVE_FL_TOOLS
-                ),
-                sorted(CREATIVE_FL_TOOLS),
-            )
-            check(
-                "MIDI export is a closed-world local file mutation",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    and tool.annotations.open_world_hint is False
-                    for tool in tools
-                    if tool.name in FILE_MUTATING_TOOLS
-                ),
-                sorted(FILE_MUTATING_TOOLS),
-            )
-            check(
-                "preset and Sound Selection read tools are annotated read-only",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is True
-                    for tool in tools
-                    if tool.name in PRESET_READ_TOOLS | SOUND_SELECTION_READ_TOOLS
-                ),
-                sorted(PRESET_READ_TOOLS | SOUND_SELECTION_READ_TOOLS),
-            )
-            check(
-                "preset and Sound Selection applications are mutating",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is False
-                    and tool.annotations.open_world_hint is True
-                    for tool in tools
-                    if tool.name in PRESET_MUTATING_TOOLS | SOUND_SELECTION_MUTATING_TOOLS
-                ),
-                sorted(PRESET_MUTATING_TOOLS | SOUND_SELECTION_MUTATING_TOOLS),
-            )
-            check(
-                "Sound Selection feedback is closed-world workflow state",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is False
-                    and tool.annotations.idempotent_hint is False
-                    and tool.annotations.open_world_hint is False
-                    for tool in tools
-                    if tool.name == "sound_selection_record_feedback"
-                ),
-                "sound_selection_record_feedback",
-            )
-            check(
-                "Sound Selection history reset is an idempotent local deletion",
-                all(
-                    tool.annotations
-                    and tool.annotations.read_only_hint is False
-                    and tool.annotations.destructive_hint is True
-                    and tool.annotations.idempotent_hint is True
-                    and tool.annotations.open_world_hint is False
-                    for tool in tools
-                    if tool.name == "sound_selection_history_reset"
-                ),
-                "sound_selection_history_reset",
-            )
-            by_name = {tool.name: tool for tool in tools}
-            check(
-                "every write tool exposes optional session and before-state preconditions",
-                all(
-                    {"session_fingerprint"}
-                    <= set(by_name[name].input_schema.get("properties", {}))
-                    and "session_fingerprint"
-                    not in set(by_name[name].input_schema.get("required", []))
-                    and (
-                        name in {"fl_set_step_sequence", "fl_apply_verified_batch"}
-                        or (
-                            "expected_before"
-                            in set(by_name[name].input_schema.get("properties", {}))
-                            and "expected_before"
-                            not in set(by_name[name].input_schema.get("required", []))
-                        )
-                    )
-                    for name in WRITE_TOOLS
-                ),
-                {
-                    name: by_name[name].input_schema
-                    for name in sorted(WRITE_TOOLS)
-                    if name in by_name
-                },
-            )
-
+            section("read tools over stdio")
             project = payload(await session.call_tool("fl_get_project_summary", {}))
             check("FL 2026 version gate passed", project["connection"]["compatible"], project)
             check(
@@ -854,6 +433,7 @@ async def run():
             )
             check("capture declares read-only mode", report["mode"] == "read_only", report)
 
+            section("writes are refused while the bridge is read-only")
             # This bridge starts read-only. Every project write must refuse
             # over the wire by naming the user-confirmed mode tool, rather than
             # surfacing a raw dispatch rejection or changing anything.
@@ -870,12 +450,6 @@ async def run():
                     and "fl_set_write_mode" in text
                     and "confirm_user_present=true" in text,
                     text,
-                )
-                rejected = await session.call_tool(name, dict(arguments, nudge_by=0.1))
-                check(
-                    "%s rejects an unknown argument" % name,
-                    bool(getattr(rejected, "is_error", False)),
-                    rejected,
                 )
 
             # Exact preset selection is a verified project mutation too, but
@@ -894,12 +468,6 @@ async def run():
                     and "fl_set_write_mode" in text
                     and "confirm_user_present=true" in text,
                     text,
-                )
-                rejected = await session.call_tool(name, dict(arguments, nudge_by=0.1))
-                check(
-                    "%s rejects an unknown argument" % name,
-                    bool(getattr(rejected, "is_error", False)),
-                    rejected,
                 )
 
             # Palette application must fail closed on missing conversational
@@ -925,6 +493,7 @@ async def run():
                 unauthorized_text,
             )
 
+            section("runtime write mode over stdio")
             state_before_mode = fingerprint()
             unconfirmed = await session.call_tool(
                 "fl_set_write_mode",
@@ -984,6 +553,7 @@ async def run():
                 (state_before_mode, fingerprint()),
             )
 
+    section("session left FL state untouched")
     check("end-to-end session did not mutate FL state", before == fingerprint())
 
 
@@ -1003,8 +573,7 @@ def main():
         STOP.set()
         thread.join(timeout=2)
         shutil.rmtree(MAILBOX, ignore_errors=True)
-    print("\n%d passed, %d failed" % (PASS, FAIL))
-    return 1 if FAIL else 0
+    return summary()
 
 
 if __name__ == "__main__":

@@ -1,15 +1,16 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "10.0.1"
-description = "AI copilot for FL Studio project control, mix analysis, plug-ins, composition, and arrangement"
+version = "11.0.0"
+description = "FL Studio MCP server: let Claude, Codex, Cursor, or any MCP client read, mix, compose, and edit your open FL Studio project"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.10,<3.15"
-keywords = ["fl-studio", "mcp", "model-context-protocol", "midi", "music-production", "mixing", "composition"]
+keywords = ["fl-studio", "fl-studio-mcp", "flstudio", "mcp", "mcp-server", "model-context-protocol", "claude", "codex", "cursor", "ai", "daw", "midi", "music-production", "mixing", "composition", "audio-analysis"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
     "Operating System :: MacOS :: MacOS X",
@@ -21,6 +22,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Sound/Audio",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Multimedia :: Sound/Audio :: MIDI",
+    "Topic :: Multimedia :: Sound/Audio :: Mixers",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
     "anyio>=4.5,<5",
@@ -62,7 +67,8 @@ dev = [
 Homepage = "https://github.com/synopsys0/postfader-fl-studio-mcp"
 Repository = "https://github.com/synopsys0/postfader-fl-studio-mcp"
 Issues = "https://github.com/synopsys0/postfader-fl-studio-mcp/issues"
-Documentation = "https://github.com/synopsys0/postfader-fl-studio-mcp#readme"
+Documentation = "https://github.com/synopsys0/postfader-fl-studio-mcp/tree/main/docs"
+"Release notes" = "https://github.com/synopsys0/postfader-fl-studio-mcp/releases"
 
 [build-system]
 # 77 is the first release to understand PEP 639 `license`/`license-files`.

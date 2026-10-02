@@ -284,7 +284,8 @@ current project. On macOS, `plugins_list_available` reads the native Add menu
 and `plugins_load` adds one exact named instrument or an effect on a specified
 mixer track. The agent can load a missing choice, then refresh Sound Selection
 inventory and plan against its verified channel/slot. These host tools require
-macOS Accessibility access and currently support the English Add-menu structure.
+macOS Accessibility access and currently support the English Add-menu structure;
+loading also needs session write mode, like any other change.
 Windows loading, removal, replacement and reordering remain unimplemented.
 
 PostFader cannot hear FL Studio's live output or save the project. The separate

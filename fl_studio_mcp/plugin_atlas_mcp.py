@@ -59,24 +59,24 @@ MAX_ATLAS_RUNTIME_MATCHES = 128
 class AtlasSearchRequest(AtlasModel):
     """Bounded filters for a local, deterministic product search."""
 
-    query: str = Field(default="", max_length=MAX_ATLAS_QUERY_LENGTH)
-    vendor_id: AtlasId | None = None
-    origin: ProductOrigin | None = None
+    query: str = Field(default="", max_length=MAX_ATLAS_QUERY_LENGTH, description="Catalog search text; an empty string lists products subject to the filters and limit.", examples=["reverb"])
+    vendor_id: AtlasId | None = Field(default=None, description="Exact catalog vendor ID; omit to search all vendors.")
+    origin: ProductOrigin | None = Field(default=None, description="Restrict to stock, third-party, or unknown product origin; omit for all origins.")
     # Atlas product kinds are intentionally open to the catalog's
     # ``plugin_kinds`` values (for example ``synthesizer``) in addition to the
     # coarse ProductKind enum.  It is still a strict bounded string.
-    kind: ShortText | None = None
-    technique_id: AtlasId | None = None
-    stock_only: bool = False
-    limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RESULTS)
+    kind: ShortText | None = Field(default=None, description="Catalog product kind, including specific kinds such as synthesizer; omit for all kinds.")
+    technique_id: AtlasId | None = Field(default=None, description="Exact catalog technique ID used to narrow products; omit when unknown.")
+    stock_only: bool = Field(default=False, description="Return only FL Studio stock products when true; catalog inclusion does not establish licensing.")
+    limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RESULTS, description="Maximum number of ranked search hits to return, from 1 to 128.")
 
 
 class AtlasSearchHit(AtlasModel):
     """One deterministic Atlas search result and its match explanation."""
 
     product: ProductKnowledge
-    score: float = Field(ge=0.0, le=1.0)
-    matched_fields: tuple[ShortText, ...] = Field(default=(), max_length=32)
+    score: float = Field(ge=0.0, le=1.0, description="Deterministic text/filter relevance from 0 to 1, not a probability of installed availability.")
+    matched_fields: tuple[ShortText, ...] = Field(default=(), max_length=32, description="Catalog fields explaining why this product matched the search.")
 
 
 class AtlasSearchResponse(AtlasModel):
@@ -84,7 +84,7 @@ class AtlasSearchResponse(AtlasModel):
 
     schema_version: Literal["1.0"] = "1.0"
     query: str = Field(max_length=MAX_ATLAS_QUERY_LENGTH)
-    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 identity of the bundled catalog used for this response, not of the live project.")
     results: tuple[AtlasSearchHit, ...] = Field(
         default=(), max_length=MAX_ATLAS_RESULTS
     )
@@ -93,7 +93,7 @@ class AtlasSearchResponse(AtlasModel):
 class AtlasGetProductRequest(AtlasModel):
     """Exact product identifier lookup request."""
 
-    product_id: AtlasId
+    product_id: AtlasId = Field(description="Exact product_id returned by Atlas search or recommendations; not a plugin display name.")
 
 
 AtlasEvidence = EvidenceReference | CompatibilityEvidence | WriteValidationEvidence
@@ -103,13 +103,13 @@ class AtlasProductResponse(AtlasModel):
     """Static product knowledge and related descriptive Atlas records."""
 
     schema_version: Literal["1.0"] = "1.0"
-    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 identity of the bundled catalog used for this response.")
     product: ProductKnowledge
     vendor: VendorKnowledge | None = None
-    adapters: tuple[ControlAdapter, ...] = Field(default=(), max_length=4096)
-    evidence: tuple[AtlasEvidence, ...] = Field(default=(), max_length=8192)
+    adapters: tuple[ControlAdapter, ...] = Field(default=(), max_length=4096, description="Descriptive catalog control mappings; these do not prove that a currently loaded instance exposes writable controls.")
+    evidence: tuple[AtlasEvidence, ...] = Field(default=(), max_length=8192, description="Catalog source references and compatibility or write-validation records; inspect each record's scope and provenance before generalizing it to a live target.")
     stock_alternatives: tuple[ProductKnowledge, ...] = Field(
-        default=(), max_length=256
+        default=(), max_length=256, description="Catalog FL Studio stock alternatives; this is not a claim of ownership or installation."
     )
 
 
@@ -121,22 +121,22 @@ class AtlasRecommendRequest(AtlasModel):
     product-specific MCP tool for each Atlas record.
     """
 
-    query: str = Field(default="", max_length=MAX_ATLAS_QUERY_LENGTH)
-    problems: tuple[ShortText, ...] = Field(default=(), max_length=256)
-    techniques: tuple[AtlasId, ...] = Field(default=(), max_length=256)
-    sources: tuple[ShortText, ...] = Field(default=(), max_length=256)
-    kind: ProductKind | None = None
-    prefer_stock: bool = False
-    limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RESULTS)
-    product_id: AtlasId | None = None
-    stock_alternatives: bool = False
+    query: str = Field(default="", max_length=MAX_ATLAS_QUERY_LENGTH, description="Production goal in plain language; used in normal recommendation mode.", examples=["reduce harshness in a vocal"])
+    problems: tuple[ShortText, ...] = Field(default=(), max_length=256, description="Problems to address, such as harshness; omit when the query is sufficient.")
+    techniques: tuple[AtlasId, ...] = Field(default=(), max_length=256, description="Catalog technique IDs to favor in normal recommendation mode.")
+    sources: tuple[ShortText, ...] = Field(default=(), max_length=256, description="Audio-source descriptions to match, such as vocal or drums; not file paths.")
+    kind: ProductKind | None = Field(default=None, description="Optional coarse product-kind filter for normal recommendation mode.")
+    prefer_stock: bool = Field(default=False, description="Favor FL Studio stock products in normal recommendation mode without asserting licensing.")
+    limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RESULTS, description="Maximum number of recommendations to return, from 1 to 128.")
+    product_id: AtlasId | None = Field(default=None, description="Known catalog product ID for stock-alternative mode; requires stock_alternatives=True.")
+    stock_alternatives: bool = Field(default=False, description="Select stock alternatives for product_id. Requires product_id and uses that product and limit instead of normal recommendation criteria.")
 
 
 class AtlasRecommendationResponse(AtlasModel):
     """Typed, availability-honest recommendation response."""
 
     schema_version: Literal["1.0"] = "1.0"
-    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 identity of the bundled catalog used for the static recommendations.")
     recommendations: tuple[ProductRecommendation, ...] = Field(
         default=(), max_length=MAX_ATLAS_RESULTS
     )
@@ -145,9 +145,9 @@ class AtlasRecommendationResponse(AtlasModel):
 class AtlasInspectLoadedRequest(AtlasModel):
     """Bounded live-inventory matching options."""
 
-    only_used: bool = False
-    match_limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RUNTIME_MATCHES)
-    include_weak: bool = False
+    only_used: bool = Field(default=False, description="Apply the conservative used-track heuristic to mixer tracks; this does not restrict Channel Rack generator inventory.")
+    match_limit: int = Field(default=16, ge=1, le=MAX_ATLAS_RUNTIME_MATCHES, description="Maximum catalog candidates per loaded plugin, from 1 to 128; not a limit on live targets.")
+    include_weak: bool = Field(default=False, description="Include weak name matches for inspection; false filters them out. Neither setting proves identity or writable controls.")
 
 
 class AtlasLoadedPluginRecord(AtlasModel):
@@ -156,26 +156,26 @@ class AtlasLoadedPluginRecord(AtlasModel):
     # Keep ``target`` at this top level as well as inside ``plugin``.  The
     # Track B target is the identity boundary: a mixer slot and a global
     # Channel Rack generator with the same display name are different rows.
-    target: PluginTarget
-    plugin: TargetedPluginSummary
-    runtime: RuntimePluginInstance
+    target: PluginTarget = Field(description="Observed mixer effect or global Channel Rack generator address; do not identify a live target by its display name alone.")
+    plugin: TargetedPluginSummary = Field(description="Live bridge summary and target fingerprint for this loaded instance.")
+    runtime: RuntimePluginInstance = Field(description="Observation-scoped matcher input built from the live summary; loaded availability is known, ownership and installation elsewhere are not.")
     matches: tuple[RuntimeMatch, ...] = Field(
-        default=(), max_length=MAX_ATLAS_RUNTIME_MATCHES
+        default=(), max_length=MAX_ATLAS_RUNTIME_MATCHES, description="Ranked catalog candidates. This inventory supplies names, not parameter-control proof."
     )
-    best_match: RuntimeMatch | None = None
-    compatibility: CompatibilityJoin | None = None
+    best_match: RuntimeMatch | None = Field(default=None, description="Highest-ranked candidate, or null when nothing matched; a best match is still not verified product identity.")
+    compatibility: CompatibilityJoin | None = Field(default=None, description="Catalog compatibility evidence joined to the best candidate, or null; inspect evidence level and scope before relying on controls.")
 
 
 class AtlasInspectLoadedResponse(AtlasModel):
     """Typed result of matching the current Track B loaded inventory."""
 
     schema_version: Literal["1.0"] = "1.0"
-    observed_at: datetime
-    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    observed_at: datetime = Field(description="Timestamp of the live inventory observation; a later project change can invalidate its targets.")
+    registry_digest: str = Field(pattern=r"^[0-9a-f]{64}$", description="SHA-256 identity of the bundled catalog used to match the live inventory.")
     plugins: tuple[AtlasLoadedPluginRecord, ...] = Field(
-        default=(), max_length=4096
+        default=(), max_length=4096, description="One record per observed loaded target, including targets without a catalog match."
     )
-    warnings: tuple[ShortText, ...] = Field(default=(), max_length=256)
+    warnings: tuple[ShortText, ...] = Field(default=(), max_length=256, description="Inventory and evidence limitations to retain when reporting matches; do not interpret warnings as verified control support.")
 
 
 _PLUGIN_TARGET_ADAPTER = TypeAdapter(PluginTarget)

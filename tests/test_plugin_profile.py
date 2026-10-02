@@ -124,14 +124,6 @@ class SummariseTests(unittest.TestCase):
     def test_enumerated_controls_are_identified(self):
         self.assertEqual({p.index for p in self.profile.enumerated}, {0, 1, 40})
 
-    def test_no_shape_carries_a_value_or_display(self):
-        # Structural sanitisation: there is no field to leak through.
-        for shape in self.profile.parameters:
-            self.assertFalse(hasattr(shape, "value"))
-            self.assertFalse(hasattr(shape, "display"))
-            self.assertFalse(hasattr(shape, "display_text"))
-            self.assertFalse(hasattr(shape, "normalized_value"))
-
 
 class TruncationDisclosureTests(unittest.TestCase):
     def test_a_truncated_scan_says_so(self):

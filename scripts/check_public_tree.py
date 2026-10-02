@@ -155,12 +155,14 @@ FORBIDDEN_EXACT_PATHS = {
 PUBLIC_DOCUMENT_PATHS = {
     "docs/architecture.md",
     "docs/code-quality.md",
+    "docs/comparison.md",
     "docs/creation-pipeline.md",
     "docs/creation-review.md",
     "docs/discussions.md",
     "docs/distribution.md",
     "docs/early-access-testing.md",
     "docs/external-review-scope.md",
+    "docs/faq.md",
     "docs/fl-constraints.md",
     "docs/future-security-hardening-options.md",
     "docs/maintainability-plan.md",
@@ -168,15 +170,17 @@ PUBLIC_DOCUMENT_PATHS = {
     "docs/plugin-atlas.md",
     "docs/plugin-support.md",
     "docs/production-runs.md",
+    "docs/readme.md",  # docs/README.md; paths are compared case-folded
     "docs/releases/v0.20.0.md",
     "docs/releases/dev-v10.md",
     "docs/releases/v10.0.0.md",
-    "docs/releases/v10.0.1.md",
+    "docs/releases/v11.0.0.md",
     "docs/setup.md",
     "docs/sound-selection.md",
     "docs/supply-chain.md",
     "docs/tool-contracts.md",
     "docs/tool-surface-evaluation.md",
+    "docs/tools.md",
     "docs/website-copy.md",
 }
 # This reviewed public document intentionally contains "plan" in its

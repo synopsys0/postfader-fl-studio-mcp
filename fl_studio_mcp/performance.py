@@ -36,7 +36,6 @@ from .track_b_contracts import (
     MAX_PRESET_SETTLE_TICKS,
     MAX_STEP_COUNT,
     MAX_VERIFIED_STEP_COUNT,
-    PLAYBACK_SPEED_OMISSION_REASON,
     ChannelGeneratorIdentity,
     ChannelIdentitySnapshot,
     ChannelList,
@@ -186,41 +185,6 @@ TRACK_B_MUTATION_COMMANDS = frozenset(
         "channel.trigger_note",
     }
 )
-TRACK_B_MCP_TOOL_NAMES = frozenset(
-    {
-        "fl_set_playing",
-        "fl_stop",
-        "fl_set_song_position",
-        "fl_set_loop_mode",
-        "fl_set_tempo",
-        "fl_set_recording",
-        "fl_set_metronome",
-        "fl_set_precount",
-        "fl_set_time_signature_numerator",
-        "fl_get_project_history",
-        "fl_undo",
-        "fl_redo",
-        "fl_get_plugin_preset_count",
-        "fl_list_channels",
-        "fl_set_channel_mix",
-        "fl_set_channel_solo",
-        "fl_set_channel_pitch",
-        "fl_select_channel",
-        "fl_set_channel_identity",
-        "fl_route_channel_to_mixer",
-        "fl_get_step_sequence",
-        "fl_set_step_sequence",
-        "fl_trigger_note",
-        "fl_list_patterns",
-        "fl_find_empty_pattern",
-        "fl_select_pattern",
-        "fl_set_pattern_identity",
-        "fl_set_pattern_length",
-        "fl_list_playlist_tracks",
-        "fl_set_playlist_track_identity",
-        "fl_set_playlist_track_state",
-    }
-)
 TRACK_B_PRESET_READ_COMMANDS = frozenset(
     {
         "plugin.presets",
@@ -232,16 +196,6 @@ TRACK_B_PRESET_MUTATION_COMMANDS = frozenset(
     {
         "plugin.select_preset",
         "channels.rerollLoopStarterLoop",
-    }
-)
-TARGET_AWARE_EXISTING_PLUGIN_TOOLS = frozenset(
-    {
-        "plugins_inspect_parameter_map",
-        "plugins_scan_parameters",
-        "plugins_scan_loaded_plugins",
-        "fl_set_plugin_param",
-        "fl_set_plugin_param_display",
-        "fl_set_plugin_param_option",
     }
 )
 
@@ -3987,14 +3941,11 @@ __all__ = [
     "MixerEffectTarget",
     "NormalizedPluginTarget",
     "PluginTarget",
-    "PLAYBACK_SPEED_OMISSION_REASON",
     "TEMPO_READBACK_TOLERANCE",
     "TRACK_B_MUTATION_COMMANDS",
-    "TRACK_B_MCP_TOOL_NAMES",
     "TRACK_B_PRESET_READ_COMMANDS",
     "TRACK_B_PRESET_MUTATION_COMMANDS",
     "TRACK_B_READ_COMMANDS",
-    "TARGET_AWARE_EXISTING_PLUGIN_TOOLS",
     "TrackBBoundaryViolation",
     "TrackBController",
     "TrackBInspector",

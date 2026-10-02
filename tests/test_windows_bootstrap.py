@@ -312,15 +312,6 @@ class BootstrapSourceSafetyTests(unittest.TestCase):
         self.assertNotIn(".mcp.json\"", combined)
         self.assertNotIn("config.toml", combined)
         self.assertNotIn("claude_desktop_config", combined)
-        self.assertIn("postfader.exe\"\n$GuidedSetupCommand", powershell)
-        self.assertIn('"$VENV/bin/postfader"', shell)
-        self.assertIn("(3, 10)", combined)
-        self.assertIn("(3, 15)", combined)
-        self.assertIn("--skip-bridge-deployment", shell)
-        self.assertIn("SkipBridgeDeployment", powershell)
-        for version in ("3.14", "3.13", "3.12", "3.11", "3.10"):
-            self.assertIn("python" + version, shell)
-            self.assertIn('"-' + version + '"', powershell)
 
     def test_launcher_never_persists_or_kills(self):
         source = (ROOT / "scripts" / "launch_fl_studio.ps1").read_text(

@@ -81,18 +81,21 @@ continuation; completed receipts are never rewritten.
 
 The normal high-level flow is:
 
-1. `postfader_validate_run` checks the request and plan without enabling
+1. `postfader_describe_operations` returns the exact fields of the operations
+   the AI plans to use. The plan schemas in the tool listing name operations
+   but don't spell out each one's fields, which keeps the listing small.
+2. `postfader_validate_run` checks the request and plan without enabling
    writes or mutating FL Studio. It returns the plan digest, resolved order,
    required capabilities, expected mutation categories, and known blockers.
-2. `postfader_execute_run` accepts the request and plan, validates them again,
+3. `postfader_execute_run` accepts the request and plan, validates them again,
    captures the current session fingerprint, enables the existing session write
    gate once when authorized, and executes the bounded plan.
-3. `postfader_get_run` returns current or journaled state and a concise
+4. `postfader_get_run` returns current or journaled state and a concise
    summary. `postfader_list_runs` finds recent run IDs after an MCP restart.
-4. `postfader_continue_run` accepts additional operations, a plan delta, or a
+5. `postfader_continue_run` accepts additional operations, a plan delta, or a
    replacement for the not-yet-executed remainder. Completed receipts cannot
    be rewritten. Use `delta={"mode":"resume"}` to continue the saved plan.
-5. `postfader_stop_run` prevents future operations. It does not undo changes
+6. `postfader_stop_run` prevents future operations. It does not undo changes
    that already completed.
 
 Use lower-level tools for a precise one-off change. Use a Production Run when

@@ -8,12 +8,10 @@ only production data read here is the checked-in catalog oracle.
 
 from __future__ import annotations
 
-import hashlib
 import io
 import json
 import tempfile
 import unittest
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -27,7 +25,6 @@ from fl_studio_mcp.plugin_atlas import (
     AtlasRegistry,
     AtlasValidationError,
     AvailabilityObservation,
-    CatalogProductRow,
     CompatibilityJoin,
     LoaderLimits,
     ProductKnowledge,
@@ -47,7 +44,6 @@ from fl_studio_mcp.plugin_atlas import (
 )
 from fl_studio_mcp.plugin_atlas.cli import run as run_atlas_cli
 from fl_studio_mcp.plugin_atlas.compatibility import join_compatibility
-from fl_studio_mcp.plugin_atlas.loader import catalog_snapshot_digest
 from fl_studio_mcp.plugin_atlas_mcp import (
     AtlasInspectLoadedRequest,
     inspect_loaded_atlas,
@@ -63,40 +59,6 @@ ROOT = Path(__file__).resolve().parents[1]
 ATLAS_DATA = ROOT / "fl_studio_mcp" / "plugin_atlas_data"
 CURRENT_MATRIX_PATH = ATLAS_DATA / "manifests" / "image-line-current-matrix.json"
 
-# These are independent, reviewed digests of the two catalog artifacts.  The
-# line digest is the canonical category<TAB>edition<TAB>name oracle; the JSON
-# digest pins the exact compact row objects and their order.
-CURRENT_MATRIX_LINE_DIGEST = (
-    "42dbec71f6da690a13127d8062033b0d374c6302d77cdcd08465ada997d0cb4c"
-)
-CURRENT_MATRIX_JSON_DIGEST = (
-    "a579f17e4ab6168f71ea0007b84c9e06672204d30c9df02d9f810477c56537b6"
-)
-AUXILIARY_PLUGIN_DIGEST = (
-    "b3be8e0de7bb9f16f76dd0d9d3ee6f8c7356e4292e466635e66bcec6526a82f9"
-)
-LEGACY_NAME_DIGEST = (
-    "859afe276a49ef3c94d20834b6c2c2c65fd557421b18b46fab2e3cdb4bdb01b2"
-)
-AUXILIARY_PLUGIN_ROWS = (
-    ("FL Studio Mobile Rack + FX", "mobile_container", "fruity"),
-    ("Fruity Envelope Controller", "internal_controller", "fruity"),
-    ("Fruity Keyboard Controller", "internal_controller", "fruity"),
-    ("Fruity Voltage Controller", "cv_controller", "fruity"),
-    ("MIDI Out", "midi_controller", "fruity"),
-)
-LEGACY_NAMES = (
-    "Buzz Effect Adapter",
-    "Buzz Generator Adapter",
-    "Dashboard",
-    "FL Slayer",
-    "Fruity Reeverb",
-    "Fruity Vibrator",
-    "ReWired",
-    "SynthMaker",
-    "Wasp",
-    "Wasp XT",
-)
 CORE_FEATURE_NAMES = (
     "Audio Logger",
     "Chord Generator",
@@ -114,13 +76,6 @@ CORE_FEATURE_NAMES = (
     "VST2,VST3,AU,CLAP support",
     "FL Studio Remote",
 )
-
-
-def _sha256_json(value: object) -> str:
-    encoded = json.dumps(
-        value, ensure_ascii=True, sort_keys=False, separators=(",", ":")
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def _fixture_products() -> list[dict[str, object]]:
@@ -276,47 +231,6 @@ _FIXTURE_TEMPS: list[tempfile.TemporaryDirectory[str]] = []
 
 
 class AtlasModelContractTests(unittest.TestCase):
-    def test_models_are_strict_frozen_and_recursively_immutable(self) -> None:
-        product = ProductKnowledge(
-            product_id="p",
-            name="Example",
-            aliases=["Alias"],
-            modules=[{"id": "m", "name": "Main"}],
-        )
-        self.assertIsInstance(product.aliases, tuple)
-        self.assertIsInstance(product.modules, tuple)
-        self.assertIsInstance(product.modules[0].name, str)
-        with self.assertRaises((ValidationError, TypeError)):
-            product.name = "changed"  # type: ignore[misc]
-        with self.assertRaises((ValidationError, TypeError)):
-            ProductKnowledge(product_id="p", name="Example", unexpected=True)
-        with self.assertRaises((ValidationError, TypeError)):
-            RuntimeParameterObservation(index="0")  # type: ignore[arg-type]
-        with self.assertRaises((ValidationError, TypeError)):
-            RuntimeParameterObservation(index=8192)
-
-    def test_runtime_and_availability_models_reject_ownership_claims(self) -> None:
-        for state in ("loaded", "not_observed", "availability_unknown"):
-            observation = AvailabilityObservation(state=state)  # type: ignore[arg-type]
-            self.assertNotIn("owned", observation.model_dump())
-            self.assertNotIn("installed", observation.model_dump())
-        with self.assertRaises((ValidationError, TypeError)):
-            AvailabilityObservation(state="not_owned")  # type: ignore[arg-type]
-        with self.assertRaises((ValidationError, TypeError)):
-            AvailabilityObservation(state="not_installed")  # type: ignore[arg-type]
-        unavailable = RuntimePluginInstance(
-            name="Unloaded",
-            availability=AvailabilityObservation(state="not_observed"),
-        )
-        self.assertEqual(unavailable.parameters, ())
-        self.assertNotIn("owned", unavailable.model_dump())
-
-    def test_model_dump_round_trip_preserves_json_alias_contract(self) -> None:
-        product = ProductKnowledge(product_id="p", name="Example", aliases=["Alias"])
-        encoded = json.dumps(product.model_dump(mode="json"), allow_nan=False)
-        restored = ProductKnowledge.model_validate_json(encoded, strict=True)
-        self.assertEqual(restored, product)
-
     def test_compatibility_levels_require_their_claimed_proof(self) -> None:
         validated_write = WriteValidationEvidence(
             evidence_id="write-evidence",
@@ -544,123 +458,59 @@ class AtlasLoaderFixtureTests(unittest.TestCase):
 
 
 class BundledCatalogOracleTests(unittest.TestCase):
+    # Row counts, digests and category counts are declared in the Atlas
+    # manifest and enforced by the loader on every load; these tests cover the
+    # cross-file relationships the loader does not.
     @classmethod
     def setUpClass(cls) -> None:
         cls.registry = load_bundled_registry()
         cls.oracle = json.loads(CURRENT_MATRIX_PATH.read_text(encoding="utf-8"))
-
-    def test_current_119_oracle_has_exact_rows_and_digests(self) -> None:
-        self.assertEqual(len(self.oracle), 119)
-        self.assertEqual(_sha256_json(self.oracle), CURRENT_MATRIX_JSON_DIGEST)
-        oracle_rows = tuple(
-            CatalogProductRow.model_validate(row) for row in self.oracle
-        )
-        self.assertEqual(
-            catalog_snapshot_digest(oracle_rows), CURRENT_MATRIX_LINE_DIGEST
-        )
         snapshots = [
             snapshot
-            for snapshot in self.registry.catalog_snapshots
+            for snapshot in cls.registry.catalog_snapshots
             if snapshot.catalog_scope == "current_edition_matrix"
         ]
-        self.assertEqual(len(snapshots), 1)
-        snapshot = snapshots[0]
+        assert len(snapshots) == 1, snapshots
+        cls.snapshot = snapshots[0]
+
+    def test_current_matrix_snapshot_matches_the_checked_in_oracle(self) -> None:
         actual = [
             {"category": row.category, "edition_min": row.edition_min, "name": row.name}
-            for row in snapshot.rows
+            for row in self.snapshot.rows
         ]
         self.assertEqual(actual, self.oracle)
-        self.assertEqual(snapshot.digest, CURRENT_MATRIX_LINE_DIGEST)
-        self.assertEqual(snapshot.expected_row_count, 119)
-        self.assertEqual(snapshot.expected_digest, CURRENT_MATRIX_LINE_DIGEST)
 
-    def test_snapshot_resolves_every_current_product_without_nil_editions(self) -> None:
-        snapshot = next(
-            item
-            for item in self.registry.catalog_snapshots
-            if item.catalog_scope == "current_edition_matrix"
-        )
+    def test_snapshot_resolves_every_current_product(self) -> None:
         products_by_id = {product.product_id: product for product in self.registry.products}
-        self.assertTrue(all(row.product_id for row in snapshot.rows))
-        self.assertEqual(len({row.product_id for row in snapshot.rows}), 119)
-        self.assertEqual(
-            Counter(row.category for row in snapshot.rows),
-            Counter(audio_editor=3, effect=71, instrument=39, visual=6),
-        )
-        self.assertEqual(
-            Counter(row.edition_min for row in snapshot.rows),
-            Counter(fruity=81, producer=12, signature=10, all_plugins=16),
-        )
-        for row in snapshot.rows:
-            self.assertIn(row.product_id, products_by_id)
-            product = products_by_id[row.product_id]
-            self.assertEqual(product.name, row.name)
-            self.assertEqual(product.edition_min, row.edition_min)
-            self.assertEqual(product.catalog_scope, "current_edition_matrix")
+        product_ids = [row.product_id for row in self.snapshot.rows]
+        self.assertTrue(all(product_ids))
+        self.assertEqual(len(set(product_ids)), len(product_ids))
+        for row in self.snapshot.rows:
+            with self.subTest(product=row.product_id):
+                self.assertIn(row.product_id, products_by_id)
+                product = products_by_id[row.product_id]
+                self.assertEqual(product.name, row.name)
+                self.assertEqual(product.edition_min, row.edition_min)
+                self.assertEqual(product.catalog_scope, "current_edition_matrix")
 
-    def test_manifest_keeps_vendor_catalogs_and_snapshot_oracles_separate(self) -> None:
-        self.assertEqual(len(self.registry.manifest.catalogs), 4)
-        self.assertEqual(len(self.registry.manifest.catalog_snapshots), 1)
-        self.assertNotIn(
-            self.registry.manifest.catalog_snapshots[0].resource,
-            {catalog.resource for catalog in self.registry.manifest.catalogs},
-        )
-
-    def test_image_line_union_has_148_scoped_records_and_legacy_is_excluded_from_119(self) -> None:
+    def test_legacy_and_core_feature_rows_stay_out_of_the_current_matrix(self) -> None:
         image_line = [item for item in self.registry.products if item.vendor_id == "image-line"]
-        self.assertEqual(len(image_line), 148)
-        by_scope = Counter(item.catalog_scope for item in image_line)
-        self.assertEqual(
-            by_scope,
-            Counter(
-                current_edition_matrix=119,
-                current_auxiliary=5,
-                manual_index_only=14,
-                legacy_discontinued=10,
-            ),
-        )
-        matrix_names = {
-            row["name"]
-            for row in self.oracle
-        }
+        matrix_names = {row["name"] for row in self.oracle}
         current_names = {
             item.name
             for item in image_line
             if item.catalog_scope == "current_edition_matrix"
         }
         self.assertEqual(current_names, matrix_names)
-        self.assertTrue(
-            matrix_names.isdisjoint(LEGACY_NAMES),
-            "legacy/deprecated rows must not pollute the current pricing matrix",
-        )
-        actual_legacy_names = {
+        legacy_names = {
             item.name
             for item in image_line
             if item.catalog_scope == "legacy_discontinued"
         }
-        self.assertEqual(actual_legacy_names, set(LEGACY_NAMES))
-        self.assertEqual(
-            hashlib.sha256(("\n".join(sorted(actual_legacy_names)) + "\n").encode()).hexdigest(),
-            LEGACY_NAME_DIGEST,
-        )
-
-    def test_auxiliary_plugin_like_rows_are_explicit_and_feature_rows_are_not_plugins(self) -> None:
-        image_line = [item for item in self.registry.products if item.vendor_id == "image-line"]
-        auxiliary = {
-            (item.name, item.categories[0] if item.categories else "", item.edition_min)
-            for item in image_line
-            if item.catalog_scope == "current_auxiliary"
-        }
-        self.assertEqual(
-            {name for name, _category, _edition in auxiliary},
-            {name for name, _category, _edition in AUXILIARY_PLUGIN_ROWS},
-        )
-        self.assertEqual(
-            catalog_name_digest(
-                f"{name}\t{category}\t{edition}"
-                for name, category, edition in sorted(AUXILIARY_PLUGIN_ROWS)
-            ),
-            AUXILIARY_PLUGIN_DIGEST,
+        self.assertTrue(legacy_names)
+        self.assertTrue(
+            matrix_names.isdisjoint(legacy_names),
+            "legacy/deprecated rows must not pollute the current pricing matrix",
         )
         self.assertTrue(
             set(CORE_FEATURE_NAMES).isdisjoint({item.name for item in image_line}),
@@ -789,19 +639,6 @@ class MatcherAndAvailabilityTests(unittest.TestCase):
         )
         self.assertGreaterEqual(len(matches), 2)
         self.assertTrue(all(not match.control_proven for match in matches))
-
-    def test_non_loaded_availability_is_preserved_without_ownership_inference(self) -> None:
-        for state in ("loaded", "not_observed", "availability_unknown"):
-            runtime = RuntimePluginInstance(
-                name="Alpha Compressor",
-                availability=AvailabilityObservation(state=state),  # type: ignore[arg-type]
-            )
-            match = match_runtime_plugin(runtime, self.registry)
-            self.assertIsNotNone(match)
-            assert match is not None
-            self.assertEqual(match.availability.state, state)
-            self.assertNotIn("owned", match.model_dump())
-            self.assertNotIn("installed", match.model_dump())
 
     def test_compatibility_join_keeps_name_only_and_warns_on_unloaded_state(self) -> None:
         runtime = RuntimePluginInstance(

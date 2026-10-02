@@ -186,10 +186,10 @@ run the complete safe suite.
 
 ## MCP surface changes
 
-The package command is `fl-studio-mcp`, the configured MCP server ID is
-`fl-studio`, and the V10 surface contains 134 tools and 8 resources. Preserve
-existing names and response contracts unless a deliberate compatibility change
-has been discussed.
+The package command is `fl-studio-mcp` and the configured MCP server ID is
+`fl-studio`. [docs/tools.md](docs/tools.md) lists the current tools and
+resources. Preserve existing names and response contracts unless a deliberate
+compatibility change has been discussed.
 
 For a new or changed tool:
 
@@ -198,9 +198,13 @@ For a new or changed tool:
 - add a typed immutable response contract;
 - define its exact bridge allowlist boundary;
 - state whether it reads a local file or mutates FL Studio;
-- add deterministic success, refusal, and malformed-response tests; and
-- update `docs/tool-contracts.md`, safety guidance, and the tool count when
-  appropriate.
+- add deterministic success, refusal, and malformed-response tests;
+- keep the advertised input schema small: a large argument that echoes an
+  earlier result can be advertised as a plain object while the full model
+  still validates it (see `fl_studio_mcp/tool_schemas.py`); and
+- run `python scripts/sync_mcpb_manifest.py` and
+  `python scripts/generate_tool_reference.py`, then update
+  `docs/tool-contracts.md` and safety guidance.
 
 Do not expose a generic bridge dispatcher or an unrestricted filesystem
 search.

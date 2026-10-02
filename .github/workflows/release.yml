@@ -218,6 +218,11 @@ jobs:
           print(f"tag and public versions agree: {tag}")
           PY
 
+      # The README uses relative links so it renders on GitHub from any
+      # branch. PyPI cannot resolve them, so pin them to this tag first.
+      - name: Pin README links to the release tag for PyPI
+        run: python scripts/pin_readme_links.py
+
       - name: Build wheel and sdist
         run: |
           python -m pip install --upgrade pip build twine

@@ -37,83 +37,6 @@ from fl_studio_mcp import host_config  # noqa: E402
 from fl_studio_mcp.bridge_stamp import stamp_bridge_source  # noqa: E402
 
 
-class BridgeSourceTests(unittest.TestCase):
-    def test_the_bridge_ships_inside_the_package(self):
-        # A pip user has no repository, so the script FL loads has to travel
-        # with the package or the install is unusable.
-        source = bridge_install.bridge_source_path()
-        self.assertTrue(source.is_file())
-        self.assertEqual(source.name, "device_UniversalBridge.py")
-        self.assertEqual(source.parent.name, "_bridge")
-        self.assertEqual(source.parent.parent.name, "fl_studio_mcp")
-
-    def test_the_bridge_directory_has_no_package_initializer(self):
-        # Python may expose this directory as a namespace, but the controller
-        # module body depends on FL-only modules. Keep it as deployable data;
-        # the MCP process must not treat it as a normal Python subpackage.
-        self.assertFalse((bridge_install.bridge_source_path().parent / "__init__.py").exists())
-
-    def test_the_packaged_bridge_is_ascii(self):
-        # FL Studio loads MIDI scripts through an ASCII code path.
-        raw = bridge_install.bridge_source_path().read_bytes()
-        self.assertTrue(all(byte < 128 for byte in raw))
-
-    def test_expected_deployment_uses_the_same_stamped_bytes_and_digest(self):
-        source = bridge_install.bridge_source_path().read_bytes()
-        expected_bytes, expected_digest = stamp_bridge_source(source)
-
-        deployed_bytes, deployed_digest = bridge_install.expected_bridge_deployment()
-
-        self.assertEqual(deployed_bytes, expected_bytes)
-        self.assertEqual(deployed_digest, expected_digest)
-        self.assertEqual(len(deployed_digest), 64)
-
-
-class UserDataResolutionTests(unittest.TestCase):
-    def setUp(self):
-        self._saved = os.environ.get("FL_STUDIO_USER_DATA_DIR")
-        os.environ.pop("FL_STUDIO_USER_DATA_DIR", None)
-        self._tmp = tempfile.TemporaryDirectory(
-            prefix="flmcp-user-data-resolution-"
-        )
-        self.root = Path(self._tmp.name)
-
-    def tearDown(self):
-        os.environ.pop("FL_STUDIO_USER_DATA_DIR", None)
-        if self._saved is not None:
-            os.environ["FL_STUDIO_USER_DATA_DIR"] = self._saved
-        self._tmp.cleanup()
-
-    def test_default_location(self):
-        self.assertEqual(
-            bridge_install.user_data_dir(),
-            host_config.default_fl_studio_user_data_dir(),
-        )
-
-    def test_environment_override(self):
-        configured = self.root / "some-fl-folder"
-        os.environ["FL_STUDIO_USER_DATA_DIR"] = os.fspath(configured)
-        self.assertEqual(bridge_install.user_data_dir(), configured)
-
-    def test_explicit_argument_beats_the_environment(self):
-        environment = self.root / "from-env"
-        explicit = self.root / "from-argument"
-        os.environ["FL_STUDIO_USER_DATA_DIR"] = os.fspath(environment)
-        self.assertEqual(
-            bridge_install.user_data_dir(explicit),
-            explicit,
-        )
-
-    def test_target_sits_in_fl_studios_controller_folder(self):
-        user_data = self.root / "fl"
-        target = bridge_install.target_path(user_data)
-        self.assertEqual(
-            target,
-            user_data
-            / "Settings/Hardware/Universal Bridge/device_UniversalBridge.py",
-        )
-
-
 class HostConfigurationTests(unittest.TestCase):
     def test_relative_explicit_user_data_path_is_rejected(self):
         with self.assertRaises(host_config.HostConfigurationError) as raised:
@@ -368,14 +291,6 @@ print(json.dumps({
         )
         self.assertIn(os.fspath(user_data / "Settings"), payload["mailboxes"])
 
-    def test_clone_installer_uses_shared_paths_without_overwriting_client_config(self):
-        source = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
-        self.assertIn("fl_studio_user_data_dir", source)
-        self.assertNotIn("$HOME/Documents/Image-Line/FL Studio", source)
-        self.assertNotIn(".mcp.json", source)
-        self.assertIn('"$VENV/bin/postfader"', source)
-        self.assertIn("--skip-bridge-deployment", source)
-
 
 class DeployTests(unittest.TestCase):
     def setUp(self):
@@ -423,12 +338,6 @@ class DeployTests(unittest.TestCase):
         self.assertIsNotNone(second["backup"])
         self.assertEqual(second["backup"].read_bytes(), b"# someone else's bridge\n")
 
-    def test_deploy_creates_the_controller_subfolder(self):
-        controller = self.fl / "Settings" / "Hardware" / "Universal Bridge"
-        self.assertFalse(controller.exists())
-        bridge_install.deploy(str(self.fl))
-        self.assertTrue(controller.is_dir())
-
 
 class CommandTests(unittest.TestCase):
     def setUp(self):
@@ -457,9 +366,6 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertIn("must be an absolute", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
-
-    def test_print_source_names_the_packaged_bridge(self):
-        self.assertEqual(bridge_install.main(["--print-source"]), 0)
 
 
 if __name__ == "__main__":

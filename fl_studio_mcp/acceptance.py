@@ -677,6 +677,7 @@ def read_acceptance_arguments(
         },
         "postfader_get_run": {"run_id": "0" * 32},
         "postfader_list_runs": {},
+        "postfader_describe_operations": {"operations": ["generate_melody"]},
         "processing_plan": {
             "request": {
                 "request_id": "acceptance-processing-plan",

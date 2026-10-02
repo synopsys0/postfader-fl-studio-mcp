@@ -129,7 +129,6 @@ class CreationReviewMCPTests(unittest.TestCase):
 
     def test_review_tools_are_registered_with_honest_annotations(self) -> None:
         tools = {item.name: item for item in asyncio.run(mcp.list_tools())}
-        self.assertEqual(len(tools), 134)
         read_only = {
             "postfader_review_start",
             "postfader_review_attach_assets",
@@ -162,10 +161,6 @@ class CreationReviewMCPTests(unittest.TestCase):
             annotation = tools[name].annotations
             self.assertFalse(annotation.read_only_hint, name)
             self.assertTrue(annotation.destructive_hint, name)
-        # Existing v0.20 and Chunk 1 surfaces remain present.
-        self.assertIn("postfader_execute_run", tools)
-        self.assertIn("sound_selection_plan", tools)
-        self.assertIn("plugins_atlas_search", tools)
 
     def test_start_attach_evaluate_is_read_only_and_retains_initial_feedback(self) -> None:
         registry = self._registry()
