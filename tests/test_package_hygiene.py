@@ -347,6 +347,42 @@ with mock.patch.object(
                     [],
                 )
 
+    def test_readme_links_resolve_and_are_pinned_to_the_tag_for_pypi(self) -> None:
+        sys.path.insert(0, os.fspath(ROOT / "scripts"))
+        import pin_readme_links
+
+        def targets(text: str) -> list[str]:
+            return pin_readme_links.MARKDOWN_TARGET.findall(text) + [
+                value for _attribute, value in pin_readme_links.HTML_TARGET.findall(text)
+            ]
+
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        relative = [
+            target.partition("#")[0]
+            for target in targets(readme)
+            if pin_readme_links._is_relative(target)
+        ]
+        self.assertTrue(relative)
+        # A pinned URL is only as good as the file it points at.
+        self.assertEqual([path for path in relative if not (ROOT / path).exists()], [])
+
+        pinned = pin_readme_links.pin_links(readme, "v1.2.3")
+        self.assertEqual(
+            [target for target in targets(pinned) if pin_readme_links._is_relative(target)],
+            [],
+        )
+        self.assertIn(
+            'src="https://raw.githubusercontent.com/synopsys0/postfader-fl-studio-mcp'
+            '/v1.2.3/docs/assets/banner.svg"',
+            pinned,
+        )
+        self.assertIn(
+            "](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/v1.2.3/docs/setup.md)",
+            pinned,
+        )
+        self.assertIn("](#quick-start)", pinned)
+        self.assertIn("mcp-name: io.github.synopsys0/postfader-fl-studio-mcp", pinned)
+
     def test_distribution_verifier_blocks_a_missing_ownership_marker(self) -> None:
         verifier = load_distribution_verifier()
         base_metadata = (

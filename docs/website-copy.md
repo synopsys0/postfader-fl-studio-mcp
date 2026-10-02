@@ -46,8 +46,8 @@ each one read back from FL Studio.
 
 **Primary actions**
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
 
 **Secondary action:** Explore what PostFader can do
 
@@ -535,8 +535,8 @@ installer, select the virtual MIDI endpoint you created, complete one FL Studio
 MIDI setup stage—Input, Output, Universal Bridge, matching port, and script
 reload—and connect your AI client.
 
-- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip)
-- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip)
+- [Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
+- [Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
 - [Read the complete setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 
 Dedicated Codex packages add guided Codex registration. The Claude Desktop
@@ -598,9 +598,9 @@ guaranteed rollback, or a guaranteed undo point.
 Inspect the project. Diagnose the mix. Build the parts. Review the plan. Make
 the change.
 
-[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip)
+[Download for Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
 ·
-[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip)
+[Download for macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest)
 ·
 [Read the setup guide](https://github.com/synopsys0/postfader-fl-studio-mcp/blob/main/docs/setup.md)
 

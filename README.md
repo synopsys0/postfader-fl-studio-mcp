@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/synopsys0/postfader-fl-studio-mcp/main/docs/assets/banner.svg" alt="PostFader, the FL Studio MCP server" width="100%">
+<img src="docs/assets/banner.svg" alt="PostFader, the FL Studio MCP server" width="100%">
 
 # PostFader: FL Studio MCP Server
 
@@ -13,8 +13,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/synopsys0/postfader-fl-studio-mcp/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/synopsys0/postfader-fl-studio-mcp?style=flat-square)](LICENSE)
 
-<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
-<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
+<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest"><img alt="Download for Windows" src="https://img.shields.io/badge/Download-Windows-0078D4?style=for-the-badge&amp;logo=windows11&amp;logoColor=white"></a>
+<a href="https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest"><img alt="Download for macOS" src="https://img.shields.io/badge/Download-macOS-111111?style=for-the-badge&amp;logo=apple&amp;logoColor=white"></a>
 
 [Quick start](#quick-start) · [What it does](#what-you-can-ask-for) · [Why PostFader](#why-postfader) · [Docs](#documentation) · [FAQ](#faq)
 
@@ -53,10 +53,10 @@ Browse all 135 tools in the [tool reference](docs/tools.md).
 port: the built-in **IAC Driver** on macOS, or a free app such as **loopMIDI**
 on Windows.
 
-1. **Run the installer** for [Windows](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-Windows.zip)
-   or [macOS](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest/download/PostFader-v11.0.0-macOS.zip).
-   It installs PostFader, copies the bridge script into FL Studio, and asks
-   which MIDI port to use.
+1. **Run the installer.** Download the Windows or macOS ZIP from the
+   [latest release](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/latest), extract it, and run the installer inside. It
+   installs PostFader, copies the bridge script into FL Studio, and asks which
+   MIDI port to use.
 2. **In FL Studio**, open *Options → MIDI settings*. Enable your virtual port as
    both input and output, set the input's controller type to
    **Universal Bridge**, and give both the same port number.
@@ -71,7 +71,7 @@ Using Python directly? Run `pip install postfader-fl-studio-mcp`, then
 
 ## How it works
 
-<img src="https://raw.githubusercontent.com/synopsys0/postfader-fl-studio-mcp/main/docs/assets/how-it-works.svg" alt="Your AI client talks to PostFader on your computer; PostFader reaches the Universal Bridge script inside FL Studio over a virtual MIDI port; the bridge reads and changes your open project. Exported audio is analyzed by PostFader directly." width="100%">
+<img src="docs/assets/how-it-works.svg" alt="Your AI client talks to PostFader on your computer; PostFader reaches the Universal Bridge script inside FL Studio over a virtual MIDI port; the bridge reads and changes your open project. Exported audio is analyzed by PostFader directly." width="100%">
 
 FL Studio only runs scripts from inside itself, so PostFader talks to a small
 controller script, the **Universal Bridge**, over a virtual MIDI port. Audio

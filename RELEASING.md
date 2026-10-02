@@ -133,10 +133,12 @@ gh release edit vX.Y.Z \
 
 ## GitHub download-link and installation check
 
-Before calling a release complete, check every README download URL against the
-actual release assets. The `latest/download` links must resolve to the intended
-generic and Codex package names. Also test one fresh installation path on each
-qualified platform:
+Before calling a release complete, open the README's download buttons: they
+link to the latest release page, which must list the generic and Codex ZIPs.
+The release workflow runs `scripts/pin_readme_links.py` before building, so
+the PyPI page's README links and images point at the release tag; check that
+the banner and diagram render there. Also test one fresh installation path on
+each qualified platform:
 
 - download the matching ZIP into a stable writable folder and run its dry-run
   installer before accepting changes;
