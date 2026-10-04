@@ -200,9 +200,9 @@ real run records them; it never saves the project or claims audible quality.
 Creation Review needs no second bridge, plug-in, or client installation. First
 complete a Production Run in the same connected MCP process, export a bounce
 from FL Studio, and give the connected AI the explicit absolute path. The AI
-can then call `review_start`, `review_attach_assets`, and
-`review_evaluate`; attach a reference or synchronized stem only when
-the requested finding needs that evidence. Review never captures FL's live
+can then call `review_start`, `review_attach_assets`, and `review_evaluate`;
+attach a reference or synchronized stem only when the requested finding needs
+that evidence. Review never captures FL's live
 audio and never renders or saves the live project. For an already-saved FLP,
 use the separate saved-project rendering tools described below;
 that export excludes unsaved changes.
@@ -462,7 +462,7 @@ verification detail, warnings, and the project itself.
 
 **Creation readiness is blocked.** Call `run_validate` with
 `include_readiness=true` and read its `readiness` scorecard (or inspect the
-`readiness_report` in the run result). It returns all detectable
+`readiness_report` in the run result). The scorecard lists all detectable
 actions together, such as arming Postfader Apply, loading a generator with
 required drum roles, or leaving an empty pattern. Complete those actions in
 the disposable FL project, then submit a compatible run; do not repeatedly

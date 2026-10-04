@@ -160,8 +160,8 @@ before-state. The server compares the session before dispatch, and the bridge
 checks supplied session/state guards immediately before undo or mutation.
 The per-target setters (`mixer_set_track`, `channel_set`, `pattern_set`,
 `playlist_set_track`, `transport_set`) and `project_apply_edits` check the
-session once before their first write and pin every later write to it, even
-when the caller supplies no fingerprint. A setter refuses a before-state guard
+session once before their first write and pin every write to it, even when
+the caller supplies no fingerprint. A setter refuses a before-state guard
 for a field it does not write rather than ignoring it.
 These are optimistic-concurrency controls, not authentication, authorization,
 or durable project identity. Step edits use a required canonical grid digest

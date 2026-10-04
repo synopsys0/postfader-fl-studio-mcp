@@ -343,8 +343,8 @@ cell. It never switches patterns implicitly.
 Plug-in commands use a discriminated target. A `mixer_effect` keeps the
 track/slot 0–9 contract and explicit Master authorization. A
 `channel_generator` uses a global Channel Rack index and FL's separate
-`slotIndex=-1` addressing form. The legacy track/slot MCP arguments remain
-available for compatibility, but callers may not mix the two forms.
+`slotIndex=-1` addressing form. MCP plug-in tools accept only this target; the
+legacy top-level `track_index`/`slot_index` arguments are gone.
 
 ## Idle-tick budget
 

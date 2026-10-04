@@ -28,7 +28,7 @@ confirmation.
 
 | Goal | Tool and distinction |
 | --- | --- |
-| Change several fields of one target | `mixer_set_track`, `channel_set`, `pattern_set`, `playlist_set_track`, or `transport_set`; one call, one later-tick receipt per changed field, in a fixed order. |
+| Change several fields of one target | `mixer_set_track`, `channel_set`, `pattern_set`, `playlist_set_track`, or `transport_set`; one call, writes in a fixed order, each with its own later-tick receipt. |
 | Set a plug-in parameter | `plugin_set_parameter` with exactly one value: `display_value` (Hz, dB, ms, or another displayed number, optional `unit`) searches displayed values instead of assuming a normalized curve; `option` selects a named option but moves the control during discovery, so it is not a read-only option listing; `normalized_value` writes a known 0–1 value to an inspected parameter index. |
 | Select a whole preset | `plugin_select_preset`; use exact names/indices from `plugin_list_presets`. |
 | Apply already-reviewed writes across targets | `project_apply_edits`; ordered and non-atomic, with per-operation receipts. |
@@ -108,7 +108,7 @@ similarly suitable candidates. Planning does not mutate FL or usage history.
 | Tool | Purpose and boundary |
 | --- | --- |
 | `sound_get_inventory` | Read a compact inventory of loaded Channel Rack generators and optional mixer effects, bounded preset pages, current presets, pad maps, target fingerprints, current palette/locks, Atlas matches, and Atlas-known products not observed as loaded. |
-| `sound_plan_palette` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. With `base_palette_id` it instead plans a section-scoped variation of that palette for `section`: anchors remain unchanged unless listed in `replace_roles`. `section` and `replace_roles` are refused without `base_palette_id`. No FL or history changes. |
+| `sound_plan_palette` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. With `base_palette_id` it instead plans a section-scoped variation of that palette, optionally naming the `section`; anchors remain unchanged unless listed in `replace_roles`. `section` and `replace_roles` are refused without `base_palette_id`. No FL or history changes. |
 | `sound_get_palette` | Look up process-local palette state and immutable apply receipts by palette ID. Expiry or another process returns an availability-honest result. |
 | `sound_get_history` | Read the local history path, schema/health, record counts, and configured bounds. |
 | `sound_apply_palette` | Authorized mutating workflow that requires `authorized_to_modify=true` and the current 32-character lowercase `session_fingerprint`, revalidates the session and loaded targets, applies exact assignments in deterministic order, and stops on the first unknown/unverified result. Earlier receipts remain immutable. |
@@ -134,7 +134,7 @@ service internally and carries one context through the phases.
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `run_validate` with `include_readiness=true` | Returns `{validation, readiness}`; `readiness` is a zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope, with blockers together with a reusable bounded context snapshot. |
+| `run_validate` with `include_readiness=true` | Fills the `readiness` half of its `{validation, readiness}` result with a zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope. It returns blockers together with a reusable bounded context snapshot. |
 | `processing_plan` | Read-only effect coverage and semantic plan from loaded, Atlas-matched, adapter-backed, runtime-observed controls. Each resolved control's `setter` names the `plugin_set_parameter` argument that writes it: `display_value`, `option`, or `normalized_value`. |
 | `processing_apply` | One processing run, authorized by `authorized_to_modify=true` and the required `session_fingerprint`, using existing verified setters and later-tick readback; missing/unresolved controls remain visible. |
 
@@ -232,7 +232,7 @@ bridge checks supplied guards immediately before undo and mutation; supplying
 them makes stale decisions fail closed. The per-target setters and
 `project_apply_edits` check the session once before their first write and pin
 every write to that session even when no `session_fingerprint` is passed. The
-workflow applies `sound_apply_palette` and `processing_apply` require
+workflow tools `sound_apply_palette` and `processing_apply` require
 `session_fingerprint` because they cannot apply without a live session token.
 The token rotates on script reload and project-load transitions; loading also
 disables writes and abandons pending operations instead of carrying them into
@@ -285,15 +285,15 @@ separate `slotIndex=-1` form internally.
 
 ### Preset identity and navigation
 
-`plugins_list_presets` reads a page with `start` and `limit` (1–256), and never
+`plugin_list_presets` reads a page with `start` and `limit` (1–256), and never
 enumerates an unbounded catalog in one response. It reports FL's authoritative
-count, index/name rows, current name/index/status, duplicate names, blank
-indices, `partial`, `truncated`, and a deterministic continuation position.
-`plugins_get_current_preset` reports the current name and only a uniquely
-resolved index. A count-only `fl_get_plugin_preset_count` result does not prove
+`preset_count`, index/name rows, duplicate names, blank indices, `partial`,
+`truncated`, and a deterministic continuation position (`next_start`). Unless
+`include_current=false`, it also reports the current preset's name and status,
+with an index only when FL resolves it uniquely; the count alone does not prove
 current identity.
 
-`fl_select_plugin_preset` resolves the requested exact name/index against live
+`plugin_select_preset` resolves the requested exact name/index against live
 state, refuses an ambiguous duplicate-name request unless an index is supplied,
 and uses the shortest next/previous path when the current index is known.
 Without a known index it uses a bounded fallback search. The bridge yields over
@@ -305,7 +305,7 @@ success. An unstable identity, stale guard, navigation limit, or unknown
 transport outcome stops the operation; it is never automatically replayed,
 rolled back, or silently redirected to another preset.
 
-`plugins_inspect_pad_map` is a read-only generic pad observation. Sound
+`plugin_get_pad_map` is a read-only generic pad observation. Sound
 Selection uses its notes and reported names to build semantic drum maps and
 does not assume General MIDI. `compose_drums` can consume the resulting typed
 map; its General MIDI notes remain an explicit fallback only when no map is
@@ -313,39 +313,69 @@ provided. Missing required drum roles block before note writing.
 
 ### Transport, Channel Rack, and sequencer state
 
+`transport_set` releases the transport first and engages it last, so one call
+can stop, adjust, and restart; read its current values from
+`project_get_summary`:
+
+| Field, in write order | Value | Bridge command |
+| --- | --- | --- |
+| `stop: true` | absolute stopped state plus normalized position 0; not combined with `playing` or `position_normalized` | `transport.stop` |
+| `playing: false` | pause in place | `transport.set_playing` |
+| `recording: false` | recording arm off | `transport.set_recording` |
+| `tempo_bpm` | absolute 10–522 BPM; playback and recording must be stopped | `transport.set_tempo` |
+| `time_signature_numerator` | beats per bar 1–32; FL exposes no denominator getter | `project.set_time_signature_numerator` |
+| `loop_mode` | absolute `pattern` or `song` mode | `transport.set_loop_mode` |
+| `metronome` | absolute metronome boolean | `transport.set_metronome` |
+| `precount` | absolute recording-precount boolean | `transport.set_precount` |
+| `position_normalized` | normalized position 0–1, optional `position_tolerance` (default 0.0001); transport must be stopped | `transport.set_song_position` |
+| `recording: true` | recording arm on | `transport.set_recording` |
+| `playing: true` | start playback, last | `transport.set_playing` |
+
+Its `expected_before` takes `playing` and `song_position_normalized` (either or
+both also guard `stop`), `tempo_bpm`, `time_signature_numerator`, `loop_mode`,
+`metronome`, `precount`, and `recording`.
+
+`channel_set` targets one global `channel_index`:
+
+| Field, in write order | Value | Bridge command |
+| --- | --- | --- |
+| `volume_normalized`, `pan`, `muted` | volume 0–1, pan -1–1, and absolute mute, in any combination, one write | `channel.set_mix` |
+| `soloed` | absolute solo state | `channel.set_solo` |
+| `pitch_normalized` | pitch knob -1–1, not semitones; the receipt reports semitones | `channel.set_pitch` |
+| `name`, `color` | either or both, one write. Color observations preserve FL's unsigned 32-bit `0x--BBGGRR` word; guards and proof compare the controllable low 24 bits because FL owns the high byte. | `channel.set_identity` |
+| `mixer_destination` | absolute mixer destination; `-1` is unassigned | `channel.route_to_mixer` |
+| `select: true` | select this channel exclusively, last | `channel.select` |
+
+Name, color, and routing change the channel's `channel_fingerprint`, which is
+why they are written after the mix, solo, and pitch. A `channel_fingerprint` in
+`expected_before` guards every write up to and including the first one that
+changes it; `select` never checks it, so a fingerprint guard on a select-only
+call is refused. The other guard fields are `volume_normalized`, `pan`,
+`muted`, `soloed`, `pitch_normalized`, `name`, `color`, `mixer_destination`, and
+`selected_channel_indices` (the sorted current selection, which guards
+`select`).
+
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
-| `fl_set_playing` | absolute `playing` boolean | `transport.set_playing` |
-| `fl_stop` | no value; absolute stopped state plus normalized position 0 | `transport.stop` |
-| `fl_set_song_position` | normalized position 0–1; transport must be stopped | `transport.set_song_position` |
-| `fl_set_loop_mode` | absolute `pattern` or `song` mode | `transport.set_loop_mode` |
-| `fl_set_tempo` | absolute 10–522 BPM; playback and recording must be stopped | `transport.set_tempo` |
-| `fl_set_recording` | absolute recording-arm boolean | `transport.set_recording` |
-| `fl_set_metronome` | absolute metronome boolean | `transport.set_metronome` |
-| `fl_set_precount` | absolute recording-precount boolean | `transport.set_precount` |
-| `fl_set_time_signature_numerator` | beats per bar 1–32; FL exposes no denominator getter | `project.set_time_signature_numerator` |
-| `fl_undo` | move one position backward when undo is available | `project.undo` |
-| `fl_redo` | move one position forward when redo is available | `project.redo` |
-| `fl_set_channel_mix` | global channel; volume, pan, mute, or any combination | `channel.set_mix` |
-| `fl_set_channel_solo` | global channel and absolute solo state | `channel.set_solo` |
-| `fl_set_channel_pitch` | global channel and normalized pitch -1–1 | `channel.set_pitch` |
-| `fl_select_channel` | select one global channel exclusively | `channel.select` |
-| `fl_set_channel_identity` | global channel; name, color, or both. Color observations preserve FL's unsigned 32-bit `0x--BBGGRR` word; guards and proof compare the controllable low 24 bits because FL owns the high byte. | `channel.set_identity` |
-| `fl_route_channel_to_mixer` | global channel and absolute mixer destination; `-1` is unassigned | `channel.route_to_mixer` |
-| `fl_set_step_sequence` | explicit current pattern, global channel, required prior digest, and unique absolute cell updates | `sequencer.set` |
+| `project_step_history` | `direction="undo"` moves one position backward, `"redo"` one forward, when available; optional position/count/dirty-flag guard from `project_get_history` | `project.undo`, `project.redo` |
+| `channel_set_steps` | explicit current pattern, global channel, required prior digest, and unique absolute cell updates | `sequencer.set` |
 
 ### Pattern and Playlist state
 
-| Tool | Required target and value | Bridge command |
+| Tool and field, in write order | Value | Bridge command |
 | --- | --- | --- |
-| `fl_select_pattern` | absolute current pattern number | `pattern.select` |
-| `fl_set_pattern_identity` | pattern number plus name, color, or both | `pattern.set_identity` |
-| `fl_set_pattern_length` | pattern number plus absolute beat length | `pattern.set_length` |
-| `fl_set_playlist_track_identity` | one-based Playlist track plus name, color, or both | `playlist.set_identity` |
-| `fl_set_playlist_track_state` | one-based Playlist track plus mute, solo, selection, or a combination | `playlist.set_state` |
+| `pattern_set` `name`, `color` | one-based pattern number plus name, color, or both | `pattern.set_identity` |
+| `pattern_set` `length_beats` | absolute beat length | `pattern.set_length` |
+| `pattern_set` `select: true` | make it FL's current pattern, last | `pattern.select` |
+| `playlist_set_track` `name`, `color` | one-based Playlist track plus name, color, or both | `playlist.set_identity` |
+| `playlist_set_track` `muted`, `soloed`, `selected` | mute, solo, selection, or a combination, one write; FL's selection toggle is sent at most once | `playlist.set_state` |
 
-Multi-field stop, channel, EQ, and step responses include a proof flag for each
-requested field or cell. Aggregate `verified` is the logical AND of those
+Their guard fields share the names of the fields they guard; `pattern_set` also
+takes `current_pattern_number`, which guards `select`.
+
+Within one receipt, multi-field writes (stop, channel mix, an EQ band, the
+identity writes, Playlist state, and step cells) include a proof flag for each
+requested field or cell; that receipt's `verified` is the logical AND of those
 flags. Step reads and writes refuse when `pattern_number` differs from FL's
 current pattern; the connector never changes patterns implicitly.
 
@@ -359,14 +389,15 @@ step_count + update_count + 8 <= 320
 ```
 
 Thus a 256-cell pattern permits at most 56 updates in one call. Split a larger
-edit into multiple batches and call `fl_get_step_sequence` again after every
-successful batch; each subsequent call must use the newly returned digest.
+edit into several `channel_set_steps` calls and call `channel_get_steps` again
+after every successful one; each subsequent call must use the newly returned
+digest.
 These limits preserve headroom beneath the repository's fewer-than-400 FL API
 calls per idle-tick gate.
 
 ### Bounded note audition
 
-`fl_trigger_note` dispatches one note-on/note-off pair to a global Channel Rack
+`channel_play_note` dispatches one note-on/note-off pair to a global Channel Rack
 target with bounded note, velocity, MIDI channel, and duration. It can use the
 same session and channel-fingerprint guards, but returns
 `verification_basis="dispatch_only_no_state_readback"`. `dispatched: true`
@@ -379,12 +410,13 @@ unity/0 dB. Built-in EQ gain uses `0.5` as flat. An empty mixer name restores
 FL Studio's default track label.
 
 Sending *to* Master does not require `allow_master`; sending *from* mixer track
-0 does. A send route must exist before its level can be read or changed.
+0 does. A send route must exist before its level can be read or changed; one
+`sends` entry can enable a route and then set its level.
 
 ### Write response contract
 
-Every readback-verified state-write response identifies the bridge command and
-target and includes:
+Every readback-verified write receipt identifies the bridge command and target
+and includes:
 
 - the requested value;
 - `before` and `after` observations;
@@ -394,20 +426,40 @@ target and includes:
 - `project_saved: false`; and
 - warnings, with an `UNVERIFIED:` warning first when applicable.
 
-State-write results additionally report the echoed session fingerprint plus
+Write receipts additionally report the echoed session fingerprint plus
 `session_precondition_applied` and `expected_before_applied`. These fields are
 strictly validated; a malformed or contradictory bridge reply is an error, not
 a plausible-looking success.
+
+The per-target setters and `project_apply_edits` return one result that wraps
+these receipts: `requested_count`, `attempted_count`, `skipped_count`,
+`completed` (every requested write was attempted), `verified` (every requested
+write verified), `stop_on_unverified`, `stopped_reason` (`unverified_receipt`,
+`unknown_outcome`, or null), the pinned `session_fingerprint`,
+`one_session_preflight_completed: true`, `automatic_replay_attempted: false`,
+`rollback_attempted: false`, `project_saved: false`, warnings, and ordered
+`results`. Each item has a `status` of `verified`, `unverified`, or
+`error_unknown`, plus `outcome_known`, `verified`, and either the write's
+`receipt` or, for `error_unknown`, its `error` text. A per-target setter also
+echoes its target index, lists skipped writes in `skipped_steps`, and names
+each item's write in `step` (for example `volume`, `eq_band_1`, `send_2_level`,
+or `select`); `project_apply_edits` items carry their `operation_id` and
+`operation`. A refusal before any write is dispatched (writes disabled, an
+incompatible bridge, a stale session at the preflight, or a rejected argument
+or unused guard) is an error, not a result. Once writes begin, any write that
+raises, including one whose guard the bridge refused, is recorded as
+`error_unknown` and stops the call.
 
 `undo_point_created: true` means the exposed undo-history count or position
 changed around the request. False means it demonstrably did not, and null
 means FL Studio did not expose enough state to decide. False and null must not
 be treated as reversible.
 
-`fl_set_track_eq` reports gain and frequency verification separately when both
-are requested. `fl_set_plugin_param` additionally reports the plug-in and
-parameter names, display change, numeric destination check, and one of these
-proof strengths:
+Each EQ-band receipt reports gain and frequency verification separately when
+both are requested. A normalized plug-in write (`plugin_set_parameter` with
+`normalized_value`, or a `plugin_parameter` batch item) additionally reports
+the plug-in and parameter names, display change, numeric destination check,
+and one of these proof strengths in `verification_basis_detail`:
 
 - `value_readback`: the numeric destination was observed;
 - `display_change_only`: movement was observed, but the numeric accessor
@@ -430,33 +482,38 @@ failed option search, which moved the control to look and therefore attempts a
 
 ### Setting plug-in parameters
 
-`fl_set_plugin_param` is appropriate when the caller already knows the exact
-normalized value.
+`plugin_set_parameter` takes exactly one value form. `unit` and `tolerance`
+apply only to `display_value`, and `sweep_steps` only to `option`; any other
+combination is refused.
 
-`fl_set_plugin_param_display` searches for a numeric value in the units the
-plug-in displays, such as milliseconds, decibels, or hertz. The normalized
-curve is not assumed. The parameter can be addressed by index or by text
-matched against its name and display string.
+`normalized_value` is appropriate when the caller already knows the exact
+normalized value. It needs a parameter index.
 
-Supply optional `target_unit` to keep the numeric request stable across display
-prefix changes: `target_value=3000, target_unit="Hz"` also matches `3.0kHz`.
-Supported units are Hz/kHz, ms/seconds, dB, percent and ratio. The solver converts
-every later observation into the requested unit; receipts report `requested_unit`.
-Omitting the unit preserves the older numeric-display behavior. Unit-bearing
-calls require the bridge's `plugin_display_units` capability, so an older
-bridge cannot silently ignore the unit. Semantic recipes forward their units
-through the same setter.
+`display_value` searches for a numeric value in the units the plug-in
+displays, such as milliseconds, decibels, or hertz. The normalized curve is not
+assumed. The parameter can be addressed by index or by text matched against
+its name and display string. `tolerance` defaults to 2% of the target, at
+least 0.01.
 
-`fl_set_plugin_param_option` handles controls that display words, such as a
-key, scale, mode, or input type. FL Studio cannot list an enumeration, so the
-tool sweeps normalized values while recording the displayed options. **This
-moves the control through intermediate values.** If the requested option is
-not found, the bridge attempts to restore the original value before returning
-an error. The requested text must exactly match FL's actual parameter readback
-label, ignoring case; substring matches are refused. That label can differ
-from the conceptual term used by a plug-in's UI or manual (for example, 3x Osc
-exposes `pulse` for its square-shaped LFO mode).
-Do not run this tool during recording.
+Supply optional `unit` to keep the numeric request stable across display
+prefix changes: `display_value=3000, unit="Hz"` also matches `3.0kHz`.
+Supported units are Hz/kHz, ms/seconds, dB, percent and ratio. The solver
+converts every later observation into the requested unit; receipts report
+`requested_unit`. Without a unit, the first number in the display is compared
+as shown, so `3.0kHz` reads as 3.0. Unit-bearing calls require the bridge's
+`plugin_display_units` capability, so an older bridge cannot silently ignore
+the unit. Semantic recipes forward their units through the same setter.
+
+`option` handles controls that display words, such as a key, scale, mode, or
+input type. FL Studio cannot list an enumeration, so the tool sweeps normalized
+values (`sweep_steps`, default 64) while recording the displayed options, and
+the receipt lists every option found. **This moves the control through
+intermediate values.** If the requested option is not found, the bridge
+attempts to restore the original value before returning an error. The
+requested text must exactly match FL's actual parameter readback label,
+ignoring case; substring matches are refused. That label can differ from the
+conceptual term used by a plug-in's UI or manual (for example, 3x Osc exposes
+`pulse` for its square-shaped LFO mode). Do not use `option` during recording.
 
 Native Image-Line effects and third-party VST3 effects can both expose
 addressable parameters. A reported VST count can contain thousands of padding
@@ -465,49 +522,55 @@ reported count as proof that an index is a meaningful control.
 
 ## Verified batch and production workflows
 
-`fl_apply_verified_batch` accepts 1–32 operations from a closed discriminated
-union. Supported operation kinds cover the direct mixer, plug-in, transport,
-project-history, channel, pattern, Playlist, and step-sequencer setters. The
-executor pins one compatible session and adds the session guard internally.
-Each item keeps its original typed receipt.
+`project_apply_edits` accepts 1–32 operations from a closed discriminated
+union. Supported operation kinds cover every mixer track field except
+selection, a normalized `plugin_parameter` write, channel mix, solo, pitch,
+identity, and routing, pattern identity and length, Playlist identity and
+state, and `tempo`; selection, other transport settings, undo/redo, and step
+edits have no batch operation. Each item carries its own optional
+`expected_before`, a mixer item targeting Master needs `allow_master=true`, a
+send cannot route a track to itself, and no two items may write the same
+field. The executor pins one compatible session and adds the session guard
+internally. Each item keeps its original typed receipt.
 
 A batch is ordered but not transactional. With `stop_on_unverified=true`, an
 unverified result skips later items; a bridge or validation error stops the
 batch. Earlier successful mutations remain applied. `completed`, `verified`,
-`stopped_early`, counts, and ordered item outcomes make partial success
+`stopped_reason`, counts, and ordered item outcomes make partial success
 explicit. No automatic replay, rollback, or save occurs.
 
 ### Mix analysis and recommendations
 
 | Tool | Purpose |
 | --- | --- |
-| `mix_doctor` | Diagnose a real candidate bounce against versioned thresholds, with optional real reference and synchronized masking inputs. |
-| `mix_reference_recommendations` | Turn measured, aligned candidate/reference band deltas into bounded review ranges. |
-| `mix_masking_recommendations` | Turn synchronized vocal/instrument masking evidence into bounded dynamic-remediation suggestions. |
-| `mix_finish_assessment` | Run the complete read-only finish assessment and stop at the user-export boundary. |
-| `mix_list_plugin_profiles` | List bundled parameter-role adapters and processing recipes. |
-| `mix_inspect_plugin_compatibility` | Match currently loaded effects against those profiles without claiming an exact plug-in version. |
-| `mix_resolve_processing_intent` | Resolve an outcome such as `reduce_mud`, `control_dynamics`, or `add_depth` to loaded, profiled controls without applying it. |
+| `audio_diagnose_mix` | Diagnose a real candidate bounce against versioned thresholds for a `dynamic`, `balanced`, `streaming`, or `club` target, with an optional real reference and synchronized vocal/instrumental masking inputs (supplied together). Lists issues with severity, measurement, threshold, and recommendation, and sets `technical_export_ready` only when no critical or warning issue remains, confidence is not low, and every supplied comparison was usable. |
+| `audio_compare_files` | Turn measured, aligned candidate/reference band deltas into bounded review ranges. |
+| `audio_analyze_masking` | Turn synchronized vocal/instrumental masking evidence into bounded dynamic-remediation suggestions. |
 
-### Persistent metering and plans
+The comparison and masking tools return their measurements together with the
+suggestions; when alignment or synchronization is not proven, `actionable` is
+false and suggestions are withheld. None of these tools changes a file or the
+project. Product knowledge and processing goals for loaded effects come from
+Plugin Atlas (`atlas_search`, `atlas_match_loaded`) and `processing_plan`.
+
+### Persistent metering and gain staging
 
 | Tool | Purpose |
 | --- | --- |
-| `mix_start_peak_watch` | Start a process-local peak sampler for 1–3,600 seconds. |
-| `mix_get_peak_watch` | Read cumulative peaks and sampling coverage for one watch. |
-| `mix_stop_peak_watch` | Stop the watch and return its final aggregate. |
-| `mix_create_gain_stage_plan` | Convert a watch into bounded dB-fader operations without applying them. |
-| `mix_create_plan` | Store 1–32 reviewed batch operations against the current bridge session. |
-| `mix_get_plan` | Read a stored plan and its lifecycle state. |
-| `mix_apply_plan` | Apply a stored plan once through the verified batch executor. |
+| `mixer_start_peak_watch` | Start a process-local peak sampler for 1–3,600 seconds. |
+| `mixer_get_peak_watch` | Read cumulative peaks and sampling coverage for one watch. |
+| `mixer_stop_peak_watch` | Stop the watch and return its final aggregate. |
+| `mixer_plan_gain_staging` | Convert a watch into bounded `mixer_volume_db` operations, each guarded by the watch's last fader reading, without applying them. |
 
-Peak watches and plans are in-memory process state. IDs cease to exist when
-the MCP process exits. Creating a plan is not approval to apply it; plan
-application is a distinct destructive, non-idempotent tool. Plan state is
-`draft` before an attempt, `applied` only when the complete batch verifies,
-`partial` when a batch receipt reports an incomplete or unverified result, and
-`failed` when no batch receipt can be returned. Both terminal failure states
-require a fresh plan rather than an automatic retry.
+Peak watches are in-memory process state; watch IDs cease to exist when the MCP
+process exits. `mixer_plan_gain_staging` stores nothing: it returns the
+`operations`, the watch's `session_fingerprint`, a rationale per track, and the
+tracks it skipped (muted, silent, Master unless `allow_master`, or already
+within 0.5 dB). Proposing moves is not approval to apply them; pass the
+reviewed `operations` and `session_fingerprint` to `project_apply_edits`. The
+fader guards make a repeated application, or one after the user moved a fader,
+fail closed instead of moving the fader again. A proposal that would need more
+than 32 operations is refused; watch fewer tracks.
 
 ## Production Runs
 
@@ -520,14 +583,13 @@ receipts; continuation still requires fresh live context.
 
 | Tool | Purpose |
 | --- | --- |
-| `postfader_describe_operations` | List every plan operation with its summary and required fields, and return the exact JSON Schema for up to 8 named operations. Local and read-only; it does not contact FL Studio. |
-| `postfader_creation_readiness` | Aggregate all detectable creation blockers and limitations without enabling writes or changing FL Studio. |
-| `postfader_validate_run` | Read-only structural and live-capability validation. Returns the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers without enabling writes. |
-| `postfader_execute_run` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
-| `postfader_list_runs` | List up to 64 recent local run summaries across MCP restarts. |
-| `postfader_get_run` | Read current or journaled run state, generated outputs, receipts, blockers, and concise summary. |
-| `postfader_continue_run` | Resume the saved plan with `mode="resume"`, append operations, or replace only the unexecuted remainder. Completed receipts are immutable, and the FL session and project checkpoint must still match. |
-| `postfader_stop_run` | Stop future operations. It does not undo completed changes or claim rollback. |
+| `run_describe_operations` | List every plan operation with its summary and required fields, and return the exact JSON Schema for up to 8 named operations. Local and read-only; it does not contact FL Studio. |
+| `run_validate` | Read-only structural and live-capability validation, returned as `{validation, readiness}`. `validation` holds the deterministic digest, operation order, required capabilities, expected mutation categories, warnings, and blockers; `include_readiness=true` also fills `readiness` with every detectable creation blocker and limitation. Neither enables writes or changes FL Studio. |
+| `run_execute` | Validate and execute one authorized plan. The existing write boundary is enabled once for the run, receipts are retained in order, and execution stops on an unverified or unknown mutation outcome. |
+| `run_list` | List up to 64 recent local run summaries across MCP restarts. |
+| `run_get` | Read current or journaled run state, generated outputs, receipts, blockers, and concise summary. |
+| `run_continue` | Resume the saved plan with `mode="resume"`, append operations, or replace only the unexecuted remainder. Completed receipts are immutable, and the FL session and project checkpoint must still match. |
+| `run_stop` | Stop future operations. It does not undo completed changes or claim rollback. |
 
 The MVP operation union includes deterministic chord, melody, bass, and drum
 generation; exact pattern preparation or selection; Piano Roll writes and
@@ -558,27 +620,21 @@ Creation Review is a bounded continuation of one completed Production Run. It
 keeps the source-run snapshot and its receipts immutable, evaluates explicit
 caller-selected bounces, records producer feedback and independent locks,
 compiles one closed revision plan, and prepares comparison and delivery
-evidence. The public surface contains 13 dedicated MCP tools:
+evidence. The public surface contains 11 dedicated MCP tools:
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `postfader_review_start` | Open a Review Session from one completed Production Run. The request carries the review brief, scope, preservation rules, feedback, revision budget, evaluation policy, and opt-in persistence settings; it does not change FL Studio. |
-| `postfader_review_attach_assets` | Validate and attach an explicit full mix, before/after bounce, reference, synchronized stem, or section bounce. Paths must be caller-selected regular audio files; attaching never changes FL Studio. |
-| `postfader_review_evaluate` | Measure one attached asset set globally and against the known section map, with optional tempo, time signature, and export offset. It reports findings and limitations and applies zero FL mutations. |
-| `postfader_review_get` | Read a process-local or persisted Review Session, retained evidence, status, blockers, and exact next action. |
-| `postfader_review_compare` | Compare distinct before and after asset IDs when their digests, channels, duration, offsets, and section alignment are usable. An `after_full_mix` must reference its recorded revision pass; recording comparison advances that pass from `attached` to `compared`. Technical improvements and regressions remain separate from user approval. |
-| `postfader_review_plan_revision` | Compile and validate one closed, ordered `RevisionPlan` against findings/feedback, preserved elements, locks, source digests, live targets, scope, and risk limits. The plan binds to a canonical `RevisionRequest` digest; `authorized_to_modify` is excluded and must be asserted afresh at apply. Planning never mutates FL Studio. |
-| `postfader_delivery_manifest` | Build the current read-only delivery view, including independent technical, arrangement, processing, audible-quality, approval, and manual-handoff states. It writes no file or project. |
-| `postfader_review_export_handoff` | Return one exact next full-mix export request and only the stems needed to resolve an identified uncertainty. It does not render or discover arbitrary files. |
-| `postfader_review_apply_revision` | Apply one recorded revision through the existing Production Run executor. A clear modification request uses one readiness preflight and one task-scoped authorization; stale or unknown outcomes stop without replay or rollback. If FL mutation completes but session persistence fails afterward, the result is blocked with a process-local receipt and no replay. |
-| `postfader_review_record_feedback` | Store explicit structured producer feedback and any accepted-element locks. Silence, measurements, and model interpretation never become approval. |
-| `postfader_review_stop` | Stop future work for one Review Session without undoing completed FL changes or rewriting receipts. |
-| `postfader_review_delete` | Delete one Review Session's local metadata after `confirm=true`; audio files and the FL Studio project are untouched. The deleted metadata is not recoverable by PostFader. |
-| `postfader_delivery_export_manifest` | Create-only export of the delivery view as JSON and/or Markdown. Existing files are never overwritten; the result includes the logical manifest digest and exact artifact SHA-256 hashes, and newly created companions are cleaned up if the paired write fails. The FL Studio project is never saved. |
-
-The table intentionally names `postfader_delivery_manifest` once as a delivery
-view tool; the 13-tool count is the 11 `postfader_review_*` tools, that one
-delivery-view tool, and `postfader_delivery_export_manifest`.
+| `review_start` | Open a Review Session from one completed Production Run. The request carries the review brief, scope, preservation rules, feedback, revision budget, evaluation policy, and opt-in persistence settings; it does not change FL Studio. |
+| `review_attach_assets` | Validate and attach an explicit full mix, before/after bounce, reference, synchronized stem, or section bounce. Paths must be caller-selected regular audio files; attaching never changes FL Studio. |
+| `review_evaluate` | Measure one attached asset set globally and against the known section map, with optional tempo, time signature, and export offset. It reports findings and limitations and applies zero FL mutations. |
+| `review_get` | Read one Review Session in one of three views. `view="session"` (default) returns the process-local or persisted session, retained evidence, status, blockers, and exact next action. `view="export_request"` returns one exact next full-mix export request and only the stems needed to resolve an identified uncertainty; it does not render or discover arbitrary files. `view="delivery_manifest"` builds the current delivery view, including independent technical, arrangement, processing, audible-quality, approval, and manual-handoff states. No view writes a file or the project. |
+| `review_compare` | Compare distinct before and after asset IDs when their digests, channels, duration, offsets, and section alignment are usable. An `after_full_mix` must reference its recorded revision pass; recording comparison advances that pass from `attached` to `compared`. Technical improvements and regressions remain separate from user approval. |
+| `review_plan_revision` | Compile and validate one closed, ordered `RevisionPlan` against findings/feedback, preserved elements, locks, source digests, live targets, scope, and risk limits. The plan binds to a canonical `RevisionRequest` digest; `authorized_to_modify` is excluded and must be asserted afresh at apply. Planning never mutates FL Studio. |
+| `review_apply_revision` | Apply one recorded revision through the existing Production Run executor. A clear modification request uses one readiness preflight and one task-scoped authorization; stale or unknown outcomes stop without replay or rollback. If FL mutation completes but session persistence fails afterward, the result is blocked with a process-local receipt and no replay. |
+| `review_record_feedback` | Store explicit structured producer feedback and any accepted-element locks. Silence, measurements, and model interpretation never become approval. |
+| `review_stop` | Stop future work for one Review Session without undoing completed FL changes or rewriting receipts. |
+| `review_delete` | Delete one Review Session's local metadata after `confirm=true`; audio files and the FL Studio project are untouched. The deleted metadata is not recoverable by PostFader. |
+| `review_export_delivery` | Create-only export of the delivery view as JSON and/or Markdown. Existing files are never overwritten; the result includes the logical manifest digest and exact artifact SHA-256 hashes, and newly created companions are cleaned up if the paired write fails. The FL Studio project is never saved. |
 
 Opt-in Review persistence is bounded versioned local JSON at
 `<FL Studio user-data>/Settings/PostFader/creation-review-sessions-v1.json`,
@@ -599,7 +655,7 @@ returns a blocked process-local receipt and must not be replayed.
 ### Creation Review operations inside a Production Run
 
 The same workflow is available to a typed Production Run through a closed set
-of 9 review operations. Their names are distinct from the 13 top-level MCP
+of 9 review operations. Their names are distinct from the 11 top-level MCP
 tools and can be linked with the run's typed output references:
 
 | Operation | Result and boundary |
@@ -630,7 +686,7 @@ references (`review_session`, `evaluation_report`, `finding`, `feedback_lock`,
 | `compose_melody` | Generate a seed-reproducible bounded melody with register, contour, and density controls. |
 | `compose_bassline` | Generate roots, eighths, octaves, or walking bass against Roman harmony. |
 | `compose_drums` | Generate GM-mapped house, hip-hop, trap, pop, or drum-and-bass notes. |
-| `midi_export_type1` | Atomically write a standard Type-1 MIDI file, reopen it, parse it, and verify header, digest, tracks, and note events. Existing files require `overwrite=true`. |
+| `compose_export_midi` | Atomically write a standard Type-1 MIDI file, reopen it, parse it, and verify header, digest, tracks, and note events. Existing files require `overwrite=true`. |
 | `audio_estimate_tempo_and_key` | Estimate periodic tempo with half/double-time candidates and rank global major/minor keys. |
 | `audio_transcribe_melody` | Extract a reviewable, optionally beat-quantized note sequence from one isolated monophonic source. |
 
@@ -642,14 +698,14 @@ are estimates, not project metadata.
 
 | Tool | Purpose |
 | --- | --- |
-| `plugins_list_available` | Read the macOS native Add menu and return names, instrument/effect kinds and menu paths. Opens/closes the menu and changes focus; it is not annotated as a read-only tool. |
-| `plugins_load` | Add one named instrument to the Channel Rack or one effect to `track_index`, then verify the new channel/slot through the bridge. Master requires explicit `allow_master`. |
+| `plugin_list_available` | Read the macOS native Add menu and return names, instrument/effect kinds and menu paths. Opens/closes the menu and changes focus; it is not annotated as a read-only tool. |
+| `plugin_load` | Add one named instrument to the Channel Rack or one effect to the request's `track_index`, then verify the new channel/slot through the bridge. Master requires explicit `allow_master`. |
 
 Loading requires macOS Accessibility access and the observed English menu
 structure. Availability covers Add-menu favorites, not all installed products
 or license ownership. No hash approval is required. Loading changes the
 project, so it is refused, before the menu is opened, unless session write mode
-is on (`fl_set_write_mode`), like every other setter. An effect load first
+is on (`session_set_write_mode`), like every other setter. An effect load first
 selects its mixer destination. A `loaded` receipt includes new-instance evidence;
 `unknown_outcome` must be inspected before any further load attempt. Existing
 instances must remain unchanged, and no dispatched click is retried. The
@@ -659,9 +715,9 @@ adapter does not save the project or claim an undo point.
 
 | Tool | Purpose |
 | --- | --- |
-| `postfader_render_saved_project` | Start a background WAV export from an existing `.flp` using FL's documented command-line exporter. Takes a parent output directory and creates a fresh per-job directory. |
-| `postfader_render_get_job` | Return job state and fully decoded WAV metadata. `output_ready` means the file is readable; `completed` additionally requires successful application exit. |
-| `postfader_render_cancel` | Cancel the owned render process or waiter. On macOS the separate FL renderer may remain running, which the result reports explicitly. |
+| `render_start_job` | Start a background WAV export from an existing `.flp` using FL's documented command-line exporter. Takes a parent output directory and creates a fresh per-job directory. |
+| `render_get_job` | Return job state and fully decoded WAV metadata. `output_ready` means the file is readable; `completed` additionally requires successful application exit. |
+| `render_cancel_job` | Cancel the owned render process or waiter. On macOS the separate FL renderer may remain running, which the result reports explicitly. |
 
 Rendering includes only the project saved on disk. It launches a separate FL
 instance on macOS and an owned executable on Windows; no existing FL process is
@@ -684,10 +740,10 @@ a `next_offset`. Each page is a fresh observation, not an atomic whole-score dum
 
 | Tool | Purpose |
 | --- | --- |
-| `piano_roll_bridge` | Inspect setup, atomically prepare the bootstrap script, or confirm the user's one manual run for this process. |
+| `piano_roll_setup` | Inspect setup (`action="status"`), atomically prepare the bootstrap script (`"prepare"`), or confirm the user's one manual run for this process (`"confirm"` with `confirm_user_ran_script=true`). |
 | `piano_roll_read_notes` | Inspect up to 2,048 raw note indices per page through the script runtime; no musical write mode is required. |
 | `piano_roll_write_notes` | Prepare append/replace note content and optionally target FL plus dispatch the run-last-script shortcut. |
-| `piano_roll_transform` | Quantize, transpose, humanize, duplicate, delete, or clear selected/all live score notes. |
+| `piano_roll_transform_notes` | Quantize, transpose, humanize, duplicate, delete, or clear selected/all live score notes. |
 
 Automatic Piano Roll use requires the one-time prepare/manual-run/confirm
 handshake. The normal bridge proves channel selection, pattern selection, and
@@ -702,8 +758,8 @@ without changing notes in the live project.
 
 | Tool | Purpose and evidence boundary |
 | --- | --- |
-| `arrangement_prepare_pattern` | Find an FL-reported empty pattern, then select, name/color, and size it through ordered direct verified writes. The workflow is non-atomic and returns `selection`, optional `identity`/`length`, plus an exact outcome if it stops after an unverified step. |
-| `arrangement_add_section_markers` | Convert one-based bars/beat offsets through live PPQ and add up to 32 markers. Names are later-tick observed; times remain unverified because FL has no getter. |
+| `pattern_create` | Find the first FL-reported empty pattern from `start_pattern_number`, then select, name/color, and size it (default 16 beats) through ordered direct verified writes. The workflow is non-atomic and returns `selection`, optional `identity`/`length`, plus an exact outcome if it stops after an unverified step. |
+| `playlist_add_markers` | Convert one-based bars/beat offsets through live PPQ and add up to 32 markers. Names are later-tick observed; times remain unverified because FL has no getter. |
 | `automation_record_value` | Dispatch one public REC controller value while playing and recording. The controlled value and capture conditions are checked; automation-point existence remains unknown. |
 
 The last two receipts deliberately keep aggregate `verified=false` where FL
@@ -715,27 +771,30 @@ cannot expose the fact needed to prove the whole requested outcome.
 | --- | --- |
 | `WriteModeConfirmationRequired` | Enabling was requested without literal `confirm_user_present=true` from an explicit present-user request. |
 | `WriteModeUnavailable` | Provenance, runtime-control support, session identity, command metadata, or the post-transition handshake did not safely prove the requested capability state. |
-| `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface. Ask the client to call `fl_set_write_mode(enabled=true, confirm_user_present=true)`. |
+| `VerifiedWritesUnavailable` | The live bridge does not report the verified write surface; ask the client to call `session_set_write_mode(enabled=true, confirm_user_present=true)`. A per-target setter or `project_apply_edits` also raises it when the session it checks before its first write is missing or differs from the supplied `session_fingerprint`. |
 | `TrackBMutationsUnavailable` | A Track B mutation is disabled, the live session is missing, or a supplied session changed before dispatch. |
 | `IncompatibleFLStudio` | The live handshake failed the FL Studio version, program-title, MIDI API, or bridge-protocol gate. |
-| `ValueError` | A value is out of range, a multi-field call names no field to change, a route/current-pattern/digest/precondition is invalid, a plug-in selector is ambiguous, or mixer track 0 lacks explicit authorization. |
+| `ValueError` | A value is out of range, a multi-field call names no field to change, conflicting value forms are combined (for example two `plugin_set_parameter` values, or `volume_normalized` with `volume_db`), an `expected_before` guard names a field the call does not change, a route/current-pattern/digest/precondition is invalid, a plug-in selector is ambiguous, or mixer track 0 lacks explicit authorization. |
 | Argument validation | An unknown, misspelled, or incorrectly typed MCP argument was rejected by the strict schema. |
 
 ## Audio tools
 
 The FL Studio scripting API provides no live audio. These tools read audio
 files from disk and return measurements, provenance, confidence, and explicit
-limitations. They do not rank a mix, choose a candidate, or prescribe a
-processing move.
+limitations. They do not change a file or the project, rank mixes against each
+other, or choose a candidate. Suggestions appear only where described in
+[Mix analysis and recommendations](#mix-analysis-and-recommendations), and only
+when the evidence is actionable.
 
 | Tool | Purpose |
 | --- | --- |
 | `audio_analyze_file` | Measure level, spectrum, dynamics, stereo, and optionally monophonic pitch. Pitch is useful for a lead vocal or other monophonic stem and unreliable on a full mix. |
-| `audio_compare_files` | Measure per-band deltas over the time-aligned, loudness-matched common overlap of a reference and candidate. |
-| `audio_analyze_masking` | Measure per-band vocal/instrument spectral overlap and level margins. Inputs must cover the same section sample-synchronously. |
-| `audio_find_recent_bounces` | List recent audio files under the fixed, bounded FL Studio output and project roots. |
+| `audio_compare_files` | Measure per-band deltas over the time-aligned, loudness-matched common overlap of `reference_path` and `candidate_path`, with bounded review ranges when the comparison is ready. |
+| `audio_analyze_masking` | Measure per-band vocal/instrumental spectral overlap and level margins from `vocal_path` and `instrumental_path`, with bounded remediation suggestions when the evidence is actionable. Inputs must cover the same section sample-synchronously. |
+| `audio_diagnose_mix` | Measure one candidate, with optional reference and masking checks, against a delivery target's thresholds and report issues and `technical_export_ready`. |
+| `audio_list_recent_bounces` | List recent audio files under the fixed, bounded FL Studio output and project roots. |
 
-The three measurement tools accept `max_seconds` from 1 to 600; the default is
+The four measurement tools accept `max_seconds` from 1 to 600; the default is
 600 seconds. Direct inputs must be absolute paths to regular files, may not
 contain a `..` component, must use an allowed audio extension, and must not
 exceed 512 MiB. A direct path can be outside FL Studio's normal folders.
@@ -745,7 +804,7 @@ The supported extension allowlist is `.wav`, `.wave`, `.w64`, `.rf64`, `.aif`,
 available through the installed audio library.
 
 Results include canonical paths and SHA-256 hashes. They do not contain audio
-samples. `audio_find_recent_bounces` reads directory metadata only, skips
+samples. `audio_list_recent_bounces` reads directory metadata only, skips
 hidden entries and directory symlinks, and bounds both depth and work.
 
 ## Bridge commands
@@ -766,7 +825,8 @@ The MCP server maps its tools to these local protocol commands.
 | `mixer.track` | `track` | One track's complete inspection. |
 | `plugin.params` | track, slot, page and filter arguments | One bounded parameter page. |
 | `plugin.scan_params` | track, slot, and bounded scan arguments | De-padded controls and scan progress. |
-| `plugin.preset_count` | explicit effect/generator target | FL's reported preset count. |
+| `plugin.presets`, `plugin.current_preset`, `plugin.preset_count` | explicit effect/generator target; `plugin.presets` also takes `start`, `limit`, and include flags | A preset page with FL's count and current identity, the current preset alone, or the count alone. |
+| `plugin.pad_map` | explicit effect/generator target | Reported pads with notes, colors, and empty/muted flags. |
 | `channels.list` | none | Channel Rack contents. |
 | `patterns.list`, `patterns.find_empty` | optional bounded starting pattern | Pattern inventory or first FL-reported empty pattern. |
 | `playlist.list` | none | One-based Playlist track identity and state. |
