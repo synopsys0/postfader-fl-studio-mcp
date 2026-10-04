@@ -389,7 +389,7 @@ class MutationGateTests(unittest.TestCase):
         controller, client = controller_for(
             transport_handler, ping=compatible_ping(writable=False)
         )
-        with self.assertRaisesRegex(TrackBMutationsUnavailable, "fl_set_write_mode"):
+        with self.assertRaisesRegex(TrackBMutationsUnavailable, "session_set_write_mode"):
             controller.set_playing(playing=True)
         self.assertEqual(client.calls, [])
 
@@ -2064,433 +2064,193 @@ class TargetAwarePluginTests(unittest.TestCase):
 
 
 class TargetAwareMCPBoundaryTests(unittest.TestCase):
-    def test_mcp_display_unit_is_forwarded_for_both_addressing_modes(self) -> None:
-        with mock.patch.object(mcp_server, "_write", new_callable=mock.AsyncMock) as legacy, mock.patch.object(mcp_server, "_performance_write", new_callable=mock.AsyncMock) as targeted:
-            asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", track_index=4, slot_index=2))
-            asyncio.run(mcp_server.fl_set_plugin_param_display(parameter=1, target_value=3000.0, target_unit="Hz", target=ChannelGeneratorTarget(channel_index=7)))
-        self.assertEqual(legacy.await_args.kwargs["target_unit"], "Hz")
-        self.assertEqual(targeted.await_args.kwargs["target_unit"], "Hz")
+    def test_mcp_display_unit_is_forwarded_for_both_target_kinds(self) -> None:
+        with mock.patch.object(
+            mcp_server, "_performance_write", new_callable=mock.AsyncMock
+        ) as targeted:
+            for target in (
+                MixerEffectTarget(track_index=4, slot_index=2),
+                ChannelGeneratorTarget(channel_index=7),
+            ):
+                asyncio.run(
+                    mcp_server.plugin_set_parameter(
+                        target=target, parameter=1, display_value=3000.0, unit="Hz"
+                    )
+                )
+                self.assertEqual(targeted.await_args.kwargs["target_unit"], "Hz")
+                self.assertEqual(targeted.await_args.kwargs["target"], target)
 
-    def test_generator_targets_route_through_performance_methods(self) -> None:
-        target = ChannelGeneratorTarget(channel_index=7)
-        read_results = [object(), object(), object()]
-        write_results = [object(), object(), object()]
+    def test_plugin_tools_route_every_target_through_performance_methods(self) -> None:
+        for target in (
+            ChannelGeneratorTarget(channel_index=7),
+            MixerEffectTarget(track_index=2, slot_index=3),
+        ):
+            with self.subTest(kind=target.kind):
+                read_results = [object(), object()]
+                write_results = [object(), object(), object()]
+                with (
+                    mock.patch.object(
+                        mcp_server,
+                        "_performance_read",
+                        new=mock.AsyncMock(side_effect=read_results),
+                    ) as performance_read,
+                    mock.patch.object(
+                        mcp_server,
+                        "_performance_write",
+                        new=mock.AsyncMock(side_effect=write_results),
+                    ) as performance_write,
+                    mock.patch.object(
+                        mcp_server,
+                        "_run",
+                        new=mock.AsyncMock(side_effect=AssertionError("legacy read used")),
+                    ) as legacy_read,
+                ):
+                    actual_reads = [
+                        asyncio.run(mcp_server.plugin_list_loaded(only_used=True)),
+                        asyncio.run(
+                            mcp_server.plugin_list_parameters(
+                                target=target,
+                                start=1,
+                                end=9,
+                                max_indices=8,
+                                max_results=3,
+                            )
+                        ),
+                    ]
+                    actual_writes = [
+                        asyncio.run(
+                            mcp_server.plugin_set_parameter(
+                                target=target,
+                                parameter=4,
+                                normalized_value=0.75,
+                                session_fingerprint=SESSION,
+                            )
+                        ),
+                        asyncio.run(
+                            mcp_server.plugin_set_parameter(
+                                target=target,
+                                parameter="Drive",
+                                display_value=6.0,
+                                tolerance=0.1,
+                                session_fingerprint=SESSION,
+                            )
+                        ),
+                        asyncio.run(
+                            mcp_server.plugin_set_parameter(
+                                target=target,
+                                parameter=2,
+                                option="Wide",
+                                sweep_steps=16,
+                                session_fingerprint=SESSION,
+                            )
+                        ),
+                    ]
+
+                self.assertEqual(actual_reads, read_results)
+                self.assertEqual(actual_writes, write_results)
+                self.assertEqual(
+                    performance_read.await_args_list,
+                    [
+                        mock.call("scan_loaded_plugins", only_used=True),
+                        mock.call(
+                            "scan_plugin_parameters",
+                            target=target,
+                            start=1,
+                            end=9,
+                            max_indices=8,
+                            max_results=3,
+                        ),
+                    ],
+                )
+                self.assertEqual(
+                    performance_write.await_args_list,
+                    [
+                        mock.call(
+                            "set_plugin_parameter",
+                            parameter_index=4,
+                            normalized_value=0.75,
+                            target=target,
+                            session_fingerprint=SESSION,
+                            expected_before=None,
+                        ),
+                        mock.call(
+                            "set_plugin_parameter_display",
+                            parameter="Drive",
+                            target_value=6.0,
+                            tolerance=0.1,
+                            target=target,
+                            session_fingerprint=SESSION,
+                            expected_before=None,
+                        ),
+                        mock.call(
+                            "set_plugin_parameter_option",
+                            parameter=2,
+                            option="Wide",
+                            sweep_steps=16,
+                            target=target,
+                            session_fingerprint=SESSION,
+                            expected_before=None,
+                        ),
+                    ],
+                )
+                legacy_read.assert_not_awaited()
+
+    def test_legacy_track_and_slot_pair_is_refused_at_argument_validation(self) -> None:
+        target = {"kind": "mixer_effect", "track_index": 2, "slot_index": 3}
+        cases = (
+            ("plugin_list_parameters", {}),
+            ("plugin_set_parameter", {"parameter": 4, "normalized_value": 0.75}),
+            ("plugin_list_presets", {}),
+        )
         with (
             mock.patch.object(
                 mcp_server,
                 "_performance_read",
-                new=mock.AsyncMock(side_effect=read_results),
+                new=mock.AsyncMock(side_effect=AssertionError("performance read used")),
             ) as performance_read,
             mock.patch.object(
                 mcp_server,
                 "_performance_write",
-                new=mock.AsyncMock(side_effect=write_results),
-            ) as performance_write,
-            mock.patch.object(
-                mcp_server,
-                "_run",
-                new=mock.AsyncMock(side_effect=AssertionError("legacy read used")),
-            ) as legacy_read,
-            mock.patch.object(
-                mcp_server,
-                "_write",
-                new=mock.AsyncMock(side_effect=AssertionError("legacy write used")),
-            ) as legacy_write,
-        ):
-            actual_reads = [
-                asyncio.run(
-                    mcp_server.plugins_scan_loaded_plugins(
-                        only_used=True, include_channel_generators=True
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.plugins_inspect_parameter_map(
-                        target=target,
-                        limit=7,
-                        offset=2,
-                        name_filter="cut",
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.plugins_scan_parameters(
-                        target=target,
-                        start=1,
-                        end=9,
-                        max_indices=8,
-                        max_results=3,
-                    )
-                ),
-            ]
-            actual_writes = [
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param(
-                        parameter_index=4,
-                        normalized_value=0.75,
-                        target=target,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param_display(
-                        parameter="Drive",
-                        target_value=6.0,
-                        target=target,
-                        tolerance=0.1,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param_option(
-                        parameter=2,
-                        option="Wide",
-                        target=target,
-                        sweep_steps=16,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-            ]
-
-        self.assertEqual(actual_reads, read_results)
-        self.assertEqual(actual_writes, write_results)
-        self.assertEqual(
-            performance_read.await_args_list,
-            [
-                mock.call("scan_loaded_plugins", only_used=True),
-                mock.call(
-                    "plugin_parameters",
-                    target=target,
-                    track_index=None,
-                    slot_index=None,
-                    limit=7,
-                    offset=2,
-                    name_filter="cut",
-                ),
-                mock.call(
-                    "scan_plugin_parameters",
-                    target=target,
-                    track_index=None,
-                    slot_index=None,
-                    start=1,
-                    end=9,
-                    max_indices=8,
-                    max_results=3,
-                ),
-            ],
-        )
-        self.assertEqual(
-            performance_write.await_args_list,
-            [
-                mock.call(
-                    "set_plugin_parameter",
-                    target=target,
-                    track_index=None,
-                    slot_index=None,
-                    parameter_index=4,
-                    normalized_value=0.75,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-                mock.call(
-                    "set_plugin_parameter_display",
-                    target=target,
-                    track_index=None,
-                    slot_index=None,
-                    parameter="Drive",
-                    target_value=6.0,
-                    tolerance=0.1,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-                mock.call(
-                    "set_plugin_parameter_option",
-                    target=target,
-                    track_index=None,
-                    slot_index=None,
-                    parameter=2,
-                    option="Wide",
-                    sweep_steps=16,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-            ],
-        )
-        legacy_read.assert_not_awaited()
-        legacy_write.assert_not_awaited()
-
-    def test_legacy_calls_keep_the_original_inspector_and_writer_paths(self) -> None:
-        read_results = [object(), object(), object()]
-        write_results = [object(), object(), object()]
-        with (
-            mock.patch.object(
-                mcp_server,
-                "_run",
-                new=mock.AsyncMock(side_effect=read_results),
-            ) as legacy_read,
-            mock.patch.object(
-                mcp_server,
-                "_write",
-                new=mock.AsyncMock(side_effect=write_results),
-            ) as legacy_write,
-            mock.patch.object(
-                mcp_server,
-                "_performance_read",
-                new=mock.AsyncMock(
-                    side_effect=AssertionError("performance read used")
-                ),
-            ) as performance_read,
-            mock.patch.object(
-                mcp_server,
-                "_performance_write",
-                new=mock.AsyncMock(
-                    side_effect=AssertionError("performance write used")
-                ),
+                new=mock.AsyncMock(side_effect=AssertionError("performance write used")),
             ) as performance_write,
         ):
-            actual_reads = [
-                asyncio.run(
-                    mcp_server.plugins_scan_loaded_plugins(only_used=True)
-                ),
-                asyncio.run(
-                    mcp_server.plugins_inspect_parameter_map(
-                        track_index=2,
-                        slot_index=3,
-                        limit=7,
-                        offset=2,
-                        name_filter="cut",
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.plugins_scan_parameters(
-                        track_index=2,
-                        slot_index=3,
-                        start=1,
-                        end=9,
-                        max_indices=8,
-                        max_results=3,
-                    )
-                ),
-            ]
-            actual_writes = [
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param(
-                        parameter_index=4,
-                        normalized_value=0.75,
-                        track_index=2,
-                        slot_index=3,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param_display(
-                        parameter="Drive",
-                        target_value=6.0,
-                        track_index=2,
-                        slot_index=3,
-                        tolerance=0.1,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-                asyncio.run(
-                    mcp_server.fl_set_plugin_param_option(
-                        parameter=2,
-                        option="Wide",
-                        track_index=2,
-                        slot_index=3,
-                        sweep_steps=16,
-                        session_fingerprint=SESSION,
-                    )
-                ),
-            ]
-
-        self.assertEqual(actual_reads, read_results)
-        self.assertEqual(actual_writes, write_results)
-        self.assertEqual(
-            legacy_read.await_args_list,
-            [
-                mock.call("scan_loaded_plugins", only_used=True),
-                mock.call(
-                    "plugin_parameters",
-                    track_index=2,
-                    slot_index=3,
-                    limit=7,
-                    offset=2,
-                    name_filter="cut",
-                ),
-                mock.call(
-                    "scan_plugin_parameters",
-                    track_index=2,
-                    slot_index=3,
-                    start=1,
-                    end=9,
-                    max_indices=8,
-                    max_results=3,
-                ),
-            ],
-        )
-        self.assertEqual(
-            legacy_write.await_args_list,
-            [
-                mock.call(
-                    "set_plugin_parameter",
-                    track_index=2,
-                    slot_index=3,
-                    parameter_index=4,
-                    normalized_value=0.75,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-                mock.call(
-                    "set_plugin_parameter_display",
-                    track_index=2,
-                    slot_index=3,
-                    parameter="Drive",
-                    target_value=6.0,
-                    tolerance=0.1,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-                mock.call(
-                    "set_plugin_parameter_option",
-                    track_index=2,
-                    slot_index=3,
-                    parameter=2,
-                    option="Wide",
-                    sweep_steps=16,
-                    allow_master=False,
-                    session_fingerprint=SESSION,
-                    expected_before=None,
-                ),
-            ],
-        )
+            for name, arguments in cases:
+                for address in (
+                    {"track_index": 2, "slot_index": 3},
+                    {"target": target, "track_index": 2, "slot_index": 3},
+                ):
+                    with self.subTest(tool=name, address=sorted(address)):
+                        with self.assertRaisesRegex(
+                            Exception, "Extra inputs are not permitted|Field required"
+                        ):
+                            asyncio.run(
+                                mcp_server.mcp.call_tool(name, {**arguments, **address})
+                            )
         performance_read.assert_not_awaited()
         performance_write.assert_not_awaited()
 
-    def test_target_plus_legacy_pair_is_rejected_before_bridge_dispatch(self) -> None:
-        def unreachable(command: str, arguments: dict[str, Any]) -> dict[str, Any]:
-            raise AssertionError(f"bridge dispatched {command}: {arguments}")
-
-        inspector, read_client = inspector_for(unreachable)
-        controller, write_client = controller_for(unreachable)
+    def test_parameter_value_forms_are_checked_before_any_route(self) -> None:
         target = ChannelGeneratorTarget(channel_index=7)
         cases = (
-            (
-                "inspect parameter map",
-                mcp_server.plugins_inspect_parameter_map,
-                {},
-            ),
-            ("scan parameters", mcp_server.plugins_scan_parameters, {}),
-            (
-                "set normalized parameter",
-                mcp_server.fl_set_plugin_param,
-                {"parameter_index": 4, "normalized_value": 0.75},
-            ),
-            (
-                "set displayed parameter",
-                mcp_server.fl_set_plugin_param_display,
-                {"parameter": "Drive", "target_value": 6.0},
-            ),
-            (
-                "set option parameter",
-                mcp_server.fl_set_plugin_param_option,
-                {"parameter": 2, "option": "Wide"},
-            ),
+            ({"parameter": 1}, "exactly one of"),
+            ({"parameter": 1, "normalized_value": 0.5, "display_value": 6.0}, "exactly one of"),
+            ({"parameter": 1, "display_value": 6.0, "option": "Wide"}, "exactly one of"),
+            ({"parameter": "Drive", "normalized_value": 0.5}, "needs a parameter index"),
+            ({"parameter": 1, "normalized_value": 0.5, "unit": "Hz"}, "only to display_value"),
+            ({"parameter": 1, "option": "Wide", "tolerance": 0.1}, "only to display_value"),
+            ({"parameter": 1, "display_value": 6.0, "sweep_steps": 8}, "only to option"),
         )
-        with (
-            mock.patch.object(
-                mcp_server, "TrackBInspector", return_value=inspector
-            ),
-            mock.patch.object(
-                mcp_server, "TrackBController", return_value=controller
-            ),
-        ):
-            for label, function, arguments in cases:
-                with self.subTest(tool=label):
-                    with self.assertRaisesRegex(ValueError, "not both"):
+        with mock.patch.object(
+            mcp_server,
+            "_performance_write",
+            new=mock.AsyncMock(side_effect=AssertionError("performance write used")),
+        ) as performance_write:
+            for arguments, message in cases:
+                with self.subTest(arguments=arguments):
+                    with self.assertRaisesRegex(ValueError, message):
                         asyncio.run(
-                            function(
-                                target=target,
-                                track_index=2,
-                                slot_index=3,
-                                **arguments,
-                            )
+                            mcp_server.plugin_set_parameter(target=target, **arguments)
                         )
-
-        self.assertEqual(read_client.ping_count, 0)
-        self.assertEqual(write_client.ping_count, 0)
-        self.assertEqual(read_client.calls, [])
-        self.assertEqual(write_client.calls, [])
-
-    def test_incomplete_legacy_pairs_are_rejected_before_any_route(self) -> None:
-        cases = (
-            (
-                "inspect parameter map",
-                mcp_server.plugins_inspect_parameter_map,
-                {},
-            ),
-            ("scan parameters", mcp_server.plugins_scan_parameters, {}),
-            (
-                "set normalized parameter",
-                mcp_server.fl_set_plugin_param,
-                {"parameter_index": 4, "normalized_value": 0.75},
-            ),
-            (
-                "set displayed parameter",
-                mcp_server.fl_set_plugin_param_display,
-                {"parameter": "Drive", "target_value": 6.0},
-            ),
-            (
-                "set option parameter",
-                mcp_server.fl_set_plugin_param_option,
-                {"parameter": 2, "option": "Wide"},
-            ),
-        )
-        incomplete_addresses = (
-            {},
-            {"track_index": 2},
-            {"slot_index": 3},
-        )
-        with (
-            mock.patch.object(
-                mcp_server,
-                "_run",
-                new=mock.AsyncMock(side_effect=AssertionError("legacy read used")),
-            ) as legacy_read,
-            mock.patch.object(
-                mcp_server,
-                "_write",
-                new=mock.AsyncMock(side_effect=AssertionError("legacy write used")),
-            ) as legacy_write,
-            mock.patch.object(
-                mcp_server,
-                "_performance_read",
-                new=mock.AsyncMock(
-                    side_effect=AssertionError("performance read used")
-                ),
-            ) as performance_read,
-            mock.patch.object(
-                mcp_server,
-                "_performance_write",
-                new=mock.AsyncMock(
-                    side_effect=AssertionError("performance write used")
-                ),
-            ) as performance_write,
-        ):
-            for label, function, base_arguments in cases:
-                for address in incomplete_addresses:
-                    with self.subTest(tool=label, address=address):
-                        with self.assertRaisesRegex(
-                            ValueError, "target or both legacy"
-                        ):
-                            asyncio.run(function(**base_arguments, **address))
-
-        legacy_read.assert_not_awaited()
-        legacy_write.assert_not_awaited()
-        performance_read.assert_not_awaited()
         performance_write.assert_not_awaited()
 
 

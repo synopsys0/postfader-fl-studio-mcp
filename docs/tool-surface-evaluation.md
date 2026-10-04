@@ -1,8 +1,8 @@
 # Tool-surface evaluation
 
-> V11 inventory: 135 tools and 8 resources, checked against the SDK listing.
+> V12 inventory: 85 tools and 8 resources, checked against the SDK listing.
 
-PostFader V11 exposes 135 MCP tools and 8 live resources. This document is a
+PostFader V12 exposes 85 MCP tools and 8 live resources. This document is a
 maintainer and early-user playbook for collecting real compatibility evidence
 about that surface. It does not propose an immediate redesign, tool removal,
 profile rollout, telemetry, or a silent change to the default surface.
@@ -15,20 +15,37 @@ count from a model transcript alone.
 
 ## Current surface to evaluate
 
-The current contract groups the 135 tools as follows:
+The current contract groups the 85 tools as follows. Every tool name follows
+`<area>_<verb>[_<object>]`, and the groups match the
+[tool reference](tools.md):
 
-| SDK annotation group | Count | Evaluation focus |
+| Tool group | Count | Evaluation focus |
 | --- | ---: | --- |
-| Read-only tools | 63 | Project and audio observations, Plugin Atlas, Sound Selection, plan-operation schemas, validation, retained runs, review evidence, and render status. |
-| Destructive, non-idempotent tools | 56 | Direct setters, batches, Production Run execution/continuation, preset application, note writes, native plug-in loading, and revision/delivery mutations. |
-| Non-read-only, non-destructive tools | 14 | Audition, watches, preparation, native-menu discovery, Piano Roll inspection/navigation, render start/cancel, and workflow state. |
-| Destructive, idempotent tools | 2 | Session write-mode control and confirmed local Sound Selection history reset. |
+| Session and project | 6 | Write-mode control, the project summary (which carries the transport), undo/redo history, and multi-target edits with `project_apply_edits`. |
+| Transport | 1 | One `transport_set` call for playback, recording, position, tempo, loop mode, and time signature, written in a fixed order. |
+| Mixer | 7 | Track reads, `mixer_set_track` for any combination of one track's fields, Master authorization, peak watches, and gain-staging proposals. |
+| Channels | 5 | Channel reads, `channel_set`, step-grid digests, and note audition. |
+| Patterns, Playlist, and automation | 8 | `pattern_set` versus `pattern_create`, `playlist_set_track`, section markers, and automation recording. |
+| Plug-ins and presets | 8 | `target` objects, `plugin_set_parameter` value forms, presets, pad maps, and macOS loading. |
+| Plugin Atlas | 4 | Offline product knowledge, kept distinct from loaded state. |
+| Effect processing | 2 | A reviewed `processing_plan` before `processing_apply`. |
+| Sound Selection | 7 | Palette planning and variations, application, feedback, and local history. |
+| Audio analysis | 7 | Exported files only: measurement, diagnosis, reference comparison, masking, tempo and key, transcription, and recent bounces. |
+| Composition and MIDI | 5 | Offline note generation and Type-1 MIDI export. |
+| Piano Roll | 4 | The setup handshake and dispatch-only note evidence. |
+| Production Runs | 7 | On-demand operation schemas, validation, execution, resumption, and retained runs. |
+| Creation Review and delivery | 11 | Review evidence and views, one bounded revision, and delivery export. |
+| Saved-project rendering | 3 | Saved `.flp` renders as background jobs. |
 
-The category labels are evaluation aids, not a second API taxonomy. Some tools
-have a nuanced evidence boundary: an arrangement marker or automation receipt
-can contain later-tick observations while remaining aggregate-unverified, a
-Piano Roll shortcut can be dispatched without note readback, and a verified
-batch is ordered but non-atomic. Preserve those distinctions when reporting
+By SDK annotation, 47 tools are read-only, 24 are destructive and not
+idempotent, 12 are neither read-only nor destructive, and 2 (session write
+mode and the confirmed Sound Selection history reset) are destructive but
+idempotent; 21 tools can change the open project. These labels are evaluation
+aids, not a second API taxonomy. Some tools have a nuanced evidence boundary:
+a marker or automation receipt can contain later-tick observations while
+remaining aggregate-unverified, a Piano Roll shortcut can be dispatched
+without note readback, and a merged setter or `project_apply_edits` call is
+ordered but non-atomic. Preserve those distinctions when reporting
 tool-selection behavior.
 
 The eight resources are:
@@ -94,7 +111,7 @@ record. Keep the report generic enough to avoid project disclosure.
   project titles, track names, plug-in names if sensitive, values that identify
   a session, absolute paths, prompts, credentials, and raw model transcripts.
 - Whether the client made reads before a mutation, whether it requested
-  `fl_set_write_mode`, whether `confirm_user_present` was supplied, and whether
+  `session_set_write_mode`, whether `confirm_user_present` was supplied, and whether
   a Master target was explicitly authorized.
 - The relevant response evidence: `verified`, per-field proof,
   `verification_basis`, warnings, refusal type, plan state, and whether the
@@ -123,9 +140,10 @@ one case, but should name each applicable case explicitly.
 ### Wrong tool selected
 
 Report when the model selects a tool whose target, evidence, or mutation scope
-does not fit the expressed goal. Examples include choosing a normalized setter
-when the user supplied a plug-in display value, using a mixer effect target for
-a Channel Rack generator, or using a mutating tool for a read-only question.
+does not fit the expressed goal. Examples include passing `normalized_value` to
+`plugin_set_parameter` when the user supplied a plug-in display value, using a
+mixer effect target for a Channel Rack generator, or using a mutating tool for
+a read-only question.
 
 Record the user goal, the candidate tools exposed, the selected tool, why it
 was a mismatch, whether it dispatched, and the safer existing tool. If no
@@ -135,10 +153,10 @@ readback evidence.
 
 ### Workflow tool ignored in favor of low-level setters
 
-Report when a request clearly matches an existing bounded workflow—such as Mix
-Doctor recommendations, a gain-staging plan, `mix_create_plan`,
-`arrangement_prepare_pattern`, or a deterministic composition tool—but the
-model repeatedly constructs low-level operations instead.
+Report when a request clearly matches an existing bounded workflow—such as
+`audio_diagnose_mix`, `mixer_plan_gain_staging`, `processing_plan`,
+`pattern_create`, a Production Run, or a deterministic composition tool—but
+the model repeatedly constructs low-level operations instead.
 
 Include whether the workflow was listed and its schema was available, the
 low-level sequence chosen, whether the workflow would have preserved a stronger
@@ -162,19 +180,24 @@ valuable project.
 Report when a client or model cannot reliably distinguish strict arguments,
 discriminated targets, optional guards, bounded arrays, or evidence fields.
 Examples include confusing `track_index`/`slot_index` with a
-`channel_generator` target, treating unknown fields as accepted, sending a
-step update without its required digest, or interpreting `verified: false` as
-an exception.
+`channel_generator` target, supplying more than one of `plugin_set_parameter`'s
+value forms, guarding a field the call does not set, treating unknown fields
+as accepted, sending a step update without its required digest, or
+interpreting `verified: false` as an exception.
 
 Include the smallest sanitized schema fragment and the exact validation/refusal
 observed. Do not “fix” overload by weakening contracts, accepting unknown
 fields, widening bounds, or hiding partial evidence.
 
-V11 shrinks the advertised listing without touching validation: Production Run
-plan operations are listed by name and shared fields, and their exact schemas
-come from `postfader_describe_operations`. If a model builds a plan without
-asking for those schemas and then loops on validation errors, report it as a
-selection observation in this category.
+The advertised listing is smaller than the validated contracts. Since V11,
+Production Run plan operations are listed by name and shared fields, and their
+exact schemas come from `run_describe_operations`. V12 applies the same
+reductions to output schemas that V11 applied to input schemas (generated
+titles are dropped, for example), and with 50 fewer tools the full listing is
+about 2.3 MB of JSON, down from about 3.9 MB in V11. Validation is unchanged:
+every call is still checked against its full model. If a model builds a plan
+without asking for those schemas and then loops on validation errors, report
+it as a selection observation in this category.
 
 ### Client fails to expose all tools
 
@@ -184,7 +207,7 @@ does not support resources, or failed to start the server. Attach the output of
 an explicit tool-listing check only after removing paths, environment values,
 and private metadata.
 
-The expected V11 values are 135 tools and 8 resources. A client
+The expected V12 values are 85 tools and 8 resources. A client
 showing fewer is not evidence that the repository should silently change its
 default surface. Escalate client limits or MCP SDK compatibility separately.
 
@@ -192,8 +215,9 @@ default surface. Escalate client limits or MCP SDK compatibility separately.
 
 Report when a model attempts a state mutation without first obtaining the
 target identity, relevant current value, applicable session/expected state, or
-required step digest. Note that some setters intentionally preserve a legacy
-call shape with optional guards, but omission is not concurrency protection.
+required step digest. Note that most setters accept optional guards
+(`channel_set_steps` requires its digest), and omitting a guard is not
+concurrency protection.
 
 The report should state which read would establish the missing context and
 whether the server refused, required write-mode confirmation, rejected a stale
@@ -203,25 +227,34 @@ safer than its contract.
 
 ### Plan/apply confusion
 
-Report when the model treats a created plan as already applied, applies a plan
-without an explicit user decision, calls `mix_apply_plan` on a `partial` or
-`failed` plan, or assumes a plan can be retried safely after a terminal result.
+Report when the model treats a plan or proposal as already applied, applies
+one without an explicit user decision, applies it again after a stopped,
+blocked, or unknown outcome instead of inspecting the receipts, or assumes a
+run can be retried safely after a terminal result. The planning tools
+(`processing_plan`, `sound_plan_palette`, `review_plan_revision`,
+`mixer_plan_gain_staging`, and `run_validate`) leave the project unchanged;
+only the separate apply calls (`processing_apply`, `sound_apply_palette`,
+`review_apply_revision`, `project_apply_edits`, `run_execute`, and
+`run_continue`) change it.
 
-Include the plan lifecycle (`draft`, `applied`, `partial`, or `failed`), the
-selected tools, and the evidence returned. Plan application remains a distinct
-destructive, one-shot operation; no tool-selection experiment should weaken
-that separation.
+Include the run status (`created`, `validated`, `running`, `blocked`,
+`completed`, `failed`, or `stopped`) where a run exists, the selected tools,
+and the evidence returned. Applying remains a distinct destructive call; no
+tool-selection experiment should weaken that separation.
 
 ### Direct setter versus batch confusion
 
-Report when a model uses `fl_apply_verified_batch` for an operation that needs a
-single direct setter, or emits a long low-level sequence where a bounded batch
-would make ordering and receipts clearer. Include operation count, target
-types, `stop_on_unverified`, and per-item outcomes.
+Report when a model uses `project_apply_edits` for changes to one target that a
+single setter call (`mixer_set_track`, `channel_set`, `pattern_set`,
+`playlist_set_track`, or `transport_set`) would make, or emits a long sequence
+of setter calls where one bounded `project_apply_edits` call would make
+ordering and receipts clearer. Include operation count, target types,
+`stop_on_unverified`, and per-item outcomes.
 
-Remember that a batch is ordered and non-atomic. Earlier verified changes stay
-applied when a later item fails or is unverified. A batch is not a transaction,
-does not save the project, and must never be used as an implied rollback.
+Remember that a batch and a merged setter call are both ordered and
+non-atomic. Earlier verified changes stay applied when a later item fails or
+is unverified. Neither is a transaction, saves the project, or may be used as
+an implied rollback.
 
 ### Composition versus Piano Roll confusion
 
@@ -235,7 +268,7 @@ The safe distinction is:
 
 - composition tools generate bounded, deterministic note sequences without
   touching FL;
-- `midi_export_type1` writes and reopens an explicitly requested MIDI file;
+- `compose_export_midi` writes and reopens an explicitly requested MIDI file;
 - Piano Roll tools require their setup handshake and can report focus/dispatch,
   but `application_verified` remains false because the controller bridge has no
   score-note getter.
@@ -299,8 +332,8 @@ The following names are recorded for evaluation only:
 
 - `core` — a small read-first discovery surface for clients that cannot handle
   the complete catalog;
-- `mixing` — mixer, plug-in inspection, audio analysis, Mix Doctor, peak, and
-  plan workflows;
+- `mixing` — mixer, plug-in inspection, audio analysis and mix diagnosis, peak
+  watches, gain staging, and processing workflows;
 - `composition` — deterministic composition, MIDI, audio music analysis,
   pattern preparation, and Piano Roll workflows;
 - `full` — the current complete surface.
@@ -325,9 +358,9 @@ schemas, or client-specific documentation instead.
 ## What this guide does not claim
 
 - It does not claim that every model will choose the ideal tool.
-- It does not claim that a client exposing all 135 tools can fit them into every
-  model context window, although V11 advertises compact schemas to make that
-  far more likely.
+- It does not claim that a client exposing all 85 tools can fit them into every
+  model context window, although V12 advertises compact input and output
+  schemas to make that far more likely.
 - It does not claim that tool selection proves a live FL Studio mutation,
   audible quality, undo point, rollback, or project save.
 - It does not claim that a report from one client generalizes to all clients,

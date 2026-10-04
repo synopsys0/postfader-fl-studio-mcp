@@ -220,7 +220,7 @@ CURRENT_PATTERN_ONLY_WARNING = (
 WRITES_DISABLED_HELP = (
     "This FL Studio bridge cannot apply Track B mutations: it reports "
     "bridge_mode={mode!r} and verified_writes_enabled={enabled!r}. Ask the "
-    "connected AI client to call fl_set_write_mode with enabled=true and "
+    "connected AI client to call session_set_write_mode with enabled=true and "
     "confirm_user_present=true after the user explicitly requests write access."
 )
 
@@ -1169,9 +1169,6 @@ class TrackBInspector(_ConnectionController):
     plugin_presets = list_plugin_presets
     plugin_current_preset = get_plugin_current_preset
     plugin_pad_map = inspect_plugin_pad_map
-    plugins_list_presets = list_plugin_presets
-    plugins_get_current_preset = get_plugin_current_preset
-    plugins_inspect_pad_map = inspect_plugin_pad_map
 
     def scan_loaded_plugins(
         self, *, only_used: bool = False
@@ -1737,7 +1734,6 @@ class TrackBController(_ConnectionController):
         )
 
     reroll_loop_starter = reroll_loop_starter_loop
-    fl_select_plugin_preset = select_plugin_preset
 
     def set_playing(
         self,

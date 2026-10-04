@@ -13,9 +13,10 @@ and revision results alongside that immutable source snapshot.
 
 ## One readiness preflight
 
-`postfader_creation_readiness` is a read-only scorecard. The normal
-`postfader_execute_run` path invokes the same service internally, so it is not
-a mandatory extra user step. The scorecard reports `ready`,
+The readiness preflight is a read-only scorecard. `run_validate` returns it in
+its `readiness` field when called with `include_readiness=true`, and the normal
+`run_execute` path invokes the same service internally, so it is not a
+mandatory extra user step. The scorecard reports `ready`,
 `ready_with_limitations`, or `blocked` across these dimensions:
 
 - connection, package/bridge revision, process, MIDI transport, session, and
@@ -140,13 +141,15 @@ peaks through this evidence chain:
 `goal → technique → Atlas capability → loaded effect → adapter/control evidence → semantic action`
 
 Only loaded targets are candidates. A semantic action resolves the exact
-parameter/name, unit, setter, dependencies, current observation, and
-verification basis. Displayed-value and exact-option setters are preferred;
-normalized writes require an established adapter mapping. Unknown controls,
-stale targets/sessions, and unknown or failed readback stop dependent actions
-without replay or rollback. `processing_apply_plan` is a focused lower-level
-workflow; complete creation should use `plan_processing` and
-`apply_processing_plan` inside the same high-level Production Run.
+parameter/name, unit, setter (the `plugin_set_parameter` value argument that
+writes the control: `display_value`, `option`, or `normalized_value`),
+dependencies, current observation, and verification basis. `display_value`
+and exact `option` writes are preferred; `normalized_value` writes require an
+established adapter mapping. Unknown controls, stale targets/sessions, and
+unknown or failed readback stop dependent actions without replay or rollback.
+`processing_apply` is a focused lower-level workflow; complete creation should
+use the `plan_processing` and `apply_processing_plan` operations inside the
+same high-level Production Run.
 
 The default first-pass policy is conservative and Master-protected. It does
 not treat metadata reasoning as audible proof.
@@ -170,7 +173,8 @@ capability instead of silently producing an empty successful plan.
 when decay is displayed in milliseconds. Automatic recipes that would reuse
 an EQ band with conflicting settings try another compatible loaded effect;
 if none exists, the conflict is reported instead of overwriting an earlier
-goal. Display units travel with each action to the verified setter.
+goal. Display units travel with each action to its verified `display_value`
+write.
 
 Explicit `controls` take precedence over the recipe. Zero strength emits no
 automatic controls, while explicit controls still apply. Global or role-level

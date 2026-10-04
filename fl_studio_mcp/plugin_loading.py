@@ -274,13 +274,13 @@ def load_plugin(request: PluginLoadRequest, *, backend: MenuBackend | None = Non
             # same session write mode. Refuse before the menu is opened.
             raise PluginLoadingError(
                 "Write mode is off. Loading a plugin changes the project: when the "
-                "user asked for it, enable fl_set_write_mode(enabled=true, "
+                "user asked for it, enable session_set_write_mode(enabled=true, "
                 "confirm_user_present=true) and retry."
             )
         matches = [row for row in menu.entries() if row.kind == request.kind and _name_key(row.name) == _name_key(request.name)]
         if len(matches) != 1:
             return PluginLoadResult(observed_at=_now(), request=request, status="not_dispatched",
-                session_fingerprint=session, warnings=("The requested plugin is missing or ambiguous in FL's Add menu. Inspect plugins_list_available for exact names.",))
+                session_fingerprint=session, warnings=("The requested plugin is missing or ambiguous in FL's Add menu. Inspect plugin_list_available for exact names.",))
         entry = matches[0]
         before = _observe(request)
         if request.kind == "effect" and len(before) >= 10:

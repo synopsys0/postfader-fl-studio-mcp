@@ -44,7 +44,7 @@ telemetry.
 | 🎚️ **Pick sounds** | *"Choose the sounds yourself from what's loaded."* | Picks presets on the instruments in your project and confirms each selection. |
 | 🧱 **Run a whole task** | *"Turn this loop into a 16-bar draft, but keep my vocal."* | Runs the job as a checked plan you can resume. Export a bounce and it can review the draft and plan one revision. |
 
-Browse all 135 tools in the [tool reference](docs/tools.md).
+Browse all 85 tools in the [tool reference](docs/tools.md).
 
 ## Quick start
 
@@ -115,7 +115,7 @@ computer as FL Studio. `postfader setup` prints ready-to-paste configuration.
 | Guide | What's in it |
 | --- | --- |
 | [Setup and troubleshooting](docs/setup.md) | Installers, MIDI settings, every client, upgrades, and the doctor |
-| [Tool reference](docs/tools.md) | All 135 tools and 8 resources, grouped by task |
+| [Tool reference](docs/tools.md) | All 85 tools and 8 resources, grouped by task |
 | [FAQ](docs/faq.md) | Short answers to common questions and problems |
 | [Comparison](docs/comparison.md) | PostFader next to other FL Studio MCP servers and Gopher |
 | [Production Runs](docs/production-runs.md) | Multi-step jobs, resuming, and stopping |

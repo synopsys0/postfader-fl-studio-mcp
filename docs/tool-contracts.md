@@ -1,61 +1,64 @@
 # Tool and command reference
 
-PostFader V11 exposes 135 MCP tools and 8 MCP resources; the
-[tool reference](tools.md) lists them by task. The MCP layer is the supported
-public interface; the bridge commands are its local implementation protocol.
-There is no generic command-dispatch tool.
+PostFader V12 (12.0.0) exposes 85 MCP tools and 8 MCP resources; the
+[tool reference](tools.md) lists them by task, and the
+[V12 release notes](releases/v12.0.0.md) map every earlier tool name to its
+replacement. The MCP layer is the supported public interface; the bridge
+commands are its local implementation protocol. There is no generic
+command-dispatch tool.
 
-Arguments are validated against their full models, but the schemas a client
-lists are compacted to save the model's context: generated titles are dropped,
-union members that differ only in `operation` are merged, Production Run plan
-operations are advertised by name and shared fields, and arguments that echo
-an earlier result are advertised as plain objects. Use
-`postfader_describe_operations` for the exact schema of any plan operation.
+Arguments are validated and results built against their full models, but the
+input and output schemas a client lists are compacted to save the model's
+context: generated titles are dropped, union members that differ only in
+`operation` are merged, Production Run plan operations are advertised by name
+and shared fields, and arguments that echo an earlier result are advertised as
+plain objects. Use `run_describe_operations` for the exact schema of any plan
+operation.
 
 Every MCP response uses a strict Pydantic model that rejects unknown fields
 and non-finite numbers. Tool annotations distinguish read-only inspection,
 directly guarded FL setters, non-destructive workflow/dispatch, and destructive
-controls; the 13 Creation Review tools are documented in their own section
+controls; the 11 Creation Review tools are documented in their own section
 below.
-`fl_set_write_mode` changes the session write capability;
-`sound_selection_history_reset` deletes only the bounded local history after
-explicit confirmation.
+`session_set_write_mode` changes the session write capability;
+`sound_reset_history` deletes only the bounded local history after explicit
+confirmation.
 
 ## Choosing between related tools
 
 | Goal | Tool and distinction |
 | --- | --- |
-| Set a known normalized plugin value | `fl_set_plugin_param`; inspect the parameter index first. |
-| Set Hz, dB, ms, or another displayed number | `fl_set_plugin_param_display`; searches displayed values instead of assuming a normalized curve. |
-| Select a named control option | `fl_set_plugin_param_option`; moves the control during discovery, so it is not a read-only option listing. |
-| Select a whole preset | `fl_select_plugin_preset`; use exact names/indices from preset inspection. |
-| Apply already-reviewed writes | `fl_apply_verified_batch`; ordered and non-atomic, with per-operation receipts. |
-| Store writes for review first | `mix_create_plan` → `mix_get_plan` → `mix_apply_plan`; process-local, session-bound, one application attempt. |
-| Choose sounds for multiple roles | `sound_selection_plan`; use `sound_selection_create_variation` to preserve anchors while planning a section change, then `sound_selection_apply` after review. |
-| Record a user's sound preferences | `sound_selection_record_feedback`; updates local ranking history according to persistence settings, without applying presets. |
-| Search product knowledge offline | `plugins_atlas_search` → `plugins_atlas_get_product`; `plugins_atlas_recommend` ranks choices for a production goal. |
-| Identify currently loaded products | `plugins_atlas_inspect_loaded`; catalog matches do not prove writable controls or ownership. |
+| Change several fields of one target | `mixer_set_track`, `channel_set`, `pattern_set`, `playlist_set_track`, or `transport_set`; one call, one later-tick receipt per changed field, in a fixed order. |
+| Set a plug-in parameter | `plugin_set_parameter` with exactly one value: `display_value` (Hz, dB, ms, or another displayed number, optional `unit`) searches displayed values instead of assuming a normalized curve; `option` selects a named option but moves the control during discovery, so it is not a read-only option listing; `normalized_value` writes a known 0–1 value to an inspected parameter index. |
+| Select a whole preset | `plugin_select_preset`; use exact names/indices from `plugin_list_presets`. |
+| Apply already-reviewed writes across targets | `project_apply_edits`; ordered and non-atomic, with per-operation receipts. |
+| Review a plan before anything changes | `run_validate` → `run_execute`; validation mutates nothing, and execution runs the plan (direct edits go in an `apply_verified_batch` operation) as one task-scoped Production Run with retained receipts. |
+| Choose sounds for multiple roles | `sound_plan_palette`; with `base_palette_id` (and optional `section`, `replace_roles`) it preserves anchors while planning a section variation. Apply either result with `sound_apply_palette` after review. |
+| Record a user's sound preferences | `sound_record_feedback`; updates local ranking history according to persistence settings, without applying presets. |
+| Search product knowledge offline | `atlas_search` → `atlas_get_product`; `atlas_recommend` ranks choices for a production goal. |
+| Identify currently loaded products | `atlas_match_loaded`; catalog matches do not prove writable controls or ownership. |
 | Insert supplied score notes | `piano_roll_write_notes`; append preserves notes, replace clears the score. |
-| Edit or inspect existing score notes | `piano_roll_transform` edits; `piano_roll_read_notes` inspects. Automatic script dispatch requires the Piano Roll setup handshake. |
-| Generate a MIDI file offline | `compose_*` generates notes; `midi_export_type1` writes a file without editing a live score. |
+| Edit or inspect existing score notes | `piano_roll_transform_notes` edits; `piano_roll_read_notes` inspects. Automatic script dispatch requires the `piano_roll_setup` handshake. |
+| Generate a MIDI file offline | `compose_*` generates notes; `compose_export_midi` writes a file without editing a live score. |
 
 For Piano Roll writes, `auto_trigger=False` prepares a script and leaves target
 selection and execution to the user. A dispatched shortcut alone is not proof
-that notes were applied. For batches and plans, earlier changes remain after a
-later failure; inspect receipts before continuing and never replay an ambiguous
-write automatically. These tools do not imply a project save.
+that notes were applied. For per-target setters, `project_apply_edits`, and
+Production Runs, earlier changes remain after a later failure; inspect receipts
+before continuing and never replay an ambiguous write automatically. These
+tools do not imply a project save.
 
-`mix_create_plan.operations` is an ordered discriminated union: each item needs
-a unique `operation_id` and an `operation` name selecting its target fields and
-units. For example, `mixer_volume_db` uses a zero-based `track_index` and
-`volume_db`, while `mixer_pan` uses `pan` from -1 (left) to 1 (right). The
-exported input schema describes each supported variant and includes a valid
-two-operation example. The title labels the review plan; rationale entries
-explain its intended result. Creating the plan does not execute the example
-or any supplied operation.
+`project_apply_edits.operations` is an ordered discriminated union of 1–32
+items: each needs a unique `operation_id` and an `operation` name selecting its
+target fields and units. For example, `mixer_volume_db` uses a zero-based
+`track_index` and `volume_db`, while `mixer_pan` uses `pan` from -1 (left) to 1
+(right). The exported input schema describes each supported variant and
+includes a valid two-operation example. The same items form a run's
+`apply_verified_batch` operation and the proposal `mixer_plan_gain_staging`
+returns.
 
 To apply a Sound Selection variation, pass the full variation object to
-`sound_selection_apply`. Passing a `variation_id` is unsupported, and passing
+`sound_apply_palette`. Passing a `variation_id` is unsupported, and passing
 its `base_palette_id` selects the base palette's assignments instead of the
 section delta. Review the returned assignments before applying either.
 
@@ -69,30 +72,28 @@ proves that a live control is writable, or that the user owns a product.
 
 | Tool | Purpose |
 | --- | --- |
-| `fl_get_capabilities` | Report direct, partial, unavailable, and unvalidated integration paths. Call this before relying on a feature. |
-| `fl_get_project_summary` | Read project metadata, counts, PPQ, dirty state, undo position, version, and a transport observation. |
-| `fl_get_transport_state` | Read playback, recording, metronome, precount, time-signature numerator, loop mode, position, and song length. |
-| `fl_get_selected_range` | Return repeated raw Playlist endpoints and project PPQ without interpreting render semantics. |
-| `fl_list_mixer_tracks` | List mixer tracks, levels, selection state, routing, and loaded effects. `only_used=false` is authoritative; peaks and a page limit are optional. |
-| `fl_inspect_mixer_track` | Read one track's state, effects, built-in EQ, and outgoing routes. Track 0 is Master. |
-| `plugins_scan_loaded_plugins` | Inventory effects loaded on observed mixer tracks; optionally include Channel Rack generators with explicit target kinds. |
-| `plugins_inspect_parameter_map` | Read a bounded page of one mixer effect or Channel Rack generator's exposed parameters. |
-| `plugins_scan_parameters` | Walk a bounded parameter range for either plug-in target and return named or display-bearing controls without VST padding. |
-| `plugins_atlas_search` | Search the bundled, offline product catalogue by text and bounded static filters. |
-| `plugins_atlas_get_product` | Read one bundled product by exact ID with related vendor, adapter, evidence, and stock-alternative records. |
-| `plugins_atlas_recommend` | Rank bundled products or explicit stock alternatives from bounded production criteria. |
-| `plugins_atlas_inspect_loaded` | Match the current target-aware loaded-plug-in inventory to Atlas records without asserting ownership or control proof. |
-| `copilot_capture_readonly_inspection` | Capture project, mixer, and bounded plug-in previews under one observation ID. |
-| `fl_list_channels` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
-| `fl_get_step_sequence` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |
-| `fl_list_patterns` | List bounded pattern identity, color, length, current state, and default-empty evidence. |
-| `fl_find_empty_pattern` | Find a default/empty pattern without changing the current pattern. |
-| `fl_list_playlist_tracks` | List every one-based Playlist track and its controllable identity/state. |
-| `fl_get_project_history` | Read undo/redo bounds, current position, history hint, and dirty state. |
-| `fl_get_plugin_preset_count` | Read FL's authoritative preset count for one explicit effect or generator target. |
-| `plugins_list_presets` | Read one bounded, deterministic page of exact preset index/name records, current identity, duplicate names, blank names, and partial/truncated status. |
-| `plugins_get_current_preset` | Read the current preset name and a preset index only when FL resolves it uniquely. |
-| `plugins_inspect_pad_map` | Read a generic target's reported pad count, MIDI/semitone notes, colors, empty/muted flags, and semitone names where exposed. |
+| `session_get_capabilities` | Report direct, partial, unavailable, and unvalidated integration paths, with the connection and current session fingerprint. Call this before relying on a feature. |
+| `project_get_summary` | Read project metadata, counts, PPQ, dirty state, undo position, the connection with its session fingerprint, and the transport: playback, recording, metronome, precount, time-signature numerator, tempo, loop mode, position, and song length. |
+| `playlist_get_selection` | Return repeated raw Playlist endpoints and project PPQ without interpreting render semantics. |
+| `mixer_list_tracks` | List mixer tracks, levels, selection state, routing, and loaded effects. `only_used=false` is authoritative; peaks and a page limit are optional. |
+| `mixer_get_track` | Read one track's state, effects, built-in EQ, and outgoing routes. Track 0 is Master. |
+| `plugin_list_loaded` | Inventory loaded mixer effects and Channel Rack generators, each with its explicit `mixer_effect` or `channel_generator` target. |
+| `plugin_list_parameters` | Walk a bounded parameter range for either plug-in target and return named or display-bearing controls without VST padding. |
+| `atlas_search` | Search the bundled, offline product catalogue by text and bounded static filters. |
+| `atlas_get_product` | Read one bundled product by exact ID with related vendor, adapter, evidence, and stock-alternative records. |
+| `atlas_recommend` | Rank bundled products or explicit stock alternatives from bounded production criteria. |
+| `atlas_match_loaded` | Match the current target-aware loaded-plug-in inventory to Atlas records without asserting ownership or control proof. |
+| `channel_list` | List globally indexed Channel Rack targets, mix/identity/routing state, generator identity, and an observation-scoped fingerprint. |
+| `channel_get_steps` | Read one globally indexed channel's bounded sixteenth-note grid on the explicitly named current pattern and return a conflict digest. |
+| `pattern_list` | List bounded pattern identity, color, length, current state, and default-empty evidence. |
+| `playlist_list_tracks` | List every one-based Playlist track and its controllable identity/state. |
+| `project_get_history` | Read undo/redo bounds, current position, history hint, and dirty state. |
+| `plugin_list_presets` | Read FL's authoritative preset count and one bounded, deterministic page of exact preset index/name records, duplicate names, blank names, and partial/truncated status; unless `include_current=false`, also the current preset name, with an index only when FL resolves it uniquely. |
+| `plugin_get_pad_map` | Read a generic target's reported pad count, MIDI/semitone notes, colors, empty/muted flags, and semitone names where exposed. |
+
+No tool captures project, mixer, and plug-in previews under one observation
+ID; combine `project_get_summary`, `mixer_list_tracks`, and
+`plugin_list_parameters`, or read the live resources below.
 
 ## Sound Selection tools
 
@@ -106,14 +107,13 @@ similarly suitable candidates. Planning does not mutate FL or usage history.
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `sound_selection_inventory` | Read a compact inventory of loaded Channel Rack generators and optional mixer effects, bounded preset pages, current presets, pad maps, target fingerprints, current palette/locks, Atlas matches, and Atlas-known products not observed as loaded. |
-| `sound_selection_plan` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. No FL or history changes. |
-| `sound_selection_get` | Look up process-local palette state and immutable apply receipts by palette ID. Expiry or another process returns an availability-honest result. |
-| `sound_selection_create_variation` | Plan a section-scoped delta from an existing palette. Anchors remain unchanged unless explicitly replaced; the result is read-only. |
-| `sound_selection_history_status` | Read the local history path, schema/health, record counts, and configured bounds. |
-| `sound_selection_apply` | Authorized mutating workflow that requires the current 32-character lowercase `session_fingerprint`, revalidates the session and loaded targets, applies exact assignments in deterministic order, and stops on the first unknown/unverified result. Earlier receipts remain immutable. |
-| `sound_selection_record_feedback` | Store an explicit accepted, rejected, or neutral local verdict when persistence is enabled. Silence is never inferred as acceptance. It does not mutate FL. |
-| `sound_selection_history_reset` | Explicitly remove the local Sound Selection history after `confirm=true`; project state is unchanged and the removed file is not recoverable by PostFader. |
+| `sound_get_inventory` | Read a compact inventory of loaded Channel Rack generators and optional mixer effects, bounded preset pages, current presets, pad maps, target fingerprints, current palette/locks, Atlas matches, and Atlas-known products not observed as loaded. |
+| `sound_plan_palette` | Deterministically rank loaded candidates for requested roles and return a `SoundPalettePlan` with score breakdowns, rationale, anchors, flexible roles, fallbacks, unused targets, conflicts, and blockers. With `base_palette_id` it instead plans a section-scoped variation of that palette for `section`: anchors remain unchanged unless listed in `replace_roles`. `section` and `replace_roles` are refused without `base_palette_id`. No FL or history changes. |
+| `sound_get_palette` | Look up process-local palette state and immutable apply receipts by palette ID. Expiry or another process returns an availability-honest result. |
+| `sound_get_history` | Read the local history path, schema/health, record counts, and configured bounds. |
+| `sound_apply_palette` | Authorized mutating workflow that requires `authorized_to_modify=true` and the current 32-character lowercase `session_fingerprint`, revalidates the session and loaded targets, applies exact assignments in deterministic order, and stops on the first unknown/unverified result. Earlier receipts remain immutable. |
+| `sound_record_feedback` | Store an explicit accepted, rejected, or neutral local verdict when persistence is enabled. Silence is never inferred as acceptance. It does not mutate FL. |
+| `sound_reset_history` | Explicitly remove the local Sound Selection history after `confirm=true`; project state is unchanged and the removed file is not recoverable by PostFader. |
 
 Sound Selection uses the same discriminated Track B target as parameter tools:
 `mixer_effect` addresses a mixer track and slot, while `channel_generator`
@@ -129,14 +129,14 @@ dispatch-only rather than a verified sound selection.
 ## Creation readiness and semantic processing
 
 These focused tools support inspection and debugging. A normal end-to-end
-creation request should use one `postfader_execute_run`; it invokes the same
-readiness service internally and carries one context through the phases.
+creation request should use one `run_execute`; it invokes the same readiness
+service internally and carries one context through the phases.
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `postfader_creation_readiness` | Zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope. Returns blockers together with a reusable bounded context snapshot. |
-| `processing_plan` | Read-only effect coverage and semantic plan from loaded, Atlas-matched, adapter-backed, runtime-observed controls. |
-| `processing_apply_plan` | One explicitly authorized processing run using existing verified setters and later-tick readback; missing/unresolved controls remain visible. |
+| `run_validate` with `include_readiness=true` | Returns `{validation, readiness}`; `readiness` is a zero-mutation scorecard across connection/bridge, Piano Roll, instrument pool, drum coverage, patterns/arrangement, mixer effects, and manual scope, with blockers together with a reusable bounded context snapshot. |
+| `processing_plan` | Read-only effect coverage and semantic plan from loaded, Atlas-matched, adapter-backed, runtime-observed controls. Each resolved control's `setter` names the `plugin_set_parameter` argument that writes it: `display_value`, `option`, or `normalized_value`. |
+| `processing_apply` | One processing run, authorized by `authorized_to_modify=true` and the required `session_fingerprint`, using existing verified setters and later-tick readback; missing/unresolved controls remain visible. |
 
 Creation plans can include `plan_sound_palette`,
 `apply_sound_palette`, `inspect_drum_map`, deterministic generators,
@@ -174,7 +174,7 @@ connector does not infer the control's meaning or promote it to safe.
 
 ### Playlist selection
 
-`fl_get_selected_range` reads both raw endpoints twice so a caller can reject a
+`playlist_get_selection` reads both raw endpoints twice so a caller can reject a
 pair that moved during observation. Image-Line does not document enough public
 semantics to infer selection presence, units, normalized ticks, or render
 inclusivity. Those fields remain unknown or null, and every ordinary result is
@@ -182,17 +182,16 @@ marked unsafe for automated rendering.
 
 ### Parameter scans
 
-`plugins_inspect_parameter_map` reads a page of 1–128 raw indices. It is useful
-for a small native parameter map or a known index.
-
-`plugins_scan_parameters` is preferable for a padded VST parameter space. It
-accepts optional `start`, exclusive `end`, `max_indices` up to 8,192, and
-`max_results`. Check its `truncated` field before treating the response as a
-complete control map.
+`plugin_list_parameters` walks the parameter range inside FL, so a padded VST
+parameter space costs one round trip, and returns only named or display-bearing
+controls. It accepts optional `start` (default 0), exclusive `end` (default
+FL's reported count), `max_indices` up to 8,192, and `max_results`; one walk
+never examines more than 8,192 indices. Check its `truncated` and
+`truncated_by` fields before treating the response as a complete control map.
 
 ## Session write-mode control
 
-`fl_set_write_mode` exposes or locks the bounded project-write tools without
+`session_set_write_mode` exposes or locks the bounded project-write tools without
 restarting FL Studio. Its arguments are:
 
 | Argument | Meaning |
@@ -218,47 +217,71 @@ used for that FL process.
 
 State writes are available only when the live bridge reports
 `verified_writes_enabled: true`, its protocol is compatible, and it supplies
-a valid live session fingerprint. Source-hash differences are advisory. Each tool changes one target, yields to a
-later FL Studio idle tick, reads the target back, and returns a verdict. There
-is no per-write MCP confirmation round-trip and no automatic rollback. For direct setters, the client can enable the session with `fl_set_write_mode`
-under the existing edit request. Production Runs manage the transition.
+a valid live session fingerprint. Source-hash differences are advisory. Each
+write changes one target, yields to a later FL Studio idle tick, reads the
+target back, and returns a verdict. There is no per-write MCP confirmation
+round-trip and no automatic rollback. For direct setters, the client can
+enable the session with `session_set_write_mode` under the existing edit
+request. Production Runs manage the transition.
 
-Every direct state-write tool accepts an optional current-project-epoch
-`session_fingerprint` and a typed `expected_before`, except
-`fl_set_step_sequence`, whose required `expected_digest` is its stronger state
-guard. The bridge checks supplied guards immediately before undo and mutation.
-Omitting them preserves the 0.11 call shape; supplying them makes stale
-decisions fail closed. The high-level `sound_selection_apply` workflow is the
-exception: its public MCP contract requires `session_fingerprint` because the
-palette service cannot apply without a live session token. The token rotates
-on script reload and project-load transitions; loading also disables writes
-and abandons pending operations instead of carrying them into the next project.
+Every write tool in the tables below accepts an optional current-project-epoch
+`session_fingerprint` and a typed state guard: `expected_before` on most,
+`expected_current` and `target_fingerprint` on `plugin_select_preset`, and on
+`channel_set_steps` a required `expected_digest`, its stronger state guard. The
+bridge checks supplied guards immediately before undo and mutation; supplying
+them makes stale decisions fail closed. The per-target setters and
+`project_apply_edits` check the session once before their first write and pin
+every write to that session even when no `session_fingerprint` is passed. The
+workflow applies `sound_apply_palette` and `processing_apply` require
+`session_fingerprint` because they cannot apply without a live session token.
+The token rotates on script reload and project-load transitions; loading also
+disables writes and abandons pending operations instead of carrying them into
+the next project.
+
+The per-target setters (`mixer_set_track`, `channel_set`, `pattern_set`,
+`playlist_set_track`, and `transport_set`) change only the fields supplied, each
+to an absolute value, through the verified writes listed below, in the order
+listed; a call that names no field is refused. Their flat `expected_before`
+takes current values for the fields the call changes, and each write is
+guarded by the values it covers. A guard for a field that no write in the call
+checks is refused before any write, never ignored. The sequence is not atomic:
+with `stop_on_unverified=true` (the default) the call skips the remaining
+writes after the first that does not verify, an unknown outcome always stops
+it, and nothing is replayed or rolled back.
+
+`mixer_set_track` targets one zero-based `track_index`; Master (index 0) needs
+`allow_master=true`:
+
+| Field, in write order | Value | Bridge command |
+| --- | --- | --- |
+| `name` | track name; `""` restores FL's default label | `mixer.set_name` |
+| `color` | unsigned FL color word | `mixer.set_color` |
+| `volume_normalized` or `volume_db` | fader 0–1, or a displayed fader target -60 to +6 dB with optional `tolerance_db` (default 0.1); not both | `mixer.set_volume` or `mixer.set_volume_db` |
+| `pan` | -1–1 | `mixer.set_pan` |
+| `stereo_separation` | absolute -1–1 | `mixer.set_stereo_separation` |
+| `muted`, `soloed`, `armed` | absolute mute, solo, and recording-arm states, one write each | `mixer.set_mute`, `mixer.set_solo`, `mixer.set_arm` |
+| `eq` | up to three `{band_index 0–2, gain_normalized, frequency_normalized}` entries, one write per band; gain and/or frequency normalized 0–1 | `mixer.set_eq` |
+| `sends` | up to eight `{destination_track_index, enabled, level_normalized}` entries; a route change is written before its level | `mixer.set_send`, `mixer.set_send_level` |
+| `select: true` | make this the active mixer track, last | `mixer.select_track` |
+
+Its `expected_before` takes `name`, `color`, `volume_normalized`, `volume_db`
+(which guards only a `volume_db` change), `pan`, `stereo_separation`, `muted`,
+`soloed`, `armed`, and `active_track_index` (which guards `select`). Each `eq`
+entry carries its own `expected_before` with the band's current gain and/or
+frequency; each `sends` entry carries one with the current route state and/or
+level, each allowed only when that entry changes it. Band indices and send
+destinations must be unique, a track cannot send to itself, and a send being
+removed cannot also take a level.
 
 | Tool | Required target and value | Bridge command |
 | --- | --- | --- |
-| `fl_set_mixer_volume` | `track_index`; `volume_normalized` 0–1; optional `allow_master` | `mixer.set_volume` |
-| `fl_set_mixer_volume_db` | `track_index`; displayed fader target -60 to +6 dB; optional tolerance and `allow_master` | `mixer.set_volume_db` |
-| `fl_set_mixer_pan` | `track_index`; `pan` -1–1; optional `allow_master` | `mixer.set_pan` |
-| `fl_set_mixer_mute` | `track_index`; absolute `muted` state; optional `allow_master` | `mixer.set_mute` |
-| `fl_set_mixer_solo` | `track_index`; absolute `soloed` state; optional `allow_master` | `mixer.set_solo` |
-| `fl_set_mixer_arm` | `track_index`; absolute recording-arm state; optional `allow_master` | `mixer.set_arm` |
-| `fl_set_mixer_color` | `track_index`; unsigned FL color word; optional `allow_master` | `mixer.set_color` |
-| `fl_set_mixer_stereo_separation` | `track_index`; absolute -1–1 stereo separation; optional `allow_master` | `mixer.set_stereo_separation` |
-| `fl_select_mixer_track` | Absolute active mixer `track_index`; optional `allow_master` | `mixer.select_track` |
-| `fl_set_track_eq` | `track_index`; `band_index` 0–2; gain and/or frequency normalized 0–1; optional `allow_master` | `mixer.set_eq` |
-| `fl_set_mixer_name` | `track_index`; `name`; optional `allow_master` | `mixer.set_name` |
-| `fl_set_mixer_send` | source and destination track indices; absolute `enabled` state; optional `allow_master` for a Master source | `mixer.set_send` |
-| `fl_set_mixer_send_level` | source and destination track indices; level normalized 0–1; optional `allow_master` for a Master source | `mixer.set_send_level` |
-| `fl_set_plugin_param` | explicit mixer-effect or channel-generator target, or legacy mixer track/slot; parameter index; normalized value 0–1; optional `allow_master` for Master effects | `plugin.set_param` |
-| `fl_set_plugin_param_display` | same target forms; parameter index or text; numeric target in displayed units; optional tolerance and `allow_master` for Master effects | `plugin.set_param_display` |
-| `fl_set_plugin_param_option` | same target forms; parameter index or text; option text; optional sweep resolution and `allow_master` for Master effects | `plugin.set_param_option` |
-| `fl_select_plugin_preset` | explicit target plus exact `preset_name` and/or `preset_index`; optional current/session/target guards and bounded navigation/settling limits | `plugin.select_preset` |
+| `plugin_set_parameter` | explicit `target`; `parameter` index, or name/display text for the display and option forms; exactly one of `normalized_value` 0–1, `display_value` in displayed units (optional `unit` and `tolerance`), or `option` text (optional `sweep_steps`); optional `expected_before` normalized value and/or display text | `plugin.set_param`, `plugin.set_param_display`, or `plugin.set_param_option` |
+| `plugin_select_preset` | explicit `target` plus exact `preset_name` and/or `preset_index`; optional current/session/target guards and bounded navigation/settling limits | `plugin.select_preset` |
 
-The parameter reads and three plug-in setters also accept an explicit
-discriminated target. `mixer_effect` names `track_index`, slot 0–9, and optional
-Master authorization. `channel_generator` names a global `channel_index`; the
-bridge uses FL's separate `slotIndex=-1` form internally. A call may use that
-target or the legacy mixer track/slot pair, never both.
+Plug-in tools take only the explicit discriminated `target`. `mixer_effect`
+names `track_index`, `slot_index` 0–9, and `allow_master` for a Master effect.
+`channel_generator` names a global `channel_index`; the bridge uses FL's
+separate `slotIndex=-1` form internally.
 
 ### Preset identity and navigation
 

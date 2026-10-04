@@ -13,7 +13,7 @@ if something here is out of date.
 
 | | PostFader | [karl-andres/fl-studio-mcp](https://github.com/karl-andres/fl-studio-mcp) | [rosasynthesiz/flstudio-mcp](https://github.com/rosasynthesiz/flstudio-mcp) | [calvinw/fl-studio-mcp](https://github.com/calvinw/fl-studio-mcp) |
 | --- | --- | --- | --- | --- |
-| Tools | 135, plus 8 resources | 52 | 67, plus 6 resources | 4 |
+| Tools | 85, plus 8 resources | 52 | 67, plus 6 resources | 4 |
 | Windows | ✅ | ✅ | ✅ | Partial |
 | macOS | ✅ | ✅ | ✅ | ✅ |
 | FL Studio | 2026 (26.1.3+) | 20.7+ | 2025+ | Not stated |
@@ -69,9 +69,12 @@ change, or work that spans many steps. The two don't conflict.
 
 ## Why PostFader's numbers look the way they do
 
-- **Tool count isn't a goal.** PostFader has more tools because each one does
-  one checkable thing. Large plan formats are described on demand, so the full
-  set loads compactly into your AI client.
+- **Tool count isn't a goal.** PostFader has more tools because it covers more
+  ground, such as exported-mix analysis, multi-step jobs, and draft review.
+  Tools that did the same job are merged: one call can change several settings
+  on a mixer track, and each change is still read back on its own. Large plan
+  formats are described on demand, so the full set loads compactly into your
+  AI client.
 - **FL Studio 2026 only.** That build contains MIDI-scripting stability fixes
   PostFader relies on, so older builds are refused instead of half-working.
 - **No rollback promise.** Writing old values back can't undo everything an

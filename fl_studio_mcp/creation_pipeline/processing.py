@@ -27,6 +27,7 @@ from typing import Annotated, Any, Literal, cast
 from pydantic import (
     AliasChoices,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     TypeAdapter,
@@ -38,10 +39,12 @@ from ..plugin_atlas import (
     AdapterControl,
     AtlasRegistry,
     ControlAdapter,
+    ParameterWriteValue,
     ProductKnowledge,
     RuntimeMatch,
     RuntimeParameterObservation,
     RuntimePluginInstance,
+    current_parameter_write_value,
     match_runtime,
     normalize_search_text,
 )
@@ -90,10 +93,10 @@ ProcessingStatus = Literal[
     "dry_missing_effects",
     "blocked",
 ]
-SetterName = Literal[
-    "fl_set_plugin_param_display",
-    "fl_set_plugin_param_option",
-    "fl_set_plugin_param",
+# The plugin_set_parameter value argument a resolved control is written with.
+# Saved plans and runs from V11 carry setter names here and load unchanged.
+SetterName = Annotated[
+    ParameterWriteValue, BeforeValidator(current_parameter_write_value)
 ]
 ControlResolutionState = Literal["resolved", "unresolved"]
 
@@ -579,7 +582,9 @@ class ResolvedSemanticControl(ProcessingModel):
     parameter_index: int = Field(ge=0, le=MAX_PARAMETER_INDEX)
     parameter_name: str | None = Field(default=None, max_length=MAX_PROCESSING_TEXT)
     display_unit: str | None = Field(default=None, max_length=MAX_PROCESSING_TEXT)
-    setter: SetterName
+    setter: SetterName = Field(
+        description="The plugin_set_parameter value argument this control is written with."
+    )
     display_value: float | None = None
     display_text: str | None = Field(default=None, max_length=MAX_PROCESSING_TEXT)
     option: str | None = Field(default=None, max_length=MAX_PROCESSING_TEXT)
@@ -1732,7 +1737,7 @@ def resolve_semantic_control(
     is_enum = (
         control.kind == "enumerated"
         or bool(control.options)
-        or control.preferred_write_tool == "fl_set_plugin_param_option"
+        or control.preferred_write_value == "option"
     )
     display_source = (
         request.display_value
@@ -1775,7 +1780,7 @@ def resolve_semantic_control(
                 parameter_index=parameter_index,
                 parameter_name=parameter_name,
                 display_unit=control.unit,
-                setter="fl_set_plugin_param_option",
+                setter="option",
                 # Pass the Atlas spelling to the exact-option setter.  A
                 # case-insensitive request is convenient at the semantic
                 # boundary, but FL's option text is a literal write value.
@@ -1795,15 +1800,15 @@ def resolve_semantic_control(
                 parameter_index=parameter_index,
                 parameter_name=parameter_name,
                 display_unit=request.display_unit or control.unit,
-                setter="fl_set_plugin_param_display",
+                setter="display_value",
                 display_value=display_number,
                 display_text=display_text,
             ),
             status="resolved",
         )
     if request.normalized_value is not None and request.normalized_mapping:
-        preferred = control.preferred_write_tool
-        if preferred not in {"fl_set_plugin_param", "unknown"}:
+        preferred = control.preferred_write_value
+        if preferred not in {"normalized_value", "unknown"}:
             # A display/option-capable control still cannot receive a guessed
             # normalized value.  Require the caller to supply that preferred
             # semantic representation instead.
@@ -1820,7 +1825,7 @@ def resolve_semantic_control(
                 parameter_index=parameter_index,
                 parameter_name=parameter_name,
                 display_unit=control.unit,
-                setter="fl_set_plugin_param",
+                setter="normalized_value",
                 normalized_value=float(request.normalized_value),
                 normalized_mapping=request.normalized_mapping,
             ),

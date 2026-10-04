@@ -75,9 +75,9 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
 
         async def caller(name: str, arguments: dict[str, object]) -> object:
             calls.append((name, arguments))
-            if name == "postfader_review_start":
+            if name == "review_start":
                 return {"review_session_id": "review-1", "source_run_id": "run-1"}
-            if name == "postfader_review_attach_assets":
+            if name == "review_attach_assets":
                 return {
                     "review_session_id": "review-1",
                     "source_run_id": "run-1",
@@ -87,17 +87,17 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
                         {"asset_id": "after-bounce", "asset_kind": "after_full_mix"},
                     ],
                 }
-            if name == "postfader_review_evaluate":
+            if name == "review_evaluate":
                 return {"evaluation_id": "evaluation-1", "findings": []}
-            if name == "postfader_review_record_feedback":
+            if name == "review_record_feedback":
                 return {"review_session_id": "review-1", "status": "accepted"}
-            if name == "postfader_review_plan_revision":
+            if name == "review_plan_revision":
                 return {"revision_plan_id": "plan-1", "operations": []}
-            if name == "postfader_review_apply_revision":
+            if name == "review_apply_revision":
                 return {"revision_pass_id": "pass-1", "status": "awaiting_rebounce"}
-            if name == "postfader_review_compare":
+            if name == "review_compare":
                 return {"comparison_id": "comparison-1", "technical_conclusion": "mixed"}
-            if name == "postfader_delivery_manifest":
+            if name == "review_get" and arguments.get("view") == "delivery_manifest":
                 return {"delivery_id": "delivery-1", "final_user_approval": "pending"}
             return {}
 
@@ -109,19 +109,23 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _arguments in calls],
             [
-                "postfader_review_start",
-                "postfader_review_attach_assets",
-                "postfader_review_evaluate",
-                "postfader_review_record_feedback",
-                "postfader_review_plan_revision",
-                "postfader_review_apply_revision",
-                "postfader_review_compare",
-                "postfader_review_record_feedback",
-                "postfader_review_export_handoff",
-                "postfader_delivery_manifest",
+                "review_start",
+                "review_attach_assets",
+                "review_evaluate",
+                "review_record_feedback",
+                "review_plan_revision",
+                "review_apply_revision",
+                "review_compare",
+                "review_record_feedback",
+                "review_get",
+                "review_get",
             ],
         )
-        apply_call = next(arguments for name, arguments in calls if name == "postfader_review_apply_revision")
+        self.assertEqual(
+            [arguments.get("view") for name, arguments in calls if name == "review_get"],
+            ["export_request", "delivery_manifest"],
+        )
+        apply_call = next(arguments for name, arguments in calls if name == "review_apply_revision")
         self.assertIs(True, apply_call["authorized_to_modify"])
         self.assertIs(True, apply_call["request"]["authorized_to_modify"])
         self.assertTrue(report["timings"]["steps"])
@@ -162,9 +166,9 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
 
         async def caller(name: str, _arguments: dict[str, object]) -> object:
             calls.append(name)
-            if name == "postfader_review_start":
+            if name == "review_start":
                 return {"review_session_id": "review-1", "source_run_id": "run-1"}
-            if name == "postfader_review_attach_assets":
+            if name == "review_attach_assets":
                 return {"review_session_id": "review-1", "asset_sets": [{"asset_set_id": "assets-1"}]}
             raise RuntimeError("synthetic analyzer failure")
 
@@ -173,9 +177,9 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
         self.assertEqual(report["overall"], "fail")
         self.assertEqual(report["phase"], "blocked")
         self.assertEqual(calls, [
-            "postfader_review_start",
-            "postfader_review_attach_assets",
-            "postfader_review_evaluate",
+            "review_start",
+            "review_attach_assets",
+            "review_evaluate",
         ])
         self.assertEqual(report["blockers"][0]["code"], "step_failed")
         failed_timing = report["timings"]["steps"][-1]
@@ -200,13 +204,13 @@ class CreationReviewAcceptanceTests(unittest.TestCase):
 
         async def caller(name: str, _arguments: dict[str, object]) -> object:
             calls.append(name)
-            if name == "postfader_review_get":
+            if name == "review_get":
                 return {"review_session_id": "review-1", "source_run_id": "run-1"}
             return {"evaluation_id": "evaluation-2", "findings": []}
 
         with mock.patch("fl_studio_mcp.evidence.configure_acceptance_transport"):
             report = asyncio.run(acceptance.async_main(args, caller=caller))
-        self.assertEqual(calls, ["postfader_review_get", "postfader_review_evaluate"])
+        self.assertEqual(calls, ["review_get", "review_evaluate"])
         self.assertEqual(report["source_run_id"], "run-1")
         self.assertEqual(report["evaluation_id"], "evaluation-2")
 
