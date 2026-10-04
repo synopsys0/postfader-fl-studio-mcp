@@ -337,7 +337,8 @@ render boundaries.
 
 The verified write surface includes these narrow mixer operations, all of them
 arguments of `mixer_set_track`. One call can combine several on one track;
-each changed field gets its own later-tick receipt.
+each write gets its own later-tick receipt (an EQ band's gain and frequency
+share one write).
 
 | FL Studio behavior | `mixer_set_track` argument |
 | --- | --- |

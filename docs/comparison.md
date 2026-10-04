@@ -72,7 +72,7 @@ change, or work that spans many steps. The two don't conflict.
 - **Tool count isn't a goal.** PostFader has more tools because it covers more
   ground, such as exported-mix analysis, multi-step jobs, and draft review.
   Tools that did the same job are merged: one call can change several settings
-  on a mixer track, and each change is still read back on its own. Large plan
+  on a mixer track, and every change is still read back from FL Studio. Large plan
   formats are described on demand, so the full set loads compactly into your
   AI client.
 - **FL Studio 2026 only.** That build contains MIDI-scripting stability fixes
