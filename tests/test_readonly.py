@@ -25,6 +25,7 @@ from pydantic import ValidationError  # noqa: E402
 from fl_studio_mcp.bridge_client import (  # noqa: E402
     MAX_WIRE_ID,
     BridgeClient,
+    BridgeCommandError,
     BridgeError,
 )
 from fl_studio_mcp.bridge_install import (  # noqa: E402
@@ -80,15 +81,20 @@ class DirectFakeClient:
         return bridge.cmd_ping({})
 
     def call(self, cmd, **args):
-        handler = bridge.HANDLERS[cmd]
-        result = handler(args)
-        if isinstance(result, types.GeneratorType):
-            while True:
-                try:
-                    next(result)
-                except StopIteration as stopped:
-                    return stopped.value
-        return result
+        # Match BridgeClient's explicit error-envelope boundary. The in-process
+        # bridge raises ValueError; the real transport serializes it first.
+        try:
+            handler = bridge.HANDLERS[cmd]
+            result = handler(args)
+            if isinstance(result, types.GeneratorType):
+                while True:
+                    try:
+                        next(result)
+                    except StopIteration as stopped:
+                        return stopped.value
+            return result
+        except ValueError as exc:
+            raise BridgeCommandError(f"FL Studio rejected '{cmd}': {exc}") from exc
 
 
 class FL2025Client(DirectFakeClient):
@@ -698,7 +704,7 @@ class ReadOnlyInspectorTests(unittest.TestCase):
     def test_track_indices_are_validated_against_live_count(self):
         for index in (-1, len(_state.TRACKS), 999999):
             with self.subTest(index=index):
-                with self.assertRaises(ValueError):
+                with self.assertRaises(BridgeCommandError):
                     self.inspector.inspect_mixer_track(index)
 
     def test_handshake_rejects_malformed_or_unknown_semantics(self):
@@ -1613,7 +1619,7 @@ class VerifiedWriteTests(unittest.TestCase):
 
         undo_before = list(_state.UNDO)
         with mock.patch.object(bridge.mixer, "getTrackVolume", silent_db):
-            with self.assertRaisesRegex(ValueError, r"found None"):
+            with self.assertRaisesRegex(BridgeCommandError, r"found None"):
                 self.writer.set_mixer_volume_db(
                     track_index=3,
                     volume_db=-6.0,

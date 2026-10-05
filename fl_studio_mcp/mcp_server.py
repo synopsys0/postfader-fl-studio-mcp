@@ -14,6 +14,7 @@ from typing import Annotated, Literal
 
 import anyio
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.utilities.func_metadata import ArgModelBase
 from mcp.types import ToolAnnotations
 from pydantic import ConfigDict, Field, WithJsonSchema
@@ -25,6 +26,7 @@ from .advisory import (
     analyze_audio_file,
     find_recent_audio_files,
 )
+from .bridge_client import BridgeCommandError
 from .contracts import (
     CapabilitiesReport,
     MixerTrackInspection,
@@ -94,6 +96,7 @@ from .creative import (
     write_piano_roll_notes,
 )
 from .edits import (
+    EditRefusal,
     ExpectedChannelFields,
     ExpectedMixerTrackFields,
     ExpectedPatternFields,
@@ -130,7 +133,7 @@ from .saved_project_render import (
     get_saved_project_render_jobs,
     shutdown_saved_project_render_jobs,
 )
-from .readonly_inspector import ReadOnlyInspector
+from .readonly_inspector import IncompatibleFLStudio, ReadOnlyInspector, ReadOnlyViolation
 from .mixing import (
     PEAK_WATCHES,
     GainStagePlan,
@@ -144,7 +147,12 @@ from .mixing import (
     reference_recommendations,
     run_mix_doctor,
 )
-from .performance import TrackBController, TrackBInspector
+from .performance import (
+    TrackBBoundaryViolation,
+    TrackBController,
+    TrackBInspector,
+    TrackBMutationsUnavailable,
+)
 from .creation_pipeline.processing import ProcessingPlan, ProcessingRequest
 from .plugin_atlas_mcp import (
     AtlasGetProductRequest,
@@ -176,6 +184,8 @@ from .production_runs import (
     plan_live_processing,
 )
 from .sound_selection.executor import (
+    SoundSelectionAuthorizationError,
+    SoundSelectionSessionError,
     SoundFeedbackResult,
     SoundPaletteLookup,
     SoundSelectionApplyResult,
@@ -233,7 +243,14 @@ from .tool_schemas import (
     compact_schema,
     describe_operations,
 )
-from .verified_writer import WriteModeManager
+from .verified_writer import (
+    VerifiedWritesUnavailable,
+    WriteBoundaryViolation,
+    WriteModeBoundaryViolation,
+    WriteModeConfirmationRequired,
+    WriteModeManager,
+    WriteModeUnavailable,
+)
 from .workflows import (
     MAX_BATCH_OPERATIONS,
     BatchOperation,
@@ -494,6 +511,10 @@ FILE_MUTATING = ToolAnnotations(
 )
 
 
+class ToolInputError(ToolError, ValueError):
+    """Caller-correctable input refusal, also a ValueError for direct callers."""
+
+
 class PostFaderServer(MCPServer):
     """Serve compact schemas; validation still uses the full models.
 
@@ -528,12 +549,40 @@ mcp = PostFaderServer(
 )
 
 
+async def _run_with_refusals(invoke):
+    """Expose deliberate safety refusals without exposing unexpected crashes.
+
+    SDK 2.1+ masks ordinary handler exceptions. Only these explicitly authored
+    refusals and explicit bridge command failures carry model-facing guidance.
+    Arbitrary ValueError, transport, filesystem and programming errors keep
+    the SDK's default handling.
+    """
+    try:
+        return await anyio.to_thread.run_sync(invoke)
+    except (
+        BridgeCommandError,
+        EditRefusal,
+        IncompatibleFLStudio,
+        ReadOnlyViolation,
+        SoundSelectionAuthorizationError,
+        SoundSelectionSessionError,
+        TrackBBoundaryViolation,
+        TrackBMutationsUnavailable,
+        VerifiedWritesUnavailable,
+        WriteBoundaryViolation,
+        WriteModeBoundaryViolation,
+        WriteModeConfirmationRequired,
+        WriteModeUnavailable,
+    ) as exc:
+        raise ToolError(str(exc)) from exc
+
+
 async def _run(method_name: str, **arguments):
     def invoke():
         inspector = ReadOnlyInspector()
         return getattr(inspector, method_name)(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _measure(function, *positional, **keyword):
@@ -542,7 +591,7 @@ async def _measure(function, *positional, **keyword):
     def invoke():
         return function(*positional, **keyword)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _mix(function, *positional, **keyword):
@@ -551,7 +600,7 @@ async def _mix(function, *positional, **keyword):
     def invoke():
         return function(*positional, **keyword)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _edit(function, **arguments):
@@ -566,7 +615,7 @@ async def _edit(function, **arguments):
     def invoke():
         return function(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _set_write_mode(**arguments):
@@ -575,21 +624,21 @@ async def _set_write_mode(**arguments):
     def invoke():
         return WriteModeManager().set_write_mode(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _performance_read(method_name: str, **arguments):
     def invoke():
         return getattr(TrackBInspector(), method_name)(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _performance_write(method_name: str, **arguments):
     def invoke():
         return getattr(TrackBController(), method_name)(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 async def _apply_batch(**arguments):
@@ -598,7 +647,7 @@ async def _apply_batch(**arguments):
     def invoke():
         return VerifiedBatchExecutor().apply(**arguments)
 
-    return await anyio.to_thread.run_sync(invoke)
+    return await _run_with_refusals(invoke)
 
 
 @mcp.resource(
@@ -1798,11 +1847,11 @@ async def plugin_set_parameter(
     Inspect verified and the readback; does not save the project."""
     forms = [normalized_value is not None, display_value is not None, option is not None]
     if sum(forms) != 1:
-        raise ValueError("supply exactly one of normalized_value, display_value, or option")
+        raise ToolInputError("supply exactly one of normalized_value, display_value, or option")
     if display_value is None and (unit is not None or tolerance is not None):
-        raise ValueError("unit and tolerance apply only to display_value")
+        raise ToolInputError("unit and tolerance apply only to display_value")
     if option is None and sweep_steps is not None:
-        raise ValueError("sweep_steps applies only to option")
+        raise ToolInputError("sweep_steps applies only to option")
     common = {
         "target": target,
         "session_fingerprint": session_fingerprint,
@@ -1810,7 +1859,7 @@ async def plugin_set_parameter(
     }
     if normalized_value is not None:
         if isinstance(parameter, str):
-            raise ValueError(
+            raise ToolInputError(
                 "normalized_value needs a parameter index; address a control by name "
                 "or display text with display_value or option"
             )
@@ -2122,7 +2171,7 @@ async def processing_apply(
         plan.session_fingerprint is not None
         and plan.session_fingerprint != session_fingerprint
     ):
-        raise ValueError(
+        raise ToolInputError(
             "session_fingerprint does not match the processing plan's captured session"
         )
     if any(
@@ -2130,7 +2179,7 @@ async def processing_apply(
         and action.session_fingerprint != session_fingerprint
         for action in plan.actions
     ):
-        raise ValueError(
+        raise ToolInputError(
             "session_fingerprint does not match a semantic action's captured session"
         )
     prepared = plan.model_copy(
@@ -2262,7 +2311,7 @@ async def sound_plan_palette(
     sound_apply_palette before writing notes, so parts fit the chosen sounds."""
     if base_palette_id is None:
         if section is not None or replace_roles:
-            raise ValueError("section and replace_roles apply only with base_palette_id")
+            raise ToolInputError("section and replace_roles apply only with base_palette_id")
         return await _mix(plan_sound_selection, request)
     return await _mix(
         create_sound_selection_variation,
