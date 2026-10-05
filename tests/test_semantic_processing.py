@@ -15,6 +15,7 @@ from fl_studio_mcp.creation_pipeline.processing import (
     ProcessingPlan,
     ProcessingRequest,
     ResolvedSemanticControl,
+    RoleProcessingRequest,
     SemanticControlResolution,
     SemanticControlValue,
     SemanticPluginAction,
@@ -163,6 +164,233 @@ class SemanticProcessingTests(unittest.TestCase):
         self.assertEqual(len(accommodated.actions), 4)
         self.assertFalse(accommodated.missing_capabilities)
 
+    def bundled_observations(self):
+        names = {
+            "equalizer": ("Band 1 freq", "Band 1 level", "Band 2 freq", "Band 2 level", "Band 3 freq", "Band 3 level"),
+            "compressor": ("Threshold", "Ratio", "Attack", "Release", "Gain"),
+            "limiter": ("Gain", "Limiter ceiling", "Limiter attack time", "Limiter release time"),
+            "reverb": ("Decay time", "Wet level", "Dry level", "HighCut"),
+            "delay": ("Output wet", "Feedback level", "Time"),
+        }
+        displays = {"Decay time": "2.0sec", "Wet level": "40%", "HighCut": "12kHz", "Time": "4:0"}
+        registry = load_bundled_registry()
+        return {
+            adapter.category: {
+                "plugin_name": registry.product(adapter.product_id).name,
+                "track_index": 5, "slot_index": slot,
+                "parameters": [
+                    {"index": index + 37, "name": name, "display": displays.get(name)}
+                    for index, name in enumerate(names[adapter.category])
+                ],
+            }
+            for slot, adapter in enumerate(registry.adapters)
+        }
+
+    def test_every_bundled_intent_has_a_resolved_plan_and_truthful_coverage(self):
+        registry = load_bundled_registry()
+        observations = self.bundled_observations()
+        expected = {
+            "equalizer": {"reduce_mud", "tame_harshness", "add_presence", "add_air", "tighten_low_end"},
+            "compressor": {"control_dynamics", "add_punch", "level_vocal", "tighten_low_end"},
+            "limiter": {"limit_peaks", "control_dynamics"},
+            "reverb": {"add_depth", "shorten_space", "darken_reverb"},
+            "delay": {"add_depth", "rhythmic_echo"},
+        }
+        for adapter in registry.adapters:
+            self.assertEqual(set(adapter.supported_intents), expected[adapter.category])
+            for intent in adapter.supported_intents:
+                with self.subTest(adapter=adapter.adapter_id, intent=intent):
+                    loaded = tuple(observations[c] for c in ("equalizer", "compressor")) if intent == "tighten_low_end" else (observations[adapter.category],)
+                    request = ProcessingRequest(goals=(ProcessingGoal(goal=intent, required=True),))
+                    plan = plan_processing(request, loaded_plugins=loaded, registry=registry)
+                    coverage = evaluate_effect_coverage(request, loaded_plugins=loaded, registry=registry)
+                    self.assertFalse(plan.missing_capabilities)
+                    self.assertTrue(plan.actions)
+                    self.assertIn(adapter.adapter_id, {action.adapter_id for action in plan.actions})
+                    self.assertTrue(all(action.resolution.status == "resolved" for action in plan.actions))
+                    self.assertEqual(coverage.state, "effect_covered")
+                    self.assertFalse(coverage.required_processing_missing)
+                    self.assertFalse(coverage.missing_capabilities)
+                    self.assertEqual(len(plan.actions), len({action.action_id for action in plan.actions}))
+
+    def test_tightening_requires_each_category_and_keeps_partial_work_visible(self):
+        registry = load_bundled_registry()
+        observations = self.bundled_observations()
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="tighten_low_end", required=True),))
+        for categories, absent, count in (((), {"equalizer", "compressor"}, 0), (("equalizer",), {"compressor"}, 2), (("compressor",), {"equalizer"}, 4), (("equalizer", "compressor"), set(), 6)):
+            with self.subTest(categories=categories):
+                loaded = tuple(observations[c] for c in categories)
+                plan = plan_processing(request, loaded_plugins=loaded, registry=registry)
+                coverage = evaluate_effect_coverage(request, loaded_plugins=loaded, registry=registry)
+                self.assertEqual(len(plan.actions), count)
+                self.assertEqual({gap.category for gap in plan.missing_capabilities}, absent)
+                self.assertEqual({gap.category for gap in coverage.missing_capabilities}, absent)
+                self.assertEqual(coverage.required_processing_missing, bool(absent))
+                self.assertEqual(coverage.state == "effect_covered", not absent)
+
+    def test_new_recipes_preserve_delay_timing_and_darken_current_cutoff(self):
+        registry = load_bundled_registry()
+        observations = self.bundled_observations()
+        for strength, expected in ((0.25, 12000.0 / 1.75), (0.75, 12000.0 / 3.25)):
+            request = ProcessingRequest(goals=(ProcessingGoal(goal="darken_reverb", strength=strength),))
+            plan = plan_processing(request, loaded_plugins=(observations["reverb"],), registry=registry)
+            self.assertEqual(len(plan.actions), 1)
+            self.assertAlmostEqual(plan.actions[0].control.display_value, expected, places=3)
+            self.assertEqual(plan.actions[0].control.display_unit, "Hz")
+        delay = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="add_depth"),)), loaded_plugins=(observations["delay"],), registry=registry)
+        self.assertEqual({action.control.control_role for action in delay.actions}, {"wet", "feedback"})
+        self.assertTrue(all(action.control.display_unit == "percent" for action in delay.actions))
+        limiter = plan_processing(ProcessingRequest(goals=(ProcessingGoal(goal="control_dynamics"),)), loaded_plugins=(observations["limiter"],), registry=registry)
+        self.assertEqual([action.control.control_role for action in limiter.actions], ["ceiling"])
+
+    def test_darkening_refuses_unknown_cutoff_but_allows_explicit_control(self):
+        registry = load_bundled_registry()
+        observation = self.bundled_observations()["reverb"]
+        for display in (None, "Off", "0Hz"):
+            with self.subTest(display=display):
+                observation["parameters"][-1]["display"] = display
+                request = ProcessingRequest(goals=(ProcessingGoal(goal="darken_reverb", required=True),))
+                plan = plan_processing(request, loaded_plugins=(observation,), registry=registry)
+                coverage = evaluate_effect_coverage(request, loaded_plugins=(observation,), registry=registry)
+                self.assertFalse(plan.actions)
+                self.assertTrue(plan.missing_capabilities)
+                self.assertEqual(coverage.state, "unresolved_effect")
+                self.assertTrue(coverage.required_processing_missing)
+        explicit = ProcessingRequest(goals=(ProcessingGoal(goal="darken_reverb", controls=(SemanticControlValue(control_role="high_cut", display_value=3000.0, display_unit="Hz"),)),))
+        self.assertEqual(len(plan_processing(explicit, loaded_plugins=(observation,), registry=registry).actions), 1)
+
+    def test_category_presence_cannot_cover_unsupported_or_unresolved_goals(self):
+        registry = load_bundled_registry()
+        observation = self.bundled_observations()["equalizer"]
+        cases = (
+            ProcessingGoal(goal="keep_low_end_centered", required=True),
+            ProcessingGoal(goal="unknown_intent", required=True),
+            ProcessingGoal(goal="add_air", controls=(SemanticControlValue(control_role="unknown_control", display_value=1.0),), required=True),
+            ProcessingGoal(goal="add_air", target=MixerEffectTarget(track_index=7, slot_index=0), required=True),
+        )
+        for goal in cases:
+            with self.subTest(goal=goal):
+                request = ProcessingRequest(goals=(goal,), completion_target="playable_draft")
+                plan = plan_processing(request, loaded_plugins=(observation,), registry=registry)
+                coverage = evaluate_effect_coverage(request, loaded_plugins=(observation,), registry=registry)
+                self.assertFalse(plan.actions)
+                self.assertTrue(plan.missing_capabilities)
+                self.assertNotEqual(coverage.state, "effect_covered")
+                self.assertTrue(coverage.required_processing_missing)
+
+    def test_adapter_intents_cannot_be_overridden_by_capability_claims(self):
+        registry = load_bundled_registry()
+        capability = self.stock_capability("image-line.fruity-reeverb-2", ("Decay", "Wet"))
+        capability = capability.model_copy(update={"supported_techniques": ("restrained_section_contrast",)})
+        goal = ProcessingGoal(goal="restrained_section_contrast", controls=(SemanticControlValue(control_role="decay", display_value=1.0),))
+        plan = plan_processing(ProcessingRequest(goals=(goal,)), loaded_plugins=(capability,), registry=registry)
+        self.assertFalse(plan.actions)
+        self.assertTrue(plan.missing_capabilities)
+
+    def test_coverage_uses_exact_requested_controls_not_unrelated_adapter_controls(self):
+        registry = load_bundled_registry()
+        fixture = json.loads((Path(__file__).parent / "fixtures" / "stock-effect-controls-v1.json").read_text())
+        loaded = ({**fixture["reeverb"], "track_index": 5, "slot_index": 2},)
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="add_depth"),))
+        self.assertFalse(plan_processing(request, loaded_plugins=loaded, registry=registry).missing_capabilities)
+        self.assertEqual(evaluate_effect_coverage(request, loaded_plugins=loaded, registry=registry).state, "effect_covered")
+
+    def test_role_targets_dry_intent_and_required_flags_survive_expansion(self):
+        registry = load_bundled_registry()
+        observations = self.bundled_observations()
+        target = MixerEffectTarget(track_index=5, slot_index=3)
+        request = ProcessingRequest(completion_target="playable_draft", roles=(
+            RoleProcessingRequest(role="lead", target=target, goals=(ProcessingGoal(goal="add_depth"),), processing_required=True),
+            RoleProcessingRequest(role="dry", dry_by_design=True, requested_techniques=("unknown",)),
+        ))
+        plan = plan_processing(request, loaded_plugins=(observations["reverb"],), registry=registry)
+        coverage = evaluate_effect_coverage(request, loaded_plugins=(observations["reverb"],), registry=registry)
+        self.assertTrue(plan.actions)
+        self.assertEqual({action.role for action in plan.actions}, {"lead"})
+        self.assertEqual({action.target for action in plan.actions}, {target})
+        self.assertEqual(coverage.state, "effect_covered")
+        self.assertEqual({row.role: row.state for row in coverage.roles}, {"lead": "effect_covered", "dry": "dry_by_design"})
+        absent = evaluate_effect_coverage(request, registry=registry)
+        self.assertTrue(absent.required_processing_missing)
+        self.assertTrue(all(gap.required for gap in absent.missing_capabilities))
+        role_only = evaluate_effect_coverage((RoleProcessingRequest(role="lead", requested_techniques=("add_depth",)),), loaded_plugins=(observations["reverb"],), completion_target="playable_draft", registry=registry)
+        self.assertEqual(role_only.state, "effect_covered")
+        self.assertEqual(role_only.completion_target, "playable_draft")
+
+    def test_coverage_preserves_conflicts_and_separate_targets_in_one_role(self):
+        registry = load_bundled_registry()
+        observation = self.bundled_observations()["equalizer"]
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="add_presence"), ProcessingGoal(goal="add_air")))
+        coverage = evaluate_effect_coverage(request, loaded_plugins=(observation,), registry=registry)
+        self.assertTrue(coverage.required_processing_missing)
+        self.assertIn("conflicts", coverage.missing_capabilities[0].reason)
+        other = {**observation, "slot_index": 9}
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="add_presence", target=MixerEffectTarget(track_index=5, slot_index=0)), ProcessingGoal(goal="add_air", target=MixerEffectTarget(track_index=5, slot_index=9))))
+        plan = plan_processing(request, loaded_plugins=(observation, other), registry=registry)
+        coverage = evaluate_effect_coverage(request, loaded_plugins=(observation, other), registry=registry)
+        self.assertEqual(len(plan.actions), 4)
+        self.assertEqual(len({action.action_id for action in plan.actions}), 4)
+        self.assertEqual(coverage.state, "effect_covered")
+
+    def test_optional_gap_does_not_inherit_a_required_sibling(self):
+        registry = load_bundled_registry()
+        request = ProcessingRequest(completion_target="playable_draft", goals=(
+            ProcessingGoal(goal="add_presence", required=True),
+            ProcessingGoal(goal="unknown_optional"),
+        ))
+        coverage = evaluate_effect_coverage(request, loaded_plugins=(self.bundled_observations()["equalizer"],), registry=registry)
+        self.assertFalse(coverage.required_processing_missing)
+        self.assertFalse(coverage.roles[0].processing_required_for_completion)
+        self.assertFalse(coverage.missing_capabilities[0].required)
+
+    def test_compound_diagnostics_cover_the_maximum_request_without_truncation(self):
+        registry = load_bundled_registry()
+        request = ProcessingRequest(goals=tuple(ProcessingGoal(goal="tighten_low_end", required=True) for _ in range(128)))
+        plan = plan_processing(request, registry=registry)
+        coverage = evaluate_effect_coverage(request, registry=registry)
+        self.assertEqual(len(plan.missing_capabilities), 256)
+        self.assertEqual(len(coverage.missing_capabilities), 256)
+        self.assertTrue(coverage.required_processing_missing)
+        with self.assertRaisesRegex(ValueError, "at most 128 processing goals"):
+            ProcessingRequest(goals=request.goals, roles=(RoleProcessingRequest(role="lead", requested_techniques=("add_depth",)),))
+
+    def test_observed_alternatives_with_missing_controls_are_unresolved(self):
+        registry = load_bundled_registry()
+        observations = self.bundled_observations()
+        for category, goal in (("delay", "add_depth"), ("limiter", "control_dynamics")):
+            with self.subTest(category=category):
+                observation = {**observations[category], "parameters": observations[category]["parameters"][:1]}
+                request = ProcessingRequest(goals=(ProcessingGoal(goal=goal),))
+                plan = plan_processing(request, loaded_plugins=(observation,), registry=registry)
+                coverage = evaluate_effect_coverage(request, loaded_plugins=(observation,), registry=registry)
+                self.assertEqual(plan.missing_capabilities[0].category, category)
+                self.assertEqual(coverage.state, "unresolved_effect")
+                self.assertTrue(coverage.required_processing_missing)
+
+    def test_action_limit_reports_unplanned_work_and_unique_ids(self):
+        registry = load_bundled_registry()
+        request = ProcessingRequest(goals=tuple(ProcessingGoal(goal="control_dynamics") for _ in range(65)))
+        loaded = (self.bundled_observations()["compressor"],)
+        plan = plan_processing(request, loaded_plugins=loaded, registry=registry)
+        coverage = evaluate_effect_coverage(request, loaded_plugins=loaded, registry=registry)
+        self.assertEqual(len(plan.actions), 256)
+        self.assertEqual(len({action.action_id for action in plan.actions}), 256)
+        self.assertIn("action limit", plan.missing_capabilities[0].reason)
+        self.assertTrue(coverage.required_processing_missing)
+
+    def test_alternative_conflict_and_master_gaps_name_the_observed_effect(self):
+        registry = load_bundled_registry()
+        delay = self.bundled_observations()["delay"]
+        request = ProcessingRequest(goals=(ProcessingGoal(goal="add_depth", strength=0.25), ProcessingGoal(goal="add_depth", strength=0.75)))
+        cases = ((request, delay), (ProcessingRequest(goals=(ProcessingGoal(goal="add_depth"),)), {**delay, "track_index": 0}))
+        for request, observation in cases:
+            with self.subTest(request=request, track=observation["track_index"]):
+                plan = plan_processing(request, loaded_plugins=(observation,), registry=registry)
+                coverage = evaluate_effect_coverage(request, loaded_plugins=(observation,), registry=registry)
+                self.assertEqual(plan.missing_capabilities[0].category, "delay")
+                self.assertEqual(coverage.state, "unresolved_effect")
+                self.assertTrue(coverage.required_processing_missing)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.product = ProductKnowledge(
@@ -286,6 +514,7 @@ class SemanticProcessingTests(unittest.TestCase):
                     role="lead",
                     goal="add_depth",
                     target=self.target,
+                    controls=(SemanticControlValue(control_role="reverb.decay", display_value=1.8),),
                 ),
             )
         )

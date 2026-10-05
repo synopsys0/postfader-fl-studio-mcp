@@ -170,22 +170,33 @@ class NativePowerShellTests(unittest.TestCase):
             raise unittest.SkipTest("Windows PowerShell is unavailable")
 
     def run_script(self, script: str, *arguments: str):
-        return subprocess.run(
-            [
-                self.powershell,
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                os.fspath(ROOT / "scripts" / script),
-                *arguments,
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
+        command = [
+            self.powershell,
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            os.fspath(ROOT / "scripts" / script),
+            *arguments,
+        ]
+        try:
+            return subprocess.run(
+                command,
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                text=True,
+                # The first Windows PowerShell launch can exceed 30 seconds
+                # on a cold CI runner. Keep a bounded budget and never retry.
+                timeout=60,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            self.fail(
+                f"{script} exceeded the 60-second native PowerShell budget; "
+                f"stdout={error.stdout!r}; stderr={error.stderr!r}"
+            )
 
     def test_installer_dry_run_resolves_absolute_paths_without_writes(self):
         with tempfile.TemporaryDirectory(prefix="postfader install facts ") as raw:

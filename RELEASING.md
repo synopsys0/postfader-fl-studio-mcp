@@ -9,8 +9,9 @@ assets and SHA-256 checksums to GitHub.
 
 ## V12 publication
 
-V12 shipped as package version `12.0.0`; the current patch, `12.0.1`, only
-clarifies tool descriptions. Both expose 85 tools and 8 resources. Every tool
+V12 shipped as package version `12.0.0`; the current patch, `12.0.2`, fixes
+processing intent resolution and readiness reporting. It retains 85 tools and
+8 resources. Every tool
 was renamed in 12.0.0, so its release notes carry the full V11-to-V12 name
 table; keep it complete. Publish the reviewed dev feature set through a main pull
 request, then the matching version tag. The Universal Bridge script did not
@@ -200,10 +201,12 @@ installation check all agree.
 
 ## Signed annotated tags for future releases
 
-`v0.20.0` is already public and unsigned. Leave that tag exactly as published:
-do not delete it, force-push it, move it, or recreate it. Starting with the next
-release, use a signed annotated tag after all version synchronization and CI
-checks pass.
+`v0.20.0` and `v12.0.1` are already public and unsigned. Leave all published
+tags exactly as published: do not delete, force-push, move, or recreate them.
+Use a signed annotated tag for the next release after all version
+synchronization and CI checks pass. V12.0.1's signed artifact attestations are
+separate from Git tag signing; see the
+[published supply-chain evidence](docs/supply-chain.md#published-v1201-evidence).
 
 For a GPG signing key:
 
@@ -211,6 +214,7 @@ For a GPG signing key:
 git config user.signingkey <GPG_KEY_ID>
 git config tag.gpgSign true
 git tag --sign --annotate vX.Y.Z --message 'PostFader vX.Y.Z'
+git verify-tag vX.Y.Z
 git show --show-signature vX.Y.Z
 git push origin vX.Y.Z
 ```
@@ -218,15 +222,21 @@ git push origin vX.Y.Z
 For an SSH signing key, configure Git's SSH signing format and allowed signer
 file first, then use the same `git tag --sign --annotate` and verification flow:
 
+The dedicated PostFader release key configured for V12.0.2 uses Ed25519 with
+public fingerprint `SHA256:evub+lo9N8uZ3uu/b7AOq32XPq7qsQhm1sPDBsErIio`.
+Check that fingerprint when verifying its public key; never include private
+key material or a passphrase in a release record.
+
 ```bash
 git config gpg.format ssh
 git config user.signingkey ~/.ssh/release_signing_key
 git config gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
 git tag --sign --annotate vX.Y.Z --message 'PostFader vX.Y.Z'
+git verify-tag vX.Y.Z
 git show --show-signature vX.Y.Z
 git push origin vX.Y.Z
 ```
 
 Confirm on GitHub that the tag is shown as verified before relying on the tag
 as a release input. A signed tag improves provenance for future releases; it is
-not a reason to rewrite the already-public v0.20.0 history.
+not a reason to rewrite already-public history.
