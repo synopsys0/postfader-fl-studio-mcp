@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 from jsonschema import Draft202012Validator
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 
 import fl_studio_mcp
@@ -37,6 +38,59 @@ def _schema_nodes(node):
 
 
 class MCPCompatibilityTests(unittest.TestCase):
+    def test_deliberate_refusals_reach_the_mcp_caller(self) -> None:
+        from fl_studio_mcp.bridge_client import BridgeCommandError
+        from fl_studio_mcp.edits import EditRefusal
+        from fl_studio_mcp.verified_writer import VerifiedWritesUnavailable
+
+        for error in (
+            EditRefusal("set allow_master=true to change Master"),
+            VerifiedWritesUnavailable("use session_set_write_mode with confirm_user_present=true"),
+            BridgeCommandError("expected_before changed; nothing was changed"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with mock.patch.object(server_module, "set_mixer_track", side_effect=error):
+                    with self.assertRaises(ToolError) as caught:
+                        asyncio.run(mcp.call_tool("mixer_set_track", {
+                            "track_index": 3, "volume_normalized": 0.5,
+                        }))
+                self.assertIn(str(error), str(caught.exception))
+
+    def test_unexpected_errors_are_not_promoted_to_public_refusals(self) -> None:
+        from fl_studio_mcp.bridge_client import BridgeError
+
+        for error_type in (RuntimeError, ValueError, OSError, BridgeError):
+            error = error_type("private diagnostic detail")
+            with self.subTest(error=error_type.__name__):
+                with self.assertRaises(error_type) as caught:
+                    asyncio.run(server_module._run_with_refusals(mock.Mock(side_effect=error)))
+                self.assertIs(caught.exception, error)
+                # SDK 2.1+ masks crashes. The minimum 2.0 SDK predates that
+                # policy; do not emulate it by inspecting wrapped exceptions.
+                import importlib.metadata
+                sdk_minor = tuple(map(int, importlib.metadata.version("mcp").split(".")[:2]))
+                if sdk_minor >= (2, 1):
+                    with mock.patch.object(server_module, "set_mixer_track", side_effect=error):
+                        with self.assertRaises(ToolError) as wrapped:
+                            asyncio.run(mcp.call_tool("mixer_set_track", {
+                                "track_index": 3, "volume_normalized": 0.5,
+                            }))
+                    self.assertNotIn(str(error), str(wrapped.exception))
+
+    def test_bridge_rejection_has_a_distinct_exception(self) -> None:
+        from fl_studio_mcp.bridge_client import BridgeClient, BridgeCommandError
+
+        client = BridgeClient()
+        transport = mock.Mock()
+        transport.request.side_effect = lambda rid, request: {
+            "id": rid, "ok": False,
+            "error": "expected_before changed; nothing was changed",
+        }
+        with mock.patch.object(client, "_select", return_value=transport):
+            with self.assertRaisesRegex(BridgeCommandError, "expected_before"):
+                client.call("plugin.set_param")
+        self.assertEqual(transport.request.call_count, 1)
+
     def test_advertised_input_schemas_are_closed_valid_and_compact(self) -> None:
         tools = asyncio.run(mcp.list_tools())
         self.assertTrue(tools)

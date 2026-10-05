@@ -200,6 +200,10 @@ class BridgeError(RuntimeError):
     """A command reached FL Studio but failed there, or the link is down."""
 
 
+class BridgeCommandError(BridgeError):
+    """A matching bridge response explicitly reported a command failure."""
+
+
 class BridgeUnavailableError(BridgeError):
     """No bridge transport is currently reachable."""
 
@@ -1273,7 +1277,7 @@ class BridgeClient:
             detail = resp.get("error", "unknown error")
             if resp.get("available"):
                 detail += "\navailable commands: " + ", ".join(resp["available"])
-            raise BridgeError("FL Studio rejected '%s': %s" % (cmd, detail))
+            raise BridgeCommandError("FL Studio rejected '%s': %s" % (cmd, detail))
         return resp.get("result", {})
 
     def _drop(self):
