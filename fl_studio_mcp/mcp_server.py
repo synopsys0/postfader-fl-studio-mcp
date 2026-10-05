@@ -346,7 +346,11 @@ accepted material. Analysis and ideas alone do not authorize project changes.
 Direct edits: each target has one setter that changes any of its fields in one
 call (mixer_set_track, channel_set, pattern_set, playlist_set_track,
 transport_set, plugin_set_parameter). Use project_apply_edits for ordered
-edits across several targets. Enable session_set_write_mode(enabled=true,
+edits across several targets. Which tool applies changes: a setter or
+project_apply_edits for values already decided; processing_apply,
+sound_apply_palette and review_apply_revision only for the result of their
+own planner (processing_plan, sound_plan_palette, review_plan_revision);
+run_execute for multi-step work. Enable session_set_write_mode(enabled=true,
 confirm_user_present=true) once first; the user's request to edit is the
 confirmation. Every write is read back on a later FL tick: check verified and
 each receipt, and describe partial results accurately. Writes are ordered and
@@ -876,16 +880,19 @@ async def project_apply_edits(
     stop_on_unverified: StopOnUnverifiedArg = True,
     session_fingerprint: SessionFingerprintArg = None,
 ) -> VerifiedBatchResult:
-    """Apply ordered edits across several targets with one session check.
+    """Apply edits you have already decided, across several targets, in one call.
 
-    Use it when one change spans different mixer tracks, channels, patterns,
-    Playlist tracks, plug-in parameters, or the tempo, or to apply the
-    operations from mixer_plan_gain_staging. For several fields of one target,
-    the area setter (mixer_set_track, channel_set) is simpler; for multi-stage
-    work, use run_execute. Requires write mode. Every attempted item gets its
-    own later-tick receipt. The batch is non-atomic: earlier changes remain if a
-    later item fails, and an unknown outcome stops it. Inspect each receipt and
-    never replay an ambiguous batch. No rollback or project save is performed."""
+    Each item sets an absolute value on a mixer track, channel, pattern,
+    Playlist track, plug-in parameter, or the tempo, in order, after one
+    session check; mixer_plan_gain_staging returns items in this form. For
+    several fields of one target, its setter (mixer_set_track, channel_set) is
+    simpler. It does not apply plans: processing_apply, sound_apply_palette,
+    and review_apply_revision apply their own planner's result, and
+    run_execute runs multi-step work. Requires write mode. Every attempted item
+    gets its own later-tick receipt. The batch is non-atomic: earlier changes
+    remain if a later item fails, and an unknown outcome stops it. Inspect each
+    receipt and never replay an ambiguous batch. No rollback or project save is
+    performed."""
     return await _apply_batch(
         operations=operations,
         stop_on_unverified=stop_on_unverified,
@@ -2101,14 +2108,16 @@ async def processing_apply(
         Field(description="True only when the user explicitly asked for these processing changes."),
     ],
 ) -> ProductionRunResult:
-    """Apply a reviewed processing_plan to the loaded effects in one run.
+    """Apply the plan returned by processing_plan to the loaded effects.
 
-    Runs the plan as a single-operation Production Run: it checks readiness,
-    enables write mode for the run, writes each control with its verified
-    setter, and releases write mode. Requires the session_fingerprint from a
-    recent live read and authorized_to_modify=true. Stops on an unknown or
-    unverified outcome; earlier settings remain. Returns the run with
-    per-action receipts; continue or inspect it with run_continue and run_get."""
+    Takes only that plan, passed back unchanged, and runs it as a
+    single-operation Production Run: it checks readiness, enables write mode
+    for the run, writes each control with its verified setter, and releases
+    write mode. Requires the session_fingerprint from a recent live read and
+    authorized_to_modify=true. Stops on an unknown or unverified outcome;
+    earlier settings remain. Returns the run with per-action receipts;
+    continue or inspect it with run_continue and run_get. To set one parameter
+    value directly, use plugin_set_parameter."""
     if (
         plan.session_fingerprint is not None
         and plan.session_fingerprint != session_fingerprint
@@ -2325,7 +2334,7 @@ async def sound_apply_palette(
         Field(default=None, description="Override the palette's local-history policy for this application."),
     ] = None,
 ) -> SoundSelectionApplyResult:
-    """Load the presets a reviewed palette assigned, role by role, in FL.
+    """Apply the palette returned by sound_plan_palette, loading each role's preset.
 
     Pass the palette (or its palette_id) unchanged, the session_fingerprint
     from a live read, and authorized_to_modify=true. Enables write mode for
@@ -3071,16 +3080,19 @@ async def run_validate(
     annotations=MUTATING.model_copy(update={"title": "Execute a Production Run"}),
 )
 async def run_execute(request: RunRequestArg, plan: RunPlanArg) -> ProductionRunResult:
-    """Execute a multi-step production plan in FL Studio as one task-scoped run.
+    """Run a multi-step production plan, such as writing a chorus, as one task.
 
-    The main path for multi-stage work such as "write a chorus" or "build a
-    beat": it validates the whole plan, checks readiness, enables write mode
-    once for the run, executes operations in order with per-operation
-    receipts, and releases write mode when finished. It stops at a blocker or
-    an unknown outcome and reports the blocked operation and a next step;
-    resume with run_continue. Mutating plans need authorized_to_modify=true.
-    The run is saved locally and survives MCP restarts. Never saves the
-    project."""
+    The main path for work that spans several kinds of operation, such as
+    composing, writing notes, arranging, choosing sounds, and processing: it
+    validates the whole plan, checks readiness, enables write mode once for
+    the run, executes operations in order with per-operation receipts, and
+    releases write mode when finished. For edits already decided, use the
+    setters or project_apply_edits; to apply one result of processing_plan,
+    sound_plan_palette, or review_plan_revision, use that area's apply tool.
+    It stops at a blocker or an unknown outcome and reports the blocked
+    operation and a next step; resume with run_continue. Mutating plans need
+    authorized_to_modify=true. The run is saved locally and survives MCP
+    restarts. Never saves the project."""
     return await _mix(PRODUCTION_RUNS.execute, request, plan)
 
 
@@ -3101,7 +3113,7 @@ async def run_continue(
         ),
     ],
 ) -> ProductionRunResult:
-    """Resume a stopped or blocked run, or change its unexecuted remainder.
+    """Resume a stopped or blocked Production Run, or change its unexecuted remainder.
 
     Use it after the user's follow-up or after fixing a blocker. Completed
     operations and their receipts are kept and never re-run; an operation with
@@ -3294,12 +3306,13 @@ async def review_apply_revision(
         Field(description="Review Session, the recorded revision_plan_id, and task-scoped authorization."),
     ],
 ) -> RevisionPass:
-    """Apply one recorded revision plan to the project through a Production Run.
+    """Apply the revision plan returned by review_plan_revision to the project.
 
-    Needs authorized_to_modify=true from a request to revise in this task. Runs
-    one readiness preflight, enables write mode for the run, applies the
-    plan's operations with receipts, and releases write mode. Stops on a
-    blocker or unknown outcome. Then ask the user for a new export
+    Takes only a plan recorded in this Review Session and runs it through a
+    Production Run. Needs authorized_to_modify=true from a request to revise
+    in this task. Runs one readiness preflight, enables write mode for the
+    run, applies the plan's operations with receipts, and releases write mode.
+    Stops on a blocker or unknown outcome. Then ask the user for a new export
     (review_get view=export_request) and compare it with review_compare."""
     return await _mix(apply_creation_revision, request)
 

@@ -43,7 +43,7 @@ Write access, the project summary, undo history, and multi-target edits.
 | `project_get_summary` | Read the open project's metadata, counts, dirty state, and transport. | No |
 | `project_get_history` | Read FL's undo history: position, count, next undo hint, and dirty state. | No |
 | `project_step_history` | Undo or redo one step of FL Studio's project history and verify the move. | **Yes** |
-| `project_apply_edits` | Apply ordered edits across several targets with one session check. | **Yes** |
+| `project_apply_edits` | Apply edits you have already decided, across several targets, in one call. | **Yes** |
 
 ## Transport
 
@@ -127,7 +127,7 @@ Turn processing goals into settings for loaded effects and apply them.
 | Tool | What it does | Changes the project |
 | --- | --- | --- |
 | `processing_plan` | Turn processing goals into concrete settings for effects that are loaded. | No |
-| `processing_apply` | Apply a reviewed processing_plan to the loaded effects in one run. | **Yes** |
+| `processing_apply` | Apply the plan returned by processing_plan to the loaded effects. | **Yes** |
 
 ## Sound Selection
 
@@ -138,7 +138,7 @@ Choose and apply presets from the instruments already loaded.
 | `sound_get_inventory` | Read the pool of loaded instruments and their presets that palettes choose from. | No |
 | `sound_plan_palette` | Choose an instrument and preset for each musical role from loaded sounds. | No |
 | `sound_get_palette` | Look up a previously planned sound palette by its palette_id. | No |
-| `sound_apply_palette` | Load the presets a reviewed palette assigned, role by role, in FL. | **Yes** |
+| `sound_apply_palette` | Apply the palette returned by sound_plan_palette, loading each role's preset. | **Yes** |
 | `sound_record_feedback` | Record the user's explicit verdict on a palette so future picks follow it. | No (local state) |
 | `sound_get_history` | Report the local sound-selection history: location, health, and record counts. | No |
 | `sound_reset_history` | Delete the local sound-selection history after the user asks to. | No (local state) |
@@ -188,8 +188,8 @@ Multi-step jobs that PostFader validates and executes in order.
 | --- | --- | --- |
 | `run_describe_operations` | List Production Run operations and return exact schemas for the ones named. | No |
 | `run_validate` | Dry-run a Production Run plan against the live project without changing it. | No |
-| `run_execute` | Execute a multi-step production plan in FL Studio as one task-scoped run. | **Yes** |
-| `run_continue` | Resume a stopped or blocked run, or change its unexecuted remainder. | **Yes** |
+| `run_execute` | Run a multi-step production plan, such as writing a chorus, as one task. | **Yes** |
+| `run_continue` | Resume a stopped or blocked Production Run, or change its unexecuted remainder. | **Yes** |
 | `run_stop` | Stop a run so no further operations execute. | No (local state) |
 | `run_get` | Read a run's status, generated outputs, and per-operation receipts. | No |
 | `run_list` | List recent Production Runs saved on this computer, newest first. | No |
@@ -206,7 +206,7 @@ Review an exported draft, plan one revision, and prepare delivery.
 | `review_get` | Read a Review Session, its next export request, or its delivery manifest. | No |
 | `review_compare` | Compare the bounces before and after a revision against its objective. | No |
 | `review_plan_revision` | Compile one bounded revision plan from evaluation findings and feedback. | No |
-| `review_apply_revision` | Apply one recorded revision plan to the project through a Production Run. | **Yes** |
+| `review_apply_revision` | Apply the revision plan returned by review_plan_revision to the project. | **Yes** |
 | `review_record_feedback` | Record the producer's explicit feedback and locks in a Review Session. | No (local state) |
 | `review_stop` | Stop a Review Session so no further revision work happens. | No (local state) |
 | `review_delete` | Delete one Review Session's stored record after the user asks to. | No (local state) |

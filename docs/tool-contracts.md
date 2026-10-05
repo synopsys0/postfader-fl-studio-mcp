@@ -1,6 +1,6 @@
 # Tool and command reference
 
-PostFader V12 (12.0.0) exposes 85 MCP tools and 8 MCP resources; the
+PostFader V12 (12.0.1) exposes 85 MCP tools and 8 MCP resources; the
 [tool reference](tools.md) lists them by task, and the
 [V12 release notes](releases/v12.0.0.md) map every earlier tool name to its
 replacement. The MCP layer is the supported public interface; the bridge
@@ -32,6 +32,7 @@ confirmation.
 | Set a plug-in parameter | `plugin_set_parameter` with exactly one value: `display_value` (Hz, dB, ms, or another displayed number, optional `unit`) searches displayed values instead of assuming a normalized curve; `option` selects a named option but moves the control during discovery, so it is not a read-only option listing; `normalized_value` writes a known 0–1 value to an inspected parameter index. |
 | Select a whole preset | `plugin_select_preset`; use exact names/indices from `plugin_list_presets`. |
 | Apply already-reviewed writes across targets | `project_apply_edits`; ordered and non-atomic, with per-operation receipts. |
+| Apply a planner's result | Each planner has its own apply tool, which takes only that planner's output: `processing_plan` → `processing_apply`, `sound_plan_palette` → `sound_apply_palette`, `review_plan_revision` → `review_apply_revision`. Values already decided go to a setter or `project_apply_edits`. |
 | Review a plan before anything changes | `run_validate` → `run_execute`; validation mutates nothing, and execution runs the plan (direct edits go in an `apply_verified_batch` operation) as one task-scoped Production Run with retained receipts. |
 | Choose sounds for multiple roles | `sound_plan_palette`; with `base_palette_id` (and optional `section`, `replace_roles`) it preserves anchors while planning a section variation. Apply either result with `sound_apply_palette` after review. |
 | Record a user's sound preferences | `sound_record_feedback`; updates local ranking history according to persistence settings, without applying presets. |
