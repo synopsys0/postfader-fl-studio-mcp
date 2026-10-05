@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "12.0.0",
+  "version": "12.0.1",
   "description": "FL Studio MCP server: read, mix, compose, and edit your open FL Studio project with Claude.",
   "long_description": "PostFader connects Claude to the FL Studio project you have open. Claude can read the mixer, channels, plug-ins, and patterns; check exported mixes for loudness, peaks, tonal balance, and vocal masking; write chords, melodies, basslines, and drums; pick presets from the instruments you loaded; and run multi-step jobs. PostFader starts read-only, reads every supported change back from FL Studio, and never saves your project. Before installing this extension, install the matching Python package and run `postfader setup`: the extension does not install FL Studio's controller script or set up a virtual MIDI port.",
   "author": {
@@ -71,7 +71,7 @@
     },
     {
       "name": "project_apply_edits",
-      "description": "Apply ordered edits across several targets with one session check."
+      "description": "Apply edits you have already decided, across several targets, in one call."
     },
     {
       "name": "transport_set",
@@ -211,7 +211,7 @@
     },
     {
       "name": "processing_apply",
-      "description": "Apply a reviewed processing_plan to the loaded effects in one run."
+      "description": "Apply the plan returned by processing_plan to the loaded effects."
     },
     {
       "name": "sound_get_inventory",
@@ -227,7 +227,7 @@
     },
     {
       "name": "sound_apply_palette",
-      "description": "Load the presets a reviewed palette assigned, role by role, in FL."
+      "description": "Apply the palette returned by sound_plan_palette, loading each role's preset."
     },
     {
       "name": "sound_record_feedback",
@@ -315,11 +315,11 @@
     },
     {
       "name": "run_execute",
-      "description": "Execute a multi-step production plan in FL Studio as one task-scoped run."
+      "description": "Run a multi-step production plan, such as writing a chorus, as one task."
     },
     {
       "name": "run_continue",
-      "description": "Resume a stopped or blocked run, or change its unexecuted remainder."
+      "description": "Resume a stopped or blocked Production Run, or change its unexecuted remainder."
     },
     {
       "name": "run_stop",
@@ -359,7 +359,7 @@
     },
     {
       "name": "review_apply_revision",
-      "description": "Apply one recorded revision plan to the project through a Production Run."
+      "description": "Apply the revision plan returned by review_plan_revision to the project."
     },
     {
       "name": "review_record_feedback",

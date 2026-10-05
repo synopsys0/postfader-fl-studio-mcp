@@ -1,7 +1,7 @@
 # Early-user activation guide
 
 This guide is for the first external users and maintainers helping them
-activate PostFader V12 (12.0.0), with 85 tools and 8 resources. Record the
+activate PostFader V12 (12.0.1), with 85 tools and 8 resources. Record the
 package version and source commit for source installs, and consult the
 [V12 release notes](releases/v12.0.0.md) and the
 [V10 limitations](releases/v10.0.0.md) for qualification boundaries. This is a manual, privacy-preserving checklist. The
