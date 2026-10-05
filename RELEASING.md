@@ -9,8 +9,9 @@ assets and SHA-256 checksums to GitHub.
 
 ## V12 publication
 
-V12 shipped as package version `12.0.0`; the current patch, `12.0.1`, only
-clarifies tool descriptions. Both expose 85 tools and 8 resources. Every tool
+V12 shipped as package version `12.0.0`; the current patch, `12.0.2`, fixes
+processing intent resolution and readiness reporting. It retains 85 tools and
+8 resources. Every tool
 was renamed in 12.0.0, so its release notes carry the full V11-to-V12 name
 table; keep it complete. Publish the reviewed dev feature set through a main pull
 request, then the matching version tag. The Universal Bridge script did not
@@ -220,6 +221,11 @@ git push origin vX.Y.Z
 
 For an SSH signing key, configure Git's SSH signing format and allowed signer
 file first, then use the same `git tag --sign --annotate` and verification flow:
+
+The dedicated PostFader release key configured for V12.0.2 uses Ed25519 with
+public fingerprint `SHA256:evub+lo9N8uZ3uu/b7AOq32XPq7qsQhm1sPDBsErIio`.
+Check that fingerprint when verifying its public key; never include private
+key material or a passphrase in a release record.
 
 ```bash
 git config gpg.format ssh

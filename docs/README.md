@@ -54,6 +54,7 @@ MCP clients read and edit the FL Studio project you have open. Start with the
 
 ## Release notes
 
+- [V12.0.2](releases/v12.0.2.md)
 - [V12.0.1](releases/v12.0.1.md)
 - [V12.0.0](releases/v12.0.0.md)
 - [V11.0.0](releases/v11.0.0.md)

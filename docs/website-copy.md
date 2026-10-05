@@ -29,7 +29,7 @@ documents instead of expanding the homepage.
 
 ## Release scope
 
-PostFader V12 (12.0.1) contains 85 tools and 8 resources. Use the
+PostFader V12 (12.0.2) contains 85 tools and 8 resources. Use the
 [V12 release notes](releases/v12.0.0.md) and the
 [V10 limitations](releases/v10.0.0.md) for feature limits and live acceptance
 status. These counts apply to the matching V12 packages.

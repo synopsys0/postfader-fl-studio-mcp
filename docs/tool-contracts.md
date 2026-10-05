@@ -1,6 +1,6 @@
 # Tool and command reference
 
-PostFader V12 (12.0.1) exposes 85 MCP tools and 8 MCP resources; the
+PostFader V12 (12.0.2) exposes 85 MCP tools and 8 MCP resources; the
 [tool reference](tools.md) lists them by task, and the
 [V12 release notes](releases/v12.0.0.md) map every earlier tool name to its
 replacement. The MCP layer is the supported public interface; the bridge

@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "12.0.1",
+  "version": "12.0.2",
   "description": "FL Studio MCP server: read, mix, compose, and edit your open FL Studio project with Claude.",
   "long_description": "PostFader connects Claude to the FL Studio project you have open. Claude can read the mixer, channels, plug-ins, and patterns; check exported mixes for loudness, peaks, tonal balance, and vocal masking; write chords, melodies, basslines, and drums; pick presets from the instruments you loaded; and run multi-step jobs. PostFader starts read-only, reads every supported change back from FL Studio, and never saves your project. Before installing this extension, install the matching Python package and run `postfader setup`: the extension does not install FL Studio's controller script or set up a virtual MIDI port.",
   "author": {
