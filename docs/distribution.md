@@ -17,7 +17,7 @@ open, on Windows and macOS.
 
 ## Release scope and directory copy
 
-PostFader **V12 (12.0.2)** exposes **85 tools and 8 resources**. Use that
+PostFader **V12 (12.0.3)** exposes **85 tools and 8 resources**. Use that
 count in current listings. Older version counts belong only in historical
 release notes. The immutable package version, registry record, and GitHub tag
 must agree before a listing is marked updated.

@@ -477,6 +477,10 @@ def _controller_step(label: str, method: str, **arguments: Any) -> _Step:
     return _Step(label, write)
 
 
+class EditRefusal(ValueError):
+    """An explicit edit preflight refusal whose guidance is safe for the caller."""
+
+
 class _Guards:
     """Hand each write the guard fields it checks; refuse any left over."""
 
@@ -507,7 +511,7 @@ class _Guards:
     def refuse_unused(self, tool: str) -> None:
         unused = sorted(set(self._values) - self._used)
         if unused:
-            raise ValueError(
+            raise EditRefusal(
                 f"{tool} expected_before guards {', '.join(unused)}, but no write in "
                 "this call checks those fields; remove them or change those fields"
             )
@@ -521,11 +525,11 @@ def _execute(
     session_fingerprint: str | None,
 ) -> dict[str, Any]:
     if not steps:
-        raise ValueError(f"{tool} needs at least one field to change")
+        raise EditRefusal(f"{tool} needs at least one field to change")
     if len(steps) > MAX_EDIT_STEPS:
-        raise ValueError(f"{tool} can make at most {MAX_EDIT_STEPS} writes in one call")
+        raise EditRefusal(f"{tool} can make at most {MAX_EDIT_STEPS} writes in one call")
     if type(stop_on_unverified) is not bool:
-        raise ValueError("stop_on_unverified must be true or false")
+        raise EditRefusal("stop_on_unverified must be true or false")
     cached, session = open_verified_session(session_fingerprint, label=tool)
     writer = VerifiedWriter(WriteGateway(cached))
     controller = TrackBController(TrackBMutationGateway(cached))
@@ -599,7 +603,7 @@ def _unique(values: Iterable[int], label: str) -> None:
     seen: set[int] = set()
     for value in values:
         if value in seen:
-            raise ValueError(f"{label} {value} appears more than once")
+            raise EditRefusal(f"{label} {value} appears more than once")
         seen.add(value)
 
 
@@ -628,19 +632,19 @@ def set_mixer_track(
 
     tool = "mixer_set_track"
     if type(allow_master) is not bool or type(select) is not bool:
-        raise ValueError("allow_master and select must be true or false")
+        raise EditRefusal("allow_master and select must be true or false")
     if track_index == 0 and not allow_master:
-        raise ValueError("mixer track 0 is Master; set allow_master=true to change it")
+        raise EditRefusal("mixer track 0 is Master; set allow_master=true to change it")
     if volume_normalized is not None and volume_db is not None:
-        raise ValueError("set volume_normalized or volume_db, not both")
+        raise EditRefusal("set volume_normalized or volume_db, not both")
     if tolerance_db is not None and volume_db is None:
-        raise ValueError("tolerance_db applies only to a volume_db change")
+        raise EditRefusal("tolerance_db applies only to a volume_db change")
     _unique((band.band_index for band in eq), "EQ band")
     _unique((send.destination_track_index for send in sends), "send destination")
     if len(sends) > MAX_MIXER_SENDS:
-        raise ValueError(f"{tool} changes at most {MAX_MIXER_SENDS} sends in one call")
+        raise EditRefusal(f"{tool} changes at most {MAX_MIXER_SENDS} sends in one call")
     if any(send.destination_track_index == track_index for send in sends):
-        raise ValueError("a mixer track cannot send to itself")
+        raise EditRefusal("a mixer track cannot send to itself")
 
     guards = _Guards(expected_before)
     common = {"track_index": track_index, "allow_master": allow_master}
@@ -755,7 +759,7 @@ def set_channel(
 
     tool = "channel_set"
     if type(select) is not bool:
-        raise ValueError("select must be true or false")
+        raise EditRefusal("select must be true or false")
     guards = _Guards(expected_before)
     fingerprint = guards.take("channel_fingerprint")
     fingerprint_current = True
@@ -828,7 +832,7 @@ def set_channel(
             expected_before=ExpectedChannelSelectionState(**selection) if selection else None,
         ))
     if fingerprint and not any(step.label != "select" for step in steps):
-        raise ValueError(
+        raise EditRefusal(
             "channel_set expected_before.channel_fingerprint is checked only by "
             "writes other than select; this call has none"
         )
@@ -857,7 +861,7 @@ def set_pattern(
 
     tool = "pattern_set"
     if type(select) is not bool:
-        raise ValueError("select must be true or false")
+        raise EditRefusal("select must be true or false")
     guards = _Guards(expected_before)
     steps: list[_Step] = []
     if name is not None or color is not None:
@@ -968,14 +972,14 @@ def set_transport(
 
     tool = "transport_set"
     if type(stop) is not bool:
-        raise ValueError("stop must be true or false")
+        raise EditRefusal("stop must be true or false")
     if stop and (playing is not None or position_normalized is not None):
-        raise ValueError(
+        raise EditRefusal(
             "stop already sets playing=false and rewinds to position 0; "
             "do not combine it with playing or position_normalized"
         )
     if position_tolerance is not None and position_normalized is None:
-        raise ValueError("position_tolerance applies only to a position_normalized change")
+        raise EditRefusal("position_tolerance applies only to a position_normalized change")
     guards = _Guards(expected_before)
     # Writes that release the transport, those that need it released, and
     # those that engage it again: recording is armed before playback starts.

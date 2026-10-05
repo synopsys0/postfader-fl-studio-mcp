@@ -1,6 +1,6 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "12.0.2"
+version = "12.0.3"
 description = "FL Studio MCP server: let Claude, Codex, Cursor, or any MCP client read, mix, compose, and edit your open FL Studio project"
 readme = "README.md"
 license = "Apache-2.0"
@@ -29,7 +29,7 @@ classifiers = [
 ]
 dependencies = [
     "anyio>=4.5,<5",
-    "mcp>=2.0.0,<2.1",
+    "mcp>=2.0.0,<2.3",
     "jsonschema>=4.20,<5",
     "numpy>=1.24,<3",
     # SciPy 1.15's PROPACK wheel fails to load on recent macOS dyld; the
