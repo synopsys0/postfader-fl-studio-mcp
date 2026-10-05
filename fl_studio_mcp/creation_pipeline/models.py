@@ -588,7 +588,8 @@ class RoleEffectCoverage(CreationPipelineModel):
     supported_techniques: tuple[str, ...] = Field(default=(), max_length=MAX_TECHNIQUES)
     unresolved_controls: tuple[str, ...] = Field(default=(), max_length=MAX_TECHNIQUES)
     missing_capabilities: tuple[MissingProcessingCapability, ...] = Field(
-        default=(), max_length=MAX_TECHNIQUES
+        # A compound processing goal can require two separate categories.
+        default=(), max_length=MAX_EFFECTS
     )
     state: EffectCoverageState = "not_applicable"
     dry_playback_allowed: bool = True

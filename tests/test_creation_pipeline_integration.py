@@ -38,6 +38,7 @@ from fl_studio_mcp.creation_pipeline.processing import (
     SemanticPluginAction,
     evaluate_effect_coverage,
 )
+from fl_studio_mcp.creation_pipeline.readiness import CreationReadinessService
 from fl_studio_mcp.plugin_atlas import load_bundled_registry
 from fl_studio_mcp.sound_selection.models import (
     SoundInventory,
@@ -103,7 +104,7 @@ def semantic_action() -> SemanticPluginAction:
                 control_role="reverb.decay",
                 control_id="decay",
                 parameter_index=2,
-                setter="fl_set_plugin_param_display",
+                setter="display_value",
                 display_value=1.8,
             ),
         ),
@@ -209,6 +210,67 @@ def ready_collection() -> tuple[CreationReadinessReport, CollectedCreationReadin
 
 
 class CreationPipelineIntegrationTests(unittest.TestCase):
+    def test_processing_gaps_reach_readiness_without_promoting_optional_goals(self):
+        loaded = ({
+            "plugin_name": "Fruity parametric EQ 2", "track_index": 5, "slot_index": 0,
+            "parameters": [
+                {"index": 20, "name": "Band 1 freq"},
+                {"index": 21, "name": "Band 1 level"},
+                {"index": 22, "name": "Band 3 freq"},
+                {"index": 23, "name": "Band 3 level"},
+            ],
+        },)
+        requests = (
+            (ProcessingRequest(completion_target="playable_draft", goals=(ProcessingGoal(goal="tighten_low_end", required=True),)), True),
+            (ProcessingRequest(completion_target="playable_draft", goals=(ProcessingGoal(goal="add_presence", required=True), ProcessingGoal(goal="unknown_optional"))), False),
+        )
+        for request, blocked in requests:
+            with self.subTest(request=request):
+                semantic = evaluate_effect_coverage(request, loaded_plugins=loaded, registry=load_bundled_registry())
+                effects = live_readiness._creation_effect_coverage(semantic)
+                blockers, limitations, actions, dimensions = [], [], [], []
+                CreationReadinessService()._evaluate_effects(
+                    effects, "playable_draft", False, blockers, limitations, actions, dimensions,
+                )
+                self.assertEqual(bool(blockers), blocked)
+                self.assertEqual(effects.required_processing_missing, blocked)
+                if blocked:
+                    self.assertIn("compressor", {gap.category for gap in effects.missing_capabilities})
+                else:
+                    self.assertTrue(limitations)
+
+    def test_readiness_projection_retains_all_compound_diagnostics(self):
+        semantic = evaluate_effect_coverage(
+            ProcessingRequest(goals=tuple(
+                ProcessingGoal(goal="tighten_low_end", required=True) for _ in range(128)
+            )),
+            registry=load_bundled_registry(),
+        )
+        effects = live_readiness._creation_effect_coverage(semantic)
+        self.assertEqual(len(effects.missing_capabilities), 256)
+        self.assertEqual(len(effects.roles[0].missing_capabilities), 256)
+        self.assertTrue(effects.required_processing_missing)
+
+    def test_required_category_gap_blocks_regardless_of_optional_goal_order(self):
+        goals = (
+            ProcessingGoal(goal="add_air"),
+            ProcessingGoal(goal="reduce_mud", required=True),
+        )
+        for ordered in (goals, tuple(reversed(goals))):
+            with self.subTest(goals=ordered):
+                semantic = evaluate_effect_coverage(
+                    ProcessingRequest(goals=ordered, completion_target="playable_draft"),
+                    registry=load_bundled_registry(),
+                )
+                effects = live_readiness._creation_effect_coverage(semantic)
+                blockers, limitations, actions, dimensions = [], [], [], []
+                CreationReadinessService()._evaluate_effects(
+                    effects, "playable_draft", False, blockers, limitations, actions, dimensions,
+                )
+                self.assertTrue(effects.required_processing_missing)
+                self.assertEqual(len(blockers), 1)
+                self.assertEqual(blockers[0].code, "required_processing_missing")
+
     def test_initial_setup_changes_refresh_the_blocked_run_before_execution(self) -> None:
         base, collected = ready_collection()
         blocked = base.model_copy(update={

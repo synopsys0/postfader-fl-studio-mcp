@@ -1,7 +1,7 @@
 # Architecture
 
 PostFader is a local stdio MCP server connected to an FL Studio MIDI
-controller script. The current surface contains 135 tools and 8 resources
+controller script. The current surface contains 85 tools and 8 resources
 (see the [tool reference](tools.md)). It is organized as a verified control kernel, a production-workflow layer, and
 an optional creative layer rather than one undifferentiated raw API catalog.
 
@@ -14,6 +14,7 @@ fl_studio_mcp/mcp_server.py
         ├── verified_writer.py ────┤
         ├── performance.py ────────┼── bridge_client.py
         ├── workflows.py ──────────┤
+        ├── edits.py ──────────────┤
         ├── production_runs.py ────┤
         ├── sound_selection/ ───────┤
         ├── creation_pipeline/ ──────┤
@@ -57,13 +58,14 @@ misspelled argument fails instead of being silently ignored. Blocking bridge
 and audio work runs off the MCP event loop.
 
 The listing a client receives is smaller than those models.
-`fl_studio_mcp/tool_schemas.py` drops generated titles, merges union members
-that differ only in their `operation` constant, and advertises Production Run
-plan operations by name and shared fields; `postfader_describe_operations`
-returns any operation's exact schema on demand. Arguments that echo an earlier
-result, such as a Sound Palette or processing plan, are advertised as plain
-objects. None of this changes validation: every call is still checked against
-the full model.
+`fl_studio_mcp/tool_schemas.py` reduces every input and output schema: it
+drops generated titles, merges union members that differ only in their
+`operation` constant, and advertises Production Run plan operations by name
+and shared fields; `run_describe_operations` returns any operation's exact
+schema on demand. Arguments that echo an earlier result, such as a Sound
+Palette or processing plan, are advertised as plain objects. None of this
+changes validation: every call is still checked against the full model, and
+every result is built from its full model.
 
 The server does not expose a generic bridge-command tool. Every operation is a
 named MCP tool with a bounded schema.
@@ -74,8 +76,9 @@ named MCP tool with a bounded schema.
 contracts, enforces a fixed read-command allowlist, and applies the FL Studio,
 MIDI API, and bridge-protocol compatibility gates.
 
-A full capture shares one handshake and project observations before and after
-its mixer scan and plug-in previews. Sixteen previews require 20 bridge calls,
+A full capture, which `scripts/inspect_readonly.py` runs (no MCP tool performs
+one), shares one handshake and project observations before and after its
+mixer scan and plug-in previews. Sixteen previews require 20 bridge calls,
 down from 70 with independent per-preview preflights. Changes during the
 capture remain visible in consistency warnings. Independent tool calls still
 perform fresh handshakes.
@@ -98,7 +101,7 @@ contradictory verification field is a protocol error.
 
 Write availability comes only from the live bridge handshake. If FL Studio was
 not yet enabled for the current bridge session, the writer names the
-user-confirmed `fl_set_write_mode` control rather than attempting a project
+user-confirmed `session_set_write_mode` control rather than attempting a project
 command.
 
 `WriteModeManager` owns that capability transition through a separate gateway
@@ -120,7 +123,7 @@ Direct verified writes accept an optional 32-character session fingerprint for
 the current project-load epoch and typed `expected_before` state to close
 stale-decision races;
 the bridge rechecks both after resolving the target and immediately before it
-requests undo or mutates FL. The high-level `sound_selection_apply` workflow
+requests undo or mutates FL. The high-level `sound_apply_palette` workflow
 requires that fingerprint in its public MCP contract because its palette
 service cannot apply without a live session token. The fingerprint is a
 concurrency token, not authentication or a durable project identity. Script
@@ -134,11 +137,20 @@ executes it with one pinned bridge preflight. A batch is ordered and
 non-atomic: each item retains its own typed verification receipt, and earlier
 successes are never hidden or rolled back when a later item is unverified.
 
-`fl_studio_mcp/mixing.py` adds process-local peak watches and mix plans plus
-Mix Doctor, gain-staging, actual-bounce reference/masking recommendations,
-processing intents, plug-in profiles, and finish assessment. Analysis creates
-recommendations or plans; only the explicit apply surface mutates FL. Registry
-IDs are intentionally process-lifetime objects.
+`fl_studio_mcp/edits.py` builds the per-target setters (`mixer_set_track`,
+`channel_set`, `pattern_set`, `playlist_set_track`, and `transport_set`) on
+the same preflight. Each turns its arguments into existing verified writes in
+a fixed order, pins every write to the session checked before the first one,
+and returns a receipt per write. Like a batch, the sequence is non-atomic,
+stops on an unknown outcome, and is never replayed. An `expected_before` guard
+that no write in the call checks is refused rather than ignored.
+
+`fl_studio_mcp/mixing.py` adds process-local peak watches plus Mix Doctor,
+gain-staging proposals, and actual-bounce reference/masking recommendations.
+Analysis creates recommendations or proposals and never mutates FL; a
+gain-staging proposal is applied through the batch executor
+(`project_apply_edits`). Peak-watch IDs are intentionally process-lifetime
+objects.
 
 `fl_studio_mcp/production_runs.py` adds the task-scoped Production Run
 contracts, closed operation union, dependency and scope validation, bounded
@@ -286,7 +298,7 @@ table:
 | Read-only | Always | 19 commands covering handshake/project/selection, mixer and peaks, channels, plug-ins/presets/pad maps, patterns, Playlist tracks, history, and sequencer reads |
 | Session capability control | Always; enabling requires task authorization and the current session fingerprint | `session.set_write_mode` |
 | Editor navigation | Available without musical write mode; validates the current session and target | `creative.prepare_piano_roll` |
-| Direct state changes | Current bridge session reports write mode | 40 MCP setters backed by 40 direct bridge commands across transport/project, mixer, channels, plug-ins/presets, patterns, Playlist tracks, and sequencer state |
+| Direct state changes | Current bridge session reports write mode | 40 direct bridge commands across transport/project, mixer, channels, plug-ins/presets, patterns, Playlist tracks, and sequencer state; 9 MCP setters dispatch them, one command per write, and batches and workflows reuse the same commands |
 | Getter-limited or dispatch-only creative changes | Same session write gate | `channel.trigger_note`, `channels.rerollLoopStarterLoop`, `arrangement.add_markers`, and `automation.record_value` |
 
 The gate is applied before handler dispatch. Disabled writes do not appear in
@@ -331,8 +343,8 @@ cell. It never switches patterns implicitly.
 Plug-in commands use a discriminated target. A `mixer_effect` keeps the
 track/slot 0–9 contract and explicit Master authorization. A
 `channel_generator` uses a global Channel Rack index and FL's separate
-`slotIndex=-1` addressing form. The legacy track/slot MCP arguments remain
-available for compatibility, but callers may not mix the two forms.
+`slotIndex=-1` addressing form. MCP plug-in tools accept only this target; the
+legacy top-level `track_index`/`slot_index` arguments are gone.
 
 ## Idle-tick budget
 

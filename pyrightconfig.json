@@ -7,6 +7,7 @@
     "fl_studio_mcp/file_fingerprints.py",
     "fl_studio_mcp/evidence.py",
     "fl_studio_mcp/workflows.py",
+    "fl_studio_mcp/edits.py",
     "fl_studio_mcp/plugin_atlas",
     "fl_studio_mcp/plugin_atlas_mcp.py",
     "fl_studio_mcp/sound_selection",

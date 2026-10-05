@@ -1,7 +1,12 @@
 # External security and architecture review scope
 
-Status: review preparation only. No independent security or architecture
-review has been performed or commissioned for this repository. This document
+Status: deferred. No independent security or architecture review has been
+performed or commissioned for this repository. The current scope is a trusted,
+single-user local workstation; an external engagement is not a release gate.
+Revisit this decision before adding remote or multi-user access, expanding
+executable or plug-in loading capabilities, or making stronger security claims.
+Automated tests cover specified invariants; they do not prove the trust model
+complete or replace independent scrutiny. This document
 is a bounded hand-off for a future reviewer; it is not a certification, audit
 report, or claim that the current release is secure against every local
 workstation threat.
@@ -69,6 +74,23 @@ The components in scope are:
   selected by the caller; `advisory.py` applies typed path/root policy and
   exposes measurements, comparisons, masking analysis, and bounded recent
   bounce discovery. The FL API is not used to read live audio.
+- **Saved-project rendering.** `saved_project_render.py` launches a selected
+  local application with literal argument vectors to render an existing FLP
+  into a fresh output directory. The executable override is a capability
+  granted to the trusted client: file shape and extension checks do not
+  authenticate an application or sandbox FL Studio, its plug-ins, or the FLP.
+- **Plug-in and preset selection.** `plugin_loading.py` resolves a current,
+  exact macOS Add-menu entry using fixed JXA and JSON arguments. Loading uses
+  the session write gate and verifies a newly observed target. Preset selection
+  uses bounded bridge navigation and readback. Plug-in names, preset labels,
+  menu text, and local metadata are data, not instructions or proof that
+  third-party plug-in code is safe.
+- **Production Runs.** `production_runs.py` checks a plan's requested mutation
+  categories, session and readiness, enables writes only for an authorized
+  execution segment, and verifies shutdown. Processing readiness must agree
+  with the actual per-goal adapter and control resolution; an available
+  category is insufficient when required controls or another category are
+  missing.
 - **Creation Review.** `fl_studio_mcp/creation_review/` keeps an immutable
   source-run snapshot, explicit asset metadata, measured findings, producer
   feedback/locks, bounded revision receipts, comparisons, and delivery
@@ -133,8 +155,9 @@ which controls hold when an assumption is violated:
   script's execution and resulting note edits are not fully observable.
 
 The reviewer should also inspect the boundary between the packaged bridge and
-the deployed copy. A missing or mismatched source stamp fails closed for
-mutations while preserving warning-bearing reads. Session fingerprints and
+the deployed copy. A missing or mismatched source stamp produces an advisory;
+compatible operations remain available. Protocol, capability, session and
+target checks still gate mutations. Session fingerprints and
 `expected_before`/step-digest checks are optimistic-concurrency controls, not
 authentication or durable project identity.
 
@@ -156,7 +179,7 @@ reproduction where useful.
 
 ### Write-mode authorization
 
-- Trace `fl_set_write_mode` through the host gateway, bridge command, and
+- Trace `session_set_write_mode` through the host gateway, bridge command, and
   second handshake.
 - Confirm that enabling requires literal `confirm_user_present=true`, a
   current session fingerprint, compatible protocol, runtime-control
@@ -203,15 +226,20 @@ describe the current field as an out-of-band confirmation mechanism.
 - Cover mixer, plug-in, transport, Channel Rack, pattern, Playlist, and step
   digest guards, including current-pattern and observation-scoped channel
   identity requirements.
-- Confirm that omitted guards preserve the documented compatibility call shape
-  without being described as concurrency protection.
+- Confirm that a per-target setter (`mixer_set_track`, `channel_set`,
+  `pattern_set`, `playlist_set_track`, `transport_set`) refuses a guard for a
+  field that no write in the call checks, and that a `channel_set`
+  `channel_fingerprint` guard covers every write up to and including the first
+  one that changes the fingerprint.
+- Confirm that omitted optional guards are not described as concurrency
+  protection.
 
 ### Master protection
 
 - Confirm that mixer track 0 and a Master-source send require explicit
   `allow_master` authorization for mutations.
-- Check all aliases, batch operation kinds, plan/application paths, and direct
-  bridge commands for a bypass.
+- Check all aliases, per-target setters, batch operation kinds,
+  plan/application paths, and direct bridge commands for a bypass.
 - Confirm that sending *to* Master retains the documented distinction and does
   not accidentally broaden source authorization.
 
@@ -236,20 +264,29 @@ not be retried for the caller.
 ### Batch non-atomicity
 
 - Verify that the closed batch union is bounded (currently 1–32 operations),
-  ordered, and explicitly non-atomic.
+  ordered, and explicitly non-atomic, and that the per-target setters (at most
+  32 writes per call) behave the same way.
 - Confirm that earlier verified changes remain when a later item fails or is
   unverified, that `stop_on_unverified` only controls later dispatch, and that
   no rollback or save is implied.
 - Check session pinning, per-item receipts, Master protection, and duplicate or
   conflicting target validation.
 
-### Plan one-shot behavior
+### Plan application
 
-- Trace plan creation, retrieval, application, and terminal state transitions.
-- Confirm that applying a plan is a distinct destructive operation, occurs at
-  most once, and does not retry a `partial` or `failed` plan automatically.
-- Verify that plans and peak watches are process-local and that a restart does
-  not create durable project or approval state.
+- Trace how plans become changes: `processing_plan`, `sound_plan_palette`,
+  `review_plan_revision`, `mixer_plan_gain_staging`, and `run_validate` leave
+  the project unchanged, and only the separate apply calls
+  (`processing_apply`, `sound_apply_palette`, `review_apply_revision`,
+  `project_apply_edits`, `run_execute`, and `run_continue`) change it.
+- Confirm that applying is a distinct destructive call, that a completed
+  Production Run operation is never re-run, that an operation with an unknown
+  outcome is never replayed, and that a `blocked`, `failed`, or `stopped` run
+  is not retried automatically.
+- Verify that `sound_plan_palette` palettes and peak watches are
+  process-local, that saved Production Runs and opted-in Review Sessions
+  survive a restart only as local records, and that a restart creates no
+  project or approval state.
 
 ### Undo evidence
 
@@ -280,6 +317,14 @@ not be retried for the caller.
   design, with no audio samples or raw logs included in ordinary results.
 - Inspect generated MIDI overwrite handling and Piano Roll script directory
   overrides for traversal or unintended replacement.
+- Inspect saved-project render inputs, application overrides, fresh output
+  directories, cancellation and resource bounds. Argument-vector dispatch
+  prevents shell interpretation but does not establish application identity.
+- Treat plug-in/preset names and local metadata as external input. Verify
+  exact menu selection, ambiguity refusal, literal argument encoding, bounded
+  enumeration, target/session checks, and no replay after an uncertain click.
+  Separate these checks from behavior inside third-party plug-ins and native
+  audio decoders, which hermetic fake-FL tests cannot qualify.
 
 ### Decoded-audio memory bounds
 
@@ -311,9 +356,9 @@ not be retried for the caller.
 
 ### No implicit save
 
-Search every bridge and host workflow for save calls, including batches, plans,
-arrangement preparation, option sweeps, Piano Roll operations, and acceptance
-harnesses. Confirm that project dirty state and undo observations are reported
+Search every bridge and host workflow for save calls, including batches,
+per-target setters, plans, pattern creation, option sweeps, Piano Roll
+operations, and acceptance harnesses. Confirm that project dirty state and undo observations are reported
 honestly and that neither successful readback nor a completed plan saves the
 project.
 

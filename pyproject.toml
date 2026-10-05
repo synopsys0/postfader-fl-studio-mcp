@@ -1,6 +1,6 @@
 [project]
 name = "postfader-fl-studio-mcp"
-version = "11.0.0"
+version = "12.0.2"
 description = "FL Studio MCP server: let Claude, Codex, Cursor, or any MCP client read, mix, compose, and edit your open FL Studio project"
 readme = "README.md"
 license = "Apache-2.0"

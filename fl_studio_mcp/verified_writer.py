@@ -110,7 +110,7 @@ WRITES_DISABLED_HELP = (
     "This FL Studio bridge cannot apply writes: it reports bridge_mode={mode!r} "
     "and verified_writes_enabled={enabled!r}. Ask the connected AI client to "
     "enable write mode for this session. The user must explicitly request that "
-    "change, and the client must call fl_set_write_mode with enabled=true and "
+    "change, and the client must call session_set_write_mode with enabled=true and "
     "confirm_user_present=true. Reading the project works either way."
 )
 
@@ -968,9 +968,8 @@ class VerifiedWriter:
         """Set how much of one track reaches another. 0.8 is unity.
 
         The send has to exist first. FL raises rather than reporting a level
-        for an inactive route, so the bridge refuses this outright with a
-        message naming ``fl_set_mixer_send`` instead of writing something it
-        could never read back.
+        for an inactive route, so the bridge refuses this outright instead of
+        writing something it could never read back.
         """
         allow_master = _boolean(allow_master, "allow_master")
         source, destination = self._send_pair(

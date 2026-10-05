@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "postfader-fl-studio-mcp",
   "display_name": "PostFader for FL Studio",
-  "version": "11.0.0",
+  "version": "12.0.2",
   "description": "FL Studio MCP server: read, mix, compose, and edit your open FL Studio project with Claude.",
   "long_description": "PostFader connects Claude to the FL Studio project you have open. Claude can read the mixer, channels, plug-ins, and patterns; check exported mixes for loudness, peaks, tonal balance, and vocal masking; write chords, melodies, basslines, and drums; pick presets from the instruments you loaded; and run multi-step jobs. PostFader starts read-only, reads every supported change back from FL Studio, and never saves your project. Before installing this extension, install the matching Python package and run `postfader setup`: the extension does not install FL Studio's controller script or set up a virtual MIDI port.",
   "author": {
@@ -50,544 +50,344 @@
   },
   "tools": [
     {
-      "name": "fl_get_capabilities",
-      "description": "Report direct, partial, unavailable, and unvalidated integration paths."
+      "name": "session_get_capabilities",
+      "description": "Report which FL Studio integration paths work in this bridge session."
     },
     {
-      "name": "fl_get_project_summary",
-      "description": "Read project metadata, counts, dirty state, version, and transport state."
+      "name": "session_set_write_mode",
+      "description": "Turn write mode on or off for this bridge session without restarting FL."
     },
     {
-      "name": "fl_get_transport_state",
-      "description": "Read playback, recording, loop mode, position, and song length."
+      "name": "project_get_summary",
+      "description": "Read the open project's metadata, counts, dirty state, and transport."
     },
     {
-      "name": "fl_get_selected_range",
-      "description": "Read the current Playlist timeline selection and project PPQ from FL Studio."
+      "name": "project_get_history",
+      "description": "Read FL's undo history: position, count, next undo hint, and dirty state."
     },
     {
-      "name": "fl_list_mixer_tracks",
-      "description": "List mixer tracks, current levels, selection state, and loaded effects."
+      "name": "project_step_history",
+      "description": "Undo or redo one step of FL Studio's project history and verify the move."
     },
     {
-      "name": "fl_inspect_mixer_track",
-      "description": "Read one track's state, effects, built-in EQ, and outgoing routes."
+      "name": "project_apply_edits",
+      "description": "Apply edits you have already decided, across several targets, in one call."
     },
     {
-      "name": "plugins_scan_loaded_plugins",
-      "description": "Inventory loaded plug-ins without inserting or changing anything."
+      "name": "transport_set",
+      "description": "Change playback, recording, tempo, loop mode, and other transport settings."
     },
     {
-      "name": "plugins_inspect_parameter_map",
-      "description": "Read a bounded page of exposed parameters; never marks unknown controls safe."
+      "name": "mixer_list_tracks",
+      "description": "List mixer tracks with names, levels, mute/solo state, and loaded effects."
     },
     {
-      "name": "plugins_scan_parameters",
-      "description": "De-pad a whole plug-in in one call; prefer this over paging a VST."
+      "name": "mixer_get_track",
+      "description": "Read one mixer track's full state: level, pan, effects, EQ, and sends."
     },
     {
-      "name": "plugins_atlas_search",
-      "description": "Find products in the bundled offline Plugin Atlas by text and filters."
+      "name": "mixer_set_track",
+      "description": "Change any combination of one mixer track's settings in one call."
     },
     {
-      "name": "plugins_atlas_get_product",
-      "description": "Read a bundled Plugin Atlas product by its exact product_id."
+      "name": "mixer_start_peak_watch",
+      "description": "Start sampling mixer peak meters while the user plays the song."
     },
     {
-      "name": "plugins_atlas_recommend",
-      "description": "Rank bundled Plugin Atlas products for a production problem or technique."
+      "name": "mixer_get_peak_watch",
+      "description": "Read a peak watch's status and cumulative per-track peaks so far."
     },
     {
-      "name": "plugins_atlas_inspect_loaded",
-      "description": "Match loaded effects and generators to bundled Plugin Atlas knowledge."
+      "name": "mixer_stop_peak_watch",
+      "description": "Stop a peak watch early and return its final per-track aggregate."
     },
     {
-      "name": "copilot_capture_readonly_inspection",
-      "description": "Capture a compact project, mixer, and effect inspection report."
+      "name": "mixer_plan_gain_staging",
+      "description": "Propose dB fader moves that bring each watched track to a target peak."
     },
     {
-      "name": "fl_set_write_mode",
-      "description": "Enable or disable writes for this bridge session without restarting FL."
+      "name": "channel_list",
+      "description": "List every Channel Rack channel with its mix, routing, and generator."
     },
     {
-      "name": "fl_set_mixer_volume",
-      "description": "Set one mixer fader and report the readback FL gave on a later tick."
+      "name": "channel_set",
+      "description": "Change any combination of one Channel Rack channel's settings in one call."
     },
     {
-      "name": "fl_set_mixer_volume_db",
-      "description": "Set one mixer fader to a target dB readback, between -60 and +6 dB."
+      "name": "channel_get_steps",
+      "description": "Read one channel's step-sequencer grid in the current pattern."
     },
     {
-      "name": "fl_set_mixer_pan",
-      "description": "Set one mixer pan and report the readback FL gave on a later tick."
+      "name": "channel_set_steps",
+      "description": "Turn step-sequencer cells on or off for one channel in the current pattern."
     },
     {
-      "name": "fl_set_mixer_mute",
-      "description": "Set one track's mute state and report the readback FL gave on a later tick."
+      "name": "channel_play_note",
+      "description": "Play one short note on a channel so the user can hear the sound."
     },
     {
-      "name": "fl_set_mixer_solo",
-      "description": "Set one mixer track's solo state and verify it on a later FL tick."
+      "name": "pattern_list",
+      "description": "List the project's patterns with name, color, length, and which is current."
     },
     {
-      "name": "fl_set_mixer_arm",
-      "description": "Set recording arm with one bounded toggle and later-tick readback."
+      "name": "pattern_set",
+      "description": "Rename, recolor, resize, or select one existing pattern in one call."
     },
     {
-      "name": "fl_set_mixer_color",
-      "description": "Set a mixer color, accepting FL-owned differences in the high byte."
+      "name": "pattern_create",
+      "description": "Create a pattern: find the first empty one, select it, name it, and size it."
     },
     {
-      "name": "fl_set_mixer_stereo_separation",
-      "description": "Set stereo separation and report FL's later-tick readback."
+      "name": "playlist_list_tracks",
+      "description": "List every Playlist track with its name, color, and mute/solo/selection."
     },
     {
-      "name": "fl_select_mixer_track",
-      "description": "Make one mixer track active and verify the active-track getter."
+      "name": "playlist_set_track",
+      "description": "Rename, recolor, mute, solo, or select one Playlist track in one call."
     },
     {
-      "name": "fl_set_track_eq",
-      "description": "Set gain and/or frequency on one built-in EQ band; at least one is required."
+      "name": "playlist_get_selection",
+      "description": "Read the Playlist's current time selection and the project PPQ."
     },
     {
-      "name": "fl_set_mixer_name",
-      "description": "Rename one mixer track."
-    },
-    {
-      "name": "fl_set_mixer_send",
-      "description": "Route one mixer track to another, or stop routing it there."
-    },
-    {
-      "name": "fl_set_mixer_send_level",
-      "description": "Set how much of one track reaches another. 0.8 is unity, as on the fader."
-    },
-    {
-      "name": "fl_set_plugin_param_display",
-      "description": "Set a plug-in parameter using the units it displays, not a 0..1 guess."
-    },
-    {
-      "name": "fl_set_plugin_param_option",
-      "description": "Set a parameter that shows words rather than numbers: Key, Scale, Input Type."
-    },
-    {
-      "name": "fl_set_plugin_param",
-      "description": "Set one inspected plugin parameter to a known normalized value from 0 to 1."
-    },
-    {
-      "name": "fl_apply_verified_batch",
-      "description": "Apply an ordered list of supported absolute writes to the current FL session."
-    },
-    {
-      "name": "fl_set_playing",
-      "description": "Set playback to an absolute state and verify it on a later FL idle tick."
-    },
-    {
-      "name": "fl_stop",
-      "description": "Stop playback, set normalized position to zero, and verify both fields."
-    },
-    {
-      "name": "fl_set_song_position",
-      "description": "Set a stopped transport's absolute normalized playhead position."
-    },
-    {
-      "name": "fl_set_loop_mode",
-      "description": "Set Pattern or Song loop mode without exposing FL's toggle-only API."
-    },
-    {
-      "name": "fl_set_tempo",
-      "description": "Set project tempo while stopped and verify BPM on a later FL idle tick."
-    },
-    {
-      "name": "fl_set_recording",
-      "description": "Set recording absolutely; FL's toggle is dispatched at most once."
-    },
-    {
-      "name": "fl_set_metronome",
-      "description": "Set the metronome absolutely and prove the later UI state."
-    },
-    {
-      "name": "fl_set_precount",
-      "description": "Set recording precount absolutely and verify it on a later FL tick."
-    },
-    {
-      "name": "fl_set_time_signature_numerator",
-      "description": "Set and prove beats per bar from FL's PPB/PPQ getter pair."
-    },
-    {
-      "name": "fl_get_project_history",
-      "description": "Read undo/redo bounds, current history position, hint, and dirty state."
-    },
-    {
-      "name": "fl_undo",
-      "description": "Move to the previous absolute undo-history position and verify it."
-    },
-    {
-      "name": "fl_redo",
-      "description": "Move to the next absolute undo-history position and verify it."
-    },
-    {
-      "name": "fl_get_plugin_preset_count",
-      "description": "Read FL's authoritative preset count for one loaded plug-in."
-    },
-    {
-      "name": "plugins_list_presets",
-      "description": "Read one deterministic preset page without changing the plug-in."
-    },
-    {
-      "name": "plugins_get_current_preset",
-      "description": "Read FL's current preset name and an index only when it is unique."
-    },
-    {
-      "name": "plugins_inspect_pad_map",
-      "description": "Read generic pad, MIDI-note, color, empty, and mute observations."
-    },
-    {
-      "name": "fl_select_plugin_preset",
-      "description": "Select a known preset on one loaded mixer effect or Channel Rack generator."
-    },
-    {
-      "name": "fl_list_channels",
-      "description": "List globally addressed channels, mix state, routing, and generator identity."
-    },
-    {
-      "name": "fl_list_patterns",
-      "description": "List pattern identity, length, current state, and empty/default status."
-    },
-    {
-      "name": "fl_find_empty_pattern",
-      "description": "Find the first default-empty pattern without changing the current pattern."
-    },
-    {
-      "name": "fl_select_pattern",
-      "description": "Select one pattern and verify FL's current-pattern getter."
-    },
-    {
-      "name": "fl_set_pattern_identity",
-      "description": "Set pattern name and/or color with per-field later-tick proof."
-    },
-    {
-      "name": "fl_set_pattern_length",
-      "description": "Set pattern length using Image-Line's API 39+ getter/setter pair."
-    },
-    {
-      "name": "fl_list_playlist_tracks",
-      "description": "List every one-based Playlist track and its controllable state."
-    },
-    {
-      "name": "fl_set_playlist_track_identity",
-      "description": "Set Playlist name and/or color with per-field later-tick proof."
-    },
-    {
-      "name": "fl_set_playlist_track_state",
-      "description": "Set Playlist states; toggle-only selection is dispatched at most once."
-    },
-    {
-      "name": "fl_set_channel_mix",
-      "description": "Set channel volume, pan, and/or mute with per-field readback proof."
-    },
-    {
-      "name": "fl_set_channel_solo",
-      "description": "Set a global channel solo state and verify it on a later FL tick."
-    },
-    {
-      "name": "fl_set_channel_pitch",
-      "description": "Set normalized channel pitch and report normalized/semitone readback."
-    },
-    {
-      "name": "fl_select_channel",
-      "description": "Select one global channel exclusively and verify the complete selection."
-    },
-    {
-      "name": "fl_set_channel_identity",
-      "description": "Set a channel's name and/or color with per-field readback proof."
-    },
-    {
-      "name": "fl_route_channel_to_mixer",
-      "description": "Set one global channel's absolute mixer destination and verify it."
-    },
-    {
-      "name": "fl_get_step_sequence",
-      "description": "Read an explicit current-pattern/channel grid and its conflict digest."
-    },
-    {
-      "name": "fl_set_step_sequence",
-      "description": "Set absolute current-pattern cells only if the observed grid digest still matches."
-    },
-    {
-      "name": "fl_trigger_note",
-      "description": "Audition a global channel with a bounded note-on/off dispatch receipt."
-    },
-    {
-      "name": "audio_analyze_file",
-      "description": "Measure level, spectrum, dynamics, stereo, and optional pitch of one render."
-    },
-    {
-      "name": "audio_compare_files",
-      "description": "Measure band deltas over the aligned, loudness-matched common overlap."
-    },
-    {
-      "name": "audio_analyze_masking",
-      "description": "Measure per-band spectral overlap and vocal-minus-instrument level margins."
-    },
-    {
-      "name": "audio_find_recent_bounces",
-      "description": "List the newest audio files in FL Studio's Rendered, Audio, and Projects folders."
-    },
-    {
-      "name": "mix_doctor",
-      "description": "Diagnose a real bounce with explicit policy thresholds and no mutation."
-    },
-    {
-      "name": "mix_reference_recommendations",
-      "description": "Return bounded tonal review ranges only when alignment/readiness passes."
-    },
-    {
-      "name": "mix_masking_recommendations",
-      "description": "Recommend bounded dynamic remediation from sample-synchronous stems."
-    },
-    {
-      "name": "mix_start_peak_watch",
-      "description": "Start a process-persistent sampled peak watch and return its first frame."
-    },
-    {
-      "name": "mix_get_peak_watch",
-      "description": "Read cumulative sampled peaks without stopping the watch."
-    },
-    {
-      "name": "mix_stop_peak_watch",
-      "description": "Stop one process-local watch and return its final aggregate."
-    },
-    {
-      "name": "mix_create_gain_stage_plan",
-      "description": "Create, but do not apply, dB-fader changes from a peak watch."
-    },
-    {
-      "name": "mix_list_plugin_profiles",
-      "description": "List bundled parameter-role adapters and processing recipes."
-    },
-    {
-      "name": "mix_inspect_plugin_compatibility",
-      "description": "Report which loaded effects have known parameter-role adapters."
-    },
-    {
-      "name": "mix_resolve_processing_intent",
-      "description": "Map an intent to loaded profiled controls without applying settings."
-    },
-    {
-      "name": "mix_create_plan",
-      "description": "Store proposed mixer/plugin changes for review without applying them."
-    },
-    {
-      "name": "mix_get_plan",
-      "description": "Retrieve a stored mix plan's operations, rationale, session, and status."
-    },
-    {
-      "name": "mix_apply_plan",
-      "description": "Apply a previously reviewed draft mix plan once to its bound FL session."
-    },
-    {
-      "name": "mix_finish_assessment",
-      "description": "Run the end-to-end read-only finish assessment and stop at user export."
-    },
-    {
-      "name": "sound_selection_inventory",
-      "description": "Read a compact loaded sound pool; Atlas-only products remain recommendations."
-    },
-    {
-      "name": "sound_selection_plan",
-      "description": "Choose deterministic loaded-target assignments without changing FL or history."
-    },
-    {
-      "name": "sound_selection_get",
-      "description": "Look up one process-local palette without treating expiry as a server error."
-    },
-    {
-      "name": "sound_selection_create_variation",
-      "description": "Plan a section-specific change to an existing sound palette without applying it."
-    },
-    {
-      "name": "sound_selection_apply",
-      "description": "Apply exact preset assignments from a reviewed sound palette or variation."
-    },
-    {
-      "name": "sound_selection_record_feedback",
-      "description": "Record a user's explicit accepted, rejected, or neutral sound-palette feedback."
-    },
-    {
-      "name": "sound_selection_history_status",
-      "description": "Report the local history path, health, schema, and bounded record counts."
-    },
-    {
-      "name": "sound_selection_history_reset",
-      "description": "Explicitly remove bounded local selection history; project state is unchanged."
-    },
-    {
-      "name": "postfader_creation_readiness",
-      "description": "Aggregate all detectable setup blockers without changing FL Studio."
-    },
-    {
-      "name": "processing_plan",
-      "description": "Plan loaded-effect processing without enabling writes or mutating FL."
-    },
-    {
-      "name": "processing_apply_plan",
-      "description": "Apply a semantic plan through one task-scoped verified Production Run."
-    },
-    {
-      "name": "postfader_describe_operations",
-      "description": "List Production Run operations and return exact schemas for the ones named."
-    },
-    {
-      "name": "postfader_validate_run",
-      "description": "Validate a bounded Production Run and current capabilities without changing FL."
-    },
-    {
-      "name": "postfader_execute_run",
-      "description": "Create and execute one task-scoped run until its plan completes or blocks."
-    },
-    {
-      "name": "postfader_list_runs",
-      "description": "Find recent runs after an MCP restart without executing any operations."
-    },
-    {
-      "name": "postfader_get_run",
-      "description": "Read a current or journaled run, its generated outputs and operation receipts."
-    },
-    {
-      "name": "postfader_continue_run",
-      "description": "Continue or replace only a run's unexecuted remainder after a follow-up."
-    },
-    {
-      "name": "postfader_stop_run",
-      "description": "Stop future run operations without undoing completed project changes."
-    },
-    {
-      "name": "postfader_review_start",
-      "description": "Start a bounded Review Session from one completed Production Run."
-    },
-    {
-      "name": "postfader_review_attach_assets",
-      "description": "Validate and attach explicit audio assets without changing FL Studio."
-    },
-    {
-      "name": "postfader_review_evaluate",
-      "description": "Measure one bounce globally and by known section; apply zero FL mutations."
-    },
-    {
-      "name": "postfader_review_get",
-      "description": "Read a Review Session, retained evidence, status, and exact next action."
-    },
-    {
-      "name": "postfader_review_compare",
-      "description": "Compare before and after bounces without implying producer approval."
-    },
-    {
-      "name": "postfader_review_plan_revision",
-      "description": "Compile and validate one bounded RevisionPlan before any project mutation."
-    },
-    {
-      "name": "postfader_delivery_manifest",
-      "description": "Build the final multi-dimensional delivery view without writing a file."
-    },
-    {
-      "name": "postfader_review_export_handoff",
-      "description": "Return one precise full-mix export request and only necessary stems."
-    },
-    {
-      "name": "postfader_review_apply_revision",
-      "description": "Apply one bounded revision with one preflight and one write authorization."
-    },
-    {
-      "name": "postfader_review_record_feedback",
-      "description": "Record explicit feedback; silence and measurements never grant approval."
-    },
-    {
-      "name": "postfader_review_stop",
-      "description": "Stop future review work without undoing completed project changes."
-    },
-    {
-      "name": "postfader_review_delete",
-      "description": "Delete one Review Session record without touching audio or the FL project."
-    },
-    {
-      "name": "postfader_delivery_export_manifest",
-      "description": "Create local delivery files without overwriting or saving the FL project."
-    },
-    {
-      "name": "plugins_list_available",
-      "description": "Read the native Add menu on macOS; opens/closes the menu and changes focus."
-    },
-    {
-      "name": "plugins_load",
-      "description": "Load one macOS Add-menu plugin, then identify its new channel or effect slot."
-    },
-    {
-      "name": "piano_roll_bridge",
-      "description": "Prepare the separate FL Studio Piano Roll scripting connection."
-    },
-    {
-      "name": "piano_roll_read_notes",
-      "description": "Open a score and read notes without changing notes or enabling musical writes."
-    },
-    {
-      "name": "postfader_render_saved_project",
-      "description": "Start FL's command-line WAV exporter in a separate process; saved state only."
-    },
-    {
-      "name": "postfader_render_get_job",
-      "description": "Get render progress and decoded WAV evidence; completed also requires FL exit."
-    },
-    {
-      "name": "postfader_render_cancel",
-      "description": "Cancel monitoring and its owned process; on macOS the renderer may remain open."
-    },
-    {
-      "name": "piano_roll_write_notes",
-      "description": "Add supplied notes to a channel's Piano Roll in the specified pattern."
-    },
-    {
-      "name": "piano_roll_transform",
-      "description": "Transform existing Piano Roll notes in the requested selection or whole score."
-    },
-    {
-      "name": "compose_chord_progression",
-      "description": "Generate voice-led triads/sevenths without changing FL."
-    },
-    {
-      "name": "compose_melody",
-      "description": "Generate a bounded scale-aware melody without changing FL."
-    },
-    {
-      "name": "compose_bassline",
-      "description": "Generate a bounded bass part from Roman harmony without changing FL."
-    },
-    {
-      "name": "compose_drums",
-      "description": "Generate mapped kick/snare/hat patterns without changing FL."
-    },
-    {
-      "name": "midi_export_type1",
-      "description": "Write a standard Type-1 file, reopen it, parse it, and verify its digest/events."
-    },
-    {
-      "name": "audio_estimate_tempo_and_key",
-      "description": "Estimate periodic tempo and global major/minor key with ranked ambiguity."
-    },
-    {
-      "name": "audio_transcribe_melody",
-      "description": "Extract a reviewable note sequence from monophonic audio; it does not mutate FL."
-    },
-    {
-      "name": "arrangement_prepare_pattern",
-      "description": "Find an FL-reported empty pattern, select it, name/color it, and set length."
-    },
-    {
-      "name": "arrangement_add_section_markers",
-      "description": "Add bar/beat section markers; name readback is available, marker-time readback is not."
+      "name": "playlist_add_markers",
+      "description": "Add named section markers (Intro, Verse, Drop) to the Playlist timeline."
     },
     {
       "name": "automation_record_value",
-      "description": "Dispatch one REC_MIDIController value while playback and recording are active."
+      "description": "Record one automation value into FL while playback and recording run."
+    },
+    {
+      "name": "plugin_list_loaded",
+      "description": "List every loaded mixer effect and Channel Rack instrument as a target."
+    },
+    {
+      "name": "plugin_list_parameters",
+      "description": "List a loaded plug-in's real controls with their current values and text."
+    },
+    {
+      "name": "plugin_set_parameter",
+      "description": "Set one plug-in parameter by display value, option text, or raw 0..1 value."
+    },
+    {
+      "name": "plugin_list_presets",
+      "description": "Read a page of a loaded plug-in's preset names, its preset count, and current preset."
+    },
+    {
+      "name": "plugin_select_preset",
+      "description": "Load a known preset on one mixer effect or Channel Rack instrument."
+    },
+    {
+      "name": "plugin_get_pad_map",
+      "description": "Read an instrument's drum pads: MIDI note, color, and empty/muted state."
+    },
+    {
+      "name": "plugin_list_available",
+      "description": "List the instruments and effects in FL's native Add menu (macOS only)."
+    },
+    {
+      "name": "plugin_load",
+      "description": "Add one instrument (new channel) or mixer effect from FL's Add menu (macOS)."
+    },
+    {
+      "name": "atlas_search",
+      "description": "Search the bundled offline Plugin Atlas for products by text and filters."
+    },
+    {
+      "name": "atlas_get_product",
+      "description": "Read one Plugin Atlas product: vendor, controls, adapters, and alternatives."
+    },
+    {
+      "name": "atlas_recommend",
+      "description": "Rank Plugin Atlas products for a production problem or technique."
+    },
+    {
+      "name": "atlas_match_loaded",
+      "description": "Identify the open project's loaded plug-ins against Plugin Atlas."
+    },
+    {
+      "name": "processing_plan",
+      "description": "Turn processing goals into concrete settings for effects that are loaded."
+    },
+    {
+      "name": "processing_apply",
+      "description": "Apply the plan returned by processing_plan to the loaded effects."
+    },
+    {
+      "name": "sound_get_inventory",
+      "description": "Read the pool of loaded instruments and their presets that palettes choose from."
+    },
+    {
+      "name": "sound_plan_palette",
+      "description": "Choose an instrument and preset for each musical role from loaded sounds."
+    },
+    {
+      "name": "sound_get_palette",
+      "description": "Look up a previously planned sound palette by its palette_id."
+    },
+    {
+      "name": "sound_apply_palette",
+      "description": "Apply the palette returned by sound_plan_palette, loading each role's preset."
+    },
+    {
+      "name": "sound_record_feedback",
+      "description": "Record the user's explicit verdict on a palette so future picks follow it."
+    },
+    {
+      "name": "sound_get_history",
+      "description": "Report the local sound-selection history: location, health, and record counts."
+    },
+    {
+      "name": "sound_reset_history",
+      "description": "Delete the local sound-selection history after the user asks to."
+    },
+    {
+      "name": "audio_analyze_file",
+      "description": "Measure one rendered file's loudness, peaks, spectrum, dynamics, and stereo image."
+    },
+    {
+      "name": "audio_compare_files",
+      "description": "Compare a candidate render with a reference and suggest tonal adjustments."
+    },
+    {
+      "name": "audio_analyze_masking",
+      "description": "Measure where an instrumental masks a vocal and suggest remedies."
+    },
+    {
+      "name": "audio_diagnose_mix",
+      "description": "Diagnose a rendered mix against technical thresholds for a delivery target."
+    },
+    {
+      "name": "audio_list_recent_bounces",
+      "description": "List the newest audio files in FL Studio's Rendered, Audio, and Projects folders."
+    },
+    {
+      "name": "audio_estimate_tempo_and_key",
+      "description": "Estimate a file's tempo and major/minor key, with ranked alternatives."
+    },
+    {
+      "name": "audio_transcribe_melody",
+      "description": "Transcribe a monophonic recording (a sung or played line) into notes."
+    },
+    {
+      "name": "compose_chord_progression",
+      "description": "Generate voice-led chords from Roman numerals in a key, without touching FL."
+    },
+    {
+      "name": "compose_melody",
+      "description": "Generate a scale-aware melody within a register, without touching FL."
+    },
+    {
+      "name": "compose_bassline",
+      "description": "Generate a bass part that follows a Roman-numeral progression, without touching FL."
+    },
+    {
+      "name": "compose_drums",
+      "description": "Generate kick, snare, and hat patterns in a style, without touching FL."
+    },
+    {
+      "name": "compose_export_midi",
+      "description": "Write note sequences to a standard Type-1 MIDI file and verify it."
+    },
+    {
+      "name": "piano_roll_setup",
+      "description": "Prepare the one-time Piano Roll scripting setup that note tools need."
+    },
+    {
+      "name": "piano_roll_read_notes",
+      "description": "Read the notes of one channel in one pattern: pitch, timing, and expression."
+    },
+    {
+      "name": "piano_roll_write_notes",
+      "description": "Write notes into one channel's Piano Roll score in a pattern."
+    },
+    {
+      "name": "piano_roll_transform_notes",
+      "description": "Quantize, transpose, humanize, duplicate, delete, or clear existing notes."
+    },
+    {
+      "name": "run_describe_operations",
+      "description": "List Production Run operations and return exact schemas for the ones named."
+    },
+    {
+      "name": "run_validate",
+      "description": "Dry-run a Production Run plan against the live project without changing it."
+    },
+    {
+      "name": "run_execute",
+      "description": "Run a multi-step production plan, such as writing a chorus, as one task."
+    },
+    {
+      "name": "run_continue",
+      "description": "Resume a stopped or blocked Production Run, or change its unexecuted remainder."
+    },
+    {
+      "name": "run_stop",
+      "description": "Stop a run so no further operations execute."
+    },
+    {
+      "name": "run_get",
+      "description": "Read a run's status, generated outputs, and per-operation receipts."
+    },
+    {
+      "name": "run_list",
+      "description": "List recent Production Runs saved on this computer, newest first."
+    },
+    {
+      "name": "review_start",
+      "description": "Start a Review Session for the result of one completed Production Run."
+    },
+    {
+      "name": "review_attach_assets",
+      "description": "Validate exported audio files and attach them to a Review Session."
+    },
+    {
+      "name": "review_evaluate",
+      "description": "Measure an attached bounce as a whole and section by section, with findings."
+    },
+    {
+      "name": "review_get",
+      "description": "Read a Review Session, its next export request, or its delivery manifest."
+    },
+    {
+      "name": "review_compare",
+      "description": "Compare the bounces before and after a revision against its objective."
+    },
+    {
+      "name": "review_plan_revision",
+      "description": "Compile one bounded revision plan from evaluation findings and feedback."
+    },
+    {
+      "name": "review_apply_revision",
+      "description": "Apply the revision plan returned by review_plan_revision to the project."
+    },
+    {
+      "name": "review_record_feedback",
+      "description": "Record the producer's explicit feedback and locks in a Review Session."
+    },
+    {
+      "name": "review_stop",
+      "description": "Stop a Review Session so no further revision work happens."
+    },
+    {
+      "name": "review_delete",
+      "description": "Delete one Review Session's stored record after the user asks to."
+    },
+    {
+      "name": "review_export_delivery",
+      "description": "Write a Review Session's delivery manifest to new JSON or Markdown files."
+    },
+    {
+      "name": "render_start_job",
+      "description": "Render a saved .flp to a WAV with FL's command-line exporter, as a background job."
+    },
+    {
+      "name": "render_get_job",
+      "description": "Read a render job's status and, once ready, its decoded WAV details."
+    },
+    {
+      "name": "render_cancel_job",
+      "description": "Cancel a render job: stop monitoring it and the process it started."
     }
   ],
   "tools_generated": false,

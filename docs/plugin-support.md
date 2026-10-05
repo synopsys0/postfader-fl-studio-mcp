@@ -4,20 +4,18 @@
 
 PostFader has two explicit plug-in target kinds:
 
-- `mixer_effect` names a mixer track plus effect slot 0–9. Mixer track 0
-  requires `allow_master: true` for a write.
+- `mixer_effect` names a mixer track plus effect slot 0–9. Mixer track 0 is
+  Master, and its target also needs `allow_master: true`.
 - `channel_generator` names a global Channel Rack index. The bridge translates
   that target to FL's separate generator addressing form (`slotIndex=-1` with
   global indexing); callers never overload a mixer slot with `-1`.
 
-Use `fl_list_channels` to obtain the global channel index and its
-observation-scoped identity fingerprint. Set
-`include_channel_generators=true` on `plugins_scan_loaded_plugins` to include
-both target kinds in one inventory. Parameter pages, full scans, and all three
-parameter setters accept the same discriminated `target` object. The legacy
-`track_index`/`slot_index` arguments remain available for mixer effects, but a
-call must use either the explicit target or the complete legacy pair, never
-both.
+Use `channel_list` to obtain the global channel index and its
+observation-scoped identity fingerprint. `plugin_list_loaded` returns both
+target kinds in one inventory, each entry with its `target` object.
+`plugin_list_parameters`, `plugin_set_parameter`, `plugin_list_presets`,
+`plugin_select_preset`, and `plugin_get_pad_map` all take that same
+discriminated `target`; there is no separate `track_index`/`slot_index` form.
 
 FL does not expose a durable channel UUID or authoritative loaded plug-in
 version. A channel fingerprint is therefore a same-session stale-target guard,
@@ -56,9 +54,10 @@ an Atlas-only product is never treated as a loaded effect.
 
 `processing_plan` is read-only and resolves conservative goals such as
 `reduce_mud`, `control_dynamics`, `add_depth`, or `rhythmic_echo` to exact
-controls. It prefers a displayed-value or exact-option setter when the adapter
-establishes that representation. `processing_apply_plan` and the equivalent
-Production Run operation use the existing session/target guards and
+controls. Each action's `setter` names the `plugin_set_parameter` value
+argument that writes it; the plan prefers `display_value` or an exact `option`
+when the adapter establishes that representation. `processing_apply` and the
+equivalent Production Run operation use the existing session/target guards and
 later-idle-tick readback. Results distinguish restrained first-pass,
 partial-processing, dry-by-design, and dry-missing-effects states. None of
 these technical states is an audible-quality verdict; that dimension remains
@@ -67,11 +66,11 @@ unevaluated until a user review or bounce analysis.
 ## Presets and drum maps
 
 The preset tools are target-aware and work for both mixer effects and global
-Channel Rack generators. `plugins_list_presets` returns bounded pages of FL's
+Channel Rack generators. `plugin_list_presets` returns bounded pages of FL's
 reported index/name rows, count, current identity, blank names, duplicate
-names, and partial/truncated status. `plugins_get_current_preset` reports a
-current index only when the name can be resolved uniquely. `fl_select_plugin_preset`
-accepts an exact name or index; duplicate names require an index.
+names, and partial/truncated status; it reports a current index only when the
+name can be resolved uniquely. `plugin_select_preset` accepts an exact name or
+index; duplicate names require an index.
 
 Preset navigation uses FL's `nextPreset`/`prevPreset` path within explicit
 navigation and settling limits and succeeds only after later-idle-tick current
@@ -79,7 +78,7 @@ preset readback matches the requested identity. It reports the path and the
 undo evidence FL exposed. Dispatch is not proof, and an ambiguous outcome is
 never retried or rolled back.
 
-`plugins_inspect_pad_map` reads FL's generic pad API, including semitone/MIDI
+`plugin_get_pad_map` reads FL's generic pad API, including semitone/MIDI
 note, color, empty, muted, and reported name fields. Sound Selection uses that
 observation to build semantic drum roles without assuming General MIDI. The
 fixed General MIDI map in `compose_drums` remains an explicit fallback only
@@ -98,14 +97,14 @@ that a preset is unsuitable.
 
 Generic plug-in discovery is identity-independent: there is no allowlist that a
 plug-in must enter before the connector can inspect it. PostFader also
-ships a small set of optional processing-intent adapter profiles. The profiles
-describe parameter roles for selected reported names so the `mix_*` planning
-tools can resolve intents such as dynamics, EQ, reverb, or delay. They do not
+ships a small set of optional Plugin Atlas control adapters. The adapters
+describe parameter roles for selected reported names so `processing_plan` can
+resolve goals such as dynamics, EQ, reverb, or delay. They do not
 gate generic discovery, enable a plug-in, assert an exact plug-in version, or
-certify every parameter or audible result. Use `mix_list_plugin_profiles` and
-`mix_inspect_plugin_compatibility` to see the current profile catalog and the
-observed matches; an unprofiled plug-in remains eligible for the same runtime
-scans and parameter setters.
+certify every parameter or audible result. Use `atlas_get_product` to read a
+product's adapters and `atlas_match_loaded` to see which loaded plug-ins match
+one; a plug-in without an adapter remains eligible for the same
+`plugin_list_parameters` scan and `plugin_set_parameter` writes.
 
 Attempt is the honest verb. What you get back depends on what FL chooses to
 report for that plug-in and on the scan bounds below, and a write is reported
@@ -114,28 +113,30 @@ that every plug-in works — it is that you are told what was found and what did
 not land.
 
 That is the generic compatibility story for reading and writing parameters;
-optional profiles affect intent planning only. What follows is about the
-places where discovery is bounded, because those bounds are where an untested
-plug-in can surprise you.
+optional adapters affect processing planning, not those reads and writes. What
+follows is about the places where discovery is bounded, because those bounds
+are where an untested plug-in can surprise you.
 
 ## Addressing a parameter three ways
 
 FL gives a plug-in parameter a normalised `0..1` value, an optional name, and a
 display string. Real plug-ins use those inconsistently: many third-party
 controls have no name at all and are identifiable only by what they display.
-So there are three ways to name the control you mean.
+So `plugin_set_parameter` takes the control as `parameter` (an index, or text
+matched against names and display strings) and exactly one of three value
+forms.
 
-| Tool | You supply | Use it when |
+| Value argument | You supply | Use it when |
 |---|---|---|
-| `fl_set_plugin_param` | target, parameter index, normalised `0..1` | You know the curve, or the control is a plain fader |
-| `fl_set_plugin_param_display` | target, index/name, and the number the plug-in shows | You want "20 ms" and do not know the curve |
-| `fl_set_plugin_param_option` | target, index/name, and exact option text | The control is enumerated: a key, a scale, a mode |
+| `normalized_value` | target, parameter index, normalised `0..1` | You know the curve, or the control is a plain fader |
+| `display_value` (optional `unit`, `tolerance`) | target, index/name, and the number the plug-in shows | You want "20 ms" and do not know the curve |
+| `option` (optional `sweep_steps`) | target, index/name, and exact option text | The control is enumerated: a key, a scale, a mode |
 
-Prefer the second and third. `fl_set_plugin_param_display` searches the control
-until FL's own readback agrees, so it never assumes a curve.
-`fl_set_plugin_param_option` also returns every option it discovered, which is
-the fastest way to learn what an unfamiliar control can do. Copy the exact
-label from that list; matching ignores case but refuses substrings.
+Prefer the second and third. A `display_value` write searches the control
+until FL's own readback agrees, so it never assumes a curve. An `option` write
+also returns every option it discovered, which is the fastest way to learn
+what an unfamiliar control can do. Copy the exact label from that list;
+matching ignores case but refuses substrings.
 
 A text selector is resolved one priority tier at a time: exact name, exact
 display, name substring, then display substring. If the first matching tier
@@ -163,8 +164,9 @@ selector on a generator, is where this bites.
 **What to do:** raise `sweep_steps` toward its maximum of 256 when a list
 appears incomplete. More samples improve coverage, but a control may map its
 options unevenly across the normalized range. Neither the default nor a higher
-step count proves that every option was discovered. Address a known normalized
-value with `fl_set_plugin_param` when an option cannot be located by its label.
+step count proves that every option was discovered. Write a known
+`normalized_value`, with the parameter's index, when an option cannot be
+located by its label.
 
 **Sweeping is not free.** It moves the control to look. Asking for the option a
 control is *already* showing keeps the displayed setting, but the control lands
@@ -183,7 +185,7 @@ controls cluster in the low indices with scattered gaps.
 controls loses everything past the gap. The search reports the parameter as not
 found, which is indistinguishable from it not existing.
 
-**What to do:** use `plugins_scan_parameters`, which walks the whole range up to
+**What to do:** use `plugin_list_parameters`, which walks the whole range up to
 `MAX_PARAM_INDEX_SCAN` (8192) and reports `truncated` honestly, then address the
 control by the index it returns.
 
@@ -228,9 +230,9 @@ mode. Read the result before sharing it and do not attach the source scan.
 
 The reporter does not sweep enumerated controls and never publishes their
 option strings: preset and sample selectors may expose user-created names.
-The MCP `fl_set_plugin_param_option` tool still supports an intentional live
-option write, under the mutation warnings above, but that output is not a
-community compatibility artifact.
+The MCP `plugin_set_parameter` tool's `option` form still supports an
+intentional live option write, under the mutation warnings above, but that
+output is not a community compatibility artifact.
 
 Representative write validation is a separate, explicit mode. It requires a
 blank disposable project and only earns `write-validated` when both the test

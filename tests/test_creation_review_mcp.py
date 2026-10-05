@@ -130,23 +130,21 @@ class CreationReviewMCPTests(unittest.TestCase):
     def test_review_tools_are_registered_with_honest_annotations(self) -> None:
         tools = {item.name: item for item in asyncio.run(mcp.list_tools())}
         read_only = {
-            "postfader_review_start",
-            "postfader_review_attach_assets",
-            "postfader_review_evaluate",
-            "postfader_review_get",
-            "postfader_review_compare",
-            "postfader_review_plan_revision",
-            "postfader_delivery_manifest",
-            "postfader_review_export_handoff",
+            "review_start",
+            "review_attach_assets",
+            "review_evaluate",
+            "review_get",
+            "review_compare",
+            "review_plan_revision",
         }
         workflow = {
-            "postfader_review_record_feedback",
-            "postfader_review_stop",
+            "review_record_feedback",
+            "review_stop",
         }
         destructive = {
-            "postfader_review_apply_revision",
-            "postfader_review_delete",
-            "postfader_delivery_export_manifest",
+            "review_apply_revision",
+            "review_delete",
+            "review_export_delivery",
         }
         self.assertTrue(read_only | workflow | destructive <= tools.keys())
         for name in read_only:

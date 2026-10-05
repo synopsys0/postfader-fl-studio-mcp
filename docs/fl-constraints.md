@@ -50,10 +50,11 @@ produce a technical composition receipt while audible quality remains
 
 Effect coverage has the same boundary. A semantic processing action requires a
 loaded effect, Atlas capability evidence, an adapter, and a runtime control
-observation. Processing plans are read-only; applies use existing verified
-display/option/normalized setters and later-tick readback. Missing effects or
-unresolved controls yield an honest dry/partial result, not a claim that FL
-was processed or that the result sounds correct.
+observation. Processing plans are read-only; applies use the same verified
+display-value, option, and normalized writes as `plugin_set_parameter`, with
+later-tick readback. Missing effects or unresolved controls yield an honest
+dry/partial result, not a claim that FL was processed or that the result
+sounds correct.
 
 ## The embedded Python environment cannot use files or sockets
 
@@ -200,19 +201,20 @@ shows the updated setting. The verified setters use both observations:
   destination; and
 - no supporting observation returns `verified: false`.
 
-Use `fl_set_plugin_param_display` when the target must land in the units the
-plug-in shows. A name such as `Attack` and a target such as `20` can be
-resolved without the caller knowing the plug-in's normalized curve.
-For a unit-specific request, supply `target_unit`, for example `ms` with
-`target_value=20`. The solver normalizes each display read, including a change
-between Hz and kHz or ms and seconds. This path requires a bridge advertising
-`plugin_display_units`; older numeric calls remain available without it.
+Use `plugin_set_parameter` with `display_value` when the target must land in
+the units the plug-in shows. A `parameter` such as `Attack` and a
+`display_value` such as `20` can be resolved without the caller knowing the
+plug-in's normalized curve. For a unit-specific request, also supply `unit`,
+for example `ms` with `display_value=20`. The solver normalizes each display
+read, including a change between Hz and kHz or ms and seconds. A `unit`
+requires a bridge advertising `plugin_display_units`; a `display_value`
+without `unit` remains available without it.
 
 ## Parameter writes require pickup mode to be disabled
 
 `plugins.setParamValue` accepts a pickup mode. FL Studio's default pickup
 behavior can leave a scripted control waiting for a hardware pickup position
-and silently refuse later writes. Every public parameter setter passes
+and silently refuse later writes. Every plug-in parameter write passes
 `midi.PIM_None` and issues the required paired write before yielding for
 readback.
 
@@ -222,9 +224,9 @@ safe test suite.
 ## Enumerated options can only be discovered by moving the control
 
 FL Studio exposes no function that lists the valid text options for a plug-in
-parameter. `fl_set_plugin_param_option` learns them by sweeping normalized
-values and recording the displayed text, then lands on the requested exact
-label. Matching ignores case but refuses substrings.
+parameter. `plugin_set_parameter` with an `option` learns them by sweeping
+normalized values and recording the displayed text, then lands on the
+requested exact label. Matching ignores case but refuses substrings.
 
 This is a mutating search. It can move the control through intermediate values
 and should not be run during recording or on an irreplaceable project. If the
@@ -245,7 +247,7 @@ FL Studio contains undocumented internal operations, but they are not a stable
 third-party integration surface and this project does not depend on them.
 
 The macOS host adapter supplies insertion through FL's named native Add menu:
-`plugins_list_available` enumerates menu entries and `plugins_load` adds one
+`plugin_list_available` enumerates menu entries and `plugin_load` adds one
 instrument or a mixer effect once session write mode is on. Bridge inventory
 verifies the new instance. This is a desktop capability separate from the MIDI
 API. It requires Accessibility access, supports the observed English menu structure, and does
@@ -253,7 +255,7 @@ not implement Windows insertion, removal, replacement or reordering.
 
 Audio must be exported or recorded through FL Studio before the audio-analysis
 tools can measure it. Separately from the MIDI bridge,
-`postfader_render_saved_project` invokes FL's documented command-line WAV
+`render_start_job` invokes FL's documented command-line WAV
 exporter on an existing `.flp` in another process. That export includes saved
 state only; it does not save the open project or capture unsaved changes.
 
@@ -296,9 +298,12 @@ automation-clip CRUD.
 the route does not exist instead of returning zero. A send level cannot
 therefore be verified before its route exists.
 
-`fl_set_mixer_send_level` refuses that case and directs the caller to
-`fl_set_mixer_send`. Creating a route can restore its previous level rather
-than choosing a new fixed default, so inspect it before changing the amount.
+The bridge refuses a send level for a route that does not exist. In
+`mixer_set_track`, a `sends` entry with `level_normalized` therefore needs an
+existing route or `enabled: true` in the same entry, which creates the route
+before its level is written. Creating a route can restore its previous level
+rather than choosing a new fixed default, so check the level its receipt
+reports, or set `level_normalized` in the same entry.
 
 ## Per-slot effect bypass and wet/dry setters are unreliable
 
@@ -324,23 +329,26 @@ coordinate system, no-selection sentinel, or render inclusivity. The bridge
 reads both endpoints twice and returns them with project PPQ, but deliberately
 leaves interpreted state, units, and normalized ticks unknown.
 
-Every ordinary `fl_get_selected_range` result is marked unsafe for automated
+Every ordinary `playlist_get_selection` result is marked unsafe for automated
 rendering. A caller may display the raw observation but must not turn it into
 render boundaries.
 
 ## What the connector exposes from the mixer
 
-The verified write surface includes these narrow mixer operations:
+The verified write surface includes these narrow mixer operations, all of them
+arguments of `mixer_set_track`. One call can combine several on one track;
+each write gets its own later-tick receipt (an EQ band's gain and frequency
+share one write).
 
-| FL Studio behavior | MCP operation |
+| FL Studio behavior | `mixer_set_track` argument |
 | --- | --- |
-| Set one track name | `fl_set_mixer_name` |
-| Create or remove one route | `fl_set_mixer_send` |
-| Set one existing route's amount | `fl_set_mixer_send_level` |
-| Set one fader by normalized value or dB | `fl_set_mixer_volume`, `fl_set_mixer_volume_db` |
-| Set pan, mute, solo, recording arm, color, or stereo separation | Corresponding `fl_set_mixer_*` tool |
-| Select the active mixer track | `fl_select_mixer_track` |
-| Set one built-in EQ band | `fl_set_track_eq` |
+| Set one track name | `name` |
+| Create or remove one route | `sends` entry with `enabled` |
+| Set one existing route's amount | `sends` entry with `level_normalized` |
+| Set one fader by normalized value or dB | `volume_normalized` or `volume_db` |
+| Set pan, mute, solo, recording arm, color, or stereo separation | `pan`, `muted`, `soloed`, `armed`, `color`, or `stereo_separation` |
+| Select the active mixer track | `select` |
+| Set one built-in EQ band | `eq` entry with `band_index` and `gain_normalized` and/or `frequency_normalized` |
 
 Channel linking, polarity, channel swapping, and the unreliable per-effect-slot
 controls remain outside the public MCP write surface.

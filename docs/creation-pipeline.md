@@ -13,9 +13,10 @@ and revision results alongside that immutable source snapshot.
 
 ## One readiness preflight
 
-`postfader_creation_readiness` is a read-only scorecard. The normal
-`postfader_execute_run` path invokes the same service internally, so it is not
-a mandatory extra user step. The scorecard reports `ready`,
+The readiness preflight is a read-only scorecard. `run_validate` returns it in
+its `readiness` field when called with `include_readiness=true`, and the normal
+`run_execute` path invokes the same service internally, so it is not a
+mandatory extra user step. The scorecard reports `ready`,
 `ready_with_limitations`, or `blocked` across these dimensions:
 
 - connection, package/bridge revision, process, MIDI transport, session, and
@@ -134,19 +135,21 @@ declared complementary variation.
 ## Semantic processing
 
 `processing_plan` maps a bounded goal such as reducing mud, adding depth,
-controlling dynamics, keeping low end centered, taming harshness, or limiting
+controlling dynamics, darkening reverb, taming harshness, or limiting
 peaks through this evidence chain:
 
 `goal → technique → Atlas capability → loaded effect → adapter/control evidence → semantic action`
 
 Only loaded targets are candidates. A semantic action resolves the exact
-parameter/name, unit, setter, dependencies, current observation, and
-verification basis. Displayed-value and exact-option setters are preferred;
-normalized writes require an established adapter mapping. Unknown controls,
-stale targets/sessions, and unknown or failed readback stop dependent actions
-without replay or rollback. `processing_apply_plan` is a focused lower-level
-workflow; complete creation should use `plan_processing` and
-`apply_processing_plan` inside the same high-level Production Run.
+parameter/name, unit, setter (the `plugin_set_parameter` value argument that
+writes the control: `display_value`, `option`, or `normalized_value`),
+dependencies, current observation, and verification basis. `display_value`
+and exact `option` writes are preferred; `normalized_value` writes require an
+established adapter mapping. Unknown controls, stale targets/sessions, and
+unknown or failed readback stop dependent actions without replay or rollback.
+`processing_apply` is a focused lower-level workflow; complete creation should
+use the `plan_processing` and `apply_processing_plan` operations inside the
+same high-level Production Run.
 
 The default first-pass policy is conservative and Master-protected. It does
 not treat metadata reasoning as audible proof.
@@ -155,8 +158,10 @@ Goals no longer require callers to spell out every control value. With an
 observed bundled adapter, `ProcessingGoal.strength` (zero to one, default 0.5)
 scales a starting recipe. EQ 2 supports mud reduction, low-end tightening,
 harshness reduction, presence, and air; Compressor supports dynamics, vocal
-leveling, and punch; Limiter sets a peak ceiling; Reeverb 2 supports depth and
-shorter space; Delay 3 sets wet output and echo feedback. All parameter names must resolve
+leveling, punch, and the compression part of low-end tightening; Limiter
+controls dynamics through a peak ceiling, without switching to compressor
+mode; Reeverb 2 supports depth, shorter space, and a darker return; Delay 3
+supports depth and rhythmic echo through wet output and feedback. All parameter names must resolve
 in the captured runtime observation. No parameter indices or normalized
 curves are invented.
 
@@ -167,14 +172,28 @@ Delay 3's ambiguous Time unit is left unchanged unless the caller supplies an
 explicit value. Goals without an implemented adapter recipe report a missing
 capability instead of silently producing an empty successful plan.
 `shorten_space` reduces the currently observed decay and wet amount, including
-when decay is displayed in milliseconds. Automatic recipes that would reuse
+when decay is displayed in milliseconds. `darken_reverb` lowers the observed
+numeric high-cut frequency; an unknown or nonnumeric cutoff requires explicit
+controls. `add_depth` can use either reverb or delay, and `control_dynamics`
+can use either compression or limiting. `tighten_low_end` requires both EQ and
+compression: a missing category remains visible even if the other part can be
+planned. Coverage uses the same resolution as the plan, including requested
+targets, controls, conflicts, and missing categories. Unimplemented goals such
+as `keep_low_end_centered` remain unresolved rather than claiming coverage
+from an unrelated EQ. Automatic recipes that would reuse
 an EQ band with conflicting settings try another compatible loaded effect;
 if none exists, the conflict is reported instead of overwriting an earlier
-goal. Display units travel with each action to the verified setter.
+goal. Display units travel with each action to its verified `display_value`
+write.
 
 Explicit `controls` take precedence over the recipe. Zero strength emits no
 automatic controls, while explicit controls still apply. Global or role-level
 `dry_by_design` suppresses processing actions.
+
+A request contains at most 128 goals across its top-level and role-specific
+forms. A compound goal can report two separate category gaps. Plans keep at
+most 256 actions; work beyond that limit is reported as missing rather than
+silently truncated. Split larger requests into smaller plans.
 
 ## Armed-ready acceptance templates
 

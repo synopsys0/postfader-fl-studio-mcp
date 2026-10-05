@@ -926,190 +926,130 @@ class ReadOnlyInspectorTests(unittest.TestCase):
         tools = asyncio.run(mcp.list_tools())
         names = {tool.name for tool in tools}
         read_tools = {
-            "fl_get_capabilities",
-            "fl_get_project_summary",
-            "fl_get_transport_state",
-            "fl_get_selected_range",
-            "fl_list_mixer_tracks",
-            "fl_inspect_mixer_track",
-            "plugins_scan_loaded_plugins",
-            "plugins_inspect_parameter_map",
-            "plugins_scan_parameters",
-            "plugins_atlas_search",
-            "plugins_atlas_get_product",
-            "plugins_atlas_recommend",
-            "plugins_atlas_inspect_loaded",
-            "copilot_capture_readonly_inspection",
-            "fl_list_channels",
-            "fl_get_step_sequence",
-            "fl_list_patterns",
-            "fl_find_empty_pattern",
-            "fl_list_playlist_tracks",
-            "fl_get_project_history",
-            "fl_get_plugin_preset_count",
-        }
-        preset_read_tools = {
-            "plugins_list_presets",
-            "plugins_get_current_preset",
-            "plugins_inspect_pad_map",
-        }
-        sound_selection_read_tools = {
-            "sound_selection_inventory",
-            "sound_selection_plan",
-            "sound_selection_get",
-            "sound_selection_create_variation",
-            "sound_selection_history_status",
-        }
-        preset_mutating_tools = {"fl_select_plugin_preset"}
-        sound_selection_mutating_tools = {"sound_selection_apply"}
-        sound_selection_workflow_tools = {
-            "sound_selection_record_feedback",
-            "sound_selection_history_reset",
+            "session_get_capabilities",
+            "project_get_summary",
+            "project_get_history",
+            "mixer_list_tracks",
+            "mixer_get_track",
+            "mixer_get_peak_watch",
+            "mixer_plan_gain_staging",
+            "channel_list",
+            "channel_get_steps",
+            "pattern_list",
+            "playlist_list_tracks",
+            "playlist_get_selection",
+            "plugin_list_loaded",
+            "plugin_list_parameters",
+            "plugin_list_presets",
+            "plugin_get_pad_map",
+            "atlas_search",
+            "atlas_get_product",
+            "atlas_recommend",
+            "atlas_match_loaded",
+            "sound_get_inventory",
+            "sound_plan_palette",
+            "sound_get_palette",
+            "sound_get_history",
+            "review_start",
+            "review_attach_assets",
+            "review_evaluate",
+            "review_get",
+            "review_compare",
+            "review_plan_revision",
         }
         production_read_tools = {
-            "postfader_describe_operations",
-            "postfader_creation_readiness",
-            "postfader_validate_run",
-            "postfader_get_run",
-            "postfader_list_runs",
-            "postfader_render_get_job",
             "processing_plan",
+            "run_describe_operations",
+            "run_validate",
+            "run_get",
+            "run_list",
+            "render_get_job",
         }
-        write_tools = {
-            "fl_apply_verified_batch",
-            "fl_set_mixer_volume",
-            "fl_set_mixer_volume_db",
-            "fl_set_mixer_pan",
-            "fl_set_mixer_mute",
-            "fl_set_mixer_solo",
-            "fl_set_mixer_arm",
-            "fl_set_mixer_color",
-            "fl_set_mixer_stereo_separation",
-            "fl_select_mixer_track",
-            "fl_set_track_eq",
-            "fl_set_mixer_name",
-            "fl_set_mixer_send",
-            "fl_set_mixer_send_level",
-            "fl_set_plugin_param",
-            "fl_set_plugin_param_display",
-            "fl_set_plugin_param_option",
-            "fl_set_playing",
-            "fl_stop",
-            "fl_set_song_position",
-            "fl_set_loop_mode",
-            "fl_set_tempo",
-            "fl_set_recording",
-            "fl_set_metronome",
-            "fl_set_precount",
-            "fl_set_time_signature_numerator",
-            "fl_undo",
-            "fl_redo",
-            "fl_set_channel_mix",
-            "fl_set_channel_solo",
-            "fl_set_channel_pitch",
-            "fl_select_channel",
-            "fl_select_pattern",
-            "fl_set_pattern_identity",
-            "fl_set_pattern_length",
-            "fl_set_playlist_track_identity",
-            "fl_set_playlist_track_state",
-            "fl_set_channel_identity",
-            "fl_route_channel_to_mixer",
-            "fl_set_step_sequence",
-        }
-        audition_tools = {"fl_trigger_note"}
-        mode_tools = {"fl_set_write_mode"}
         audio_tools = {
             # File measurement, not FL control: these read a rendered
             # bounce from disk and never reach the bridge.
             "audio_analyze_file",
             "audio_compare_files",
             "audio_analyze_masking",
-            "audio_find_recent_bounces",
+            "audio_diagnose_mix",
+            "audio_list_recent_bounces",
+            "audio_estimate_tempo_and_key",
+            "audio_transcribe_melody",
         }
-        mix_read_tools = {
-            "mix_doctor",
-            "mix_reference_recommendations",
-            "mix_masking_recommendations",
-            "mix_get_peak_watch",
-            "mix_list_plugin_profiles",
-            "mix_inspect_plugin_compatibility",
-            "mix_resolve_processing_intent",
-            "mix_get_plan",
-            "mix_finish_assessment",
-        }
-        workflow_state_tools = {
-            "plugins_list_available",
-            "mix_start_peak_watch",
-            "mix_stop_peak_watch",
-            "mix_create_gain_stage_plan",
-            "mix_create_plan",
-            "piano_roll_bridge",
-            "piano_roll_read_notes",
-            "postfader_render_saved_project",
-            "postfader_render_cancel",
-            "postfader_stop_run",
-        }
-        production_mutating_tools = {
-            "plugins_load",
-            "postfader_execute_run",
-            "postfader_continue_run",
-            "processing_apply_plan",
-        }
-        creation_review_tools = {
-            "postfader_review_start",
-            "postfader_review_attach_assets",
-            "postfader_review_evaluate",
-            "postfader_review_get",
-            "postfader_review_compare",
-            "postfader_review_plan_revision",
-            "postfader_delivery_manifest",
-            "postfader_review_export_handoff",
-            "postfader_review_apply_revision",
-            "postfader_review_record_feedback",
-            "postfader_review_stop",
-            "postfader_review_delete",
-            "postfader_delivery_export_manifest",
-        }
-        plan_apply_tools = {"mix_apply_plan"}
         creative_read_tools = {
             "compose_chord_progression",
             "compose_melody",
             "compose_bassline",
             "compose_drums",
-            "audio_estimate_tempo_and_key",
-            "audio_transcribe_melody",
+        }
+        write_tools = {
+            "project_step_history",
+            "project_apply_edits",
+            "transport_set",
+            "mixer_set_track",
+            "channel_set",
+            "channel_set_steps",
+            "pattern_set",
+            "playlist_set_track",
+            "plugin_set_parameter",
+        }
+        production_mutating_tools = {
+            "plugin_select_preset",
+            "plugin_load",
+            "processing_apply",
+            "sound_apply_palette",
+            "run_execute",
+            "run_continue",
+            "review_apply_revision",
         }
         creative_fl_tools = {
-            "piano_roll_write_notes",
-            "piano_roll_transform",
-            "arrangement_prepare_pattern",
-            "arrangement_add_section_markers",
+            "pattern_create",
+            "playlist_add_markers",
             "automation_record_value",
+            "piano_roll_write_notes",
+            "piano_roll_transform_notes",
         }
-        file_mutating_tools = {"midi_export_type1"}
-        self.assertEqual(
-            names,
-            read_tools
-            | production_read_tools
-            | write_tools
-            | production_mutating_tools
-            | audition_tools
-            | mode_tools
-            | audio_tools
-            | mix_read_tools
-            | workflow_state_tools
-            | plan_apply_tools
-            | creative_read_tools
-            | creative_fl_tools
-            | file_mutating_tools
-            | preset_read_tools
-            | sound_selection_read_tools
-            | preset_mutating_tools
-            | sound_selection_mutating_tools
-            | sound_selection_workflow_tools
-            | creation_review_tools,
+        workflow_state_tools = {
+            "plugin_list_available",
+            "mixer_start_peak_watch",
+            "mixer_stop_peak_watch",
+            "piano_roll_setup",
+            "piano_roll_read_notes",
+            "render_start_job",
+            "render_cancel_job",
+            "run_stop",
+            "review_stop",
+            "review_record_feedback",
+            "sound_record_feedback",
+        }
+        file_mutating_tools = {"compose_export_midi", "review_export_delivery"}
+        local_destructive_tools = {"sound_reset_history", "review_delete"}
+        audition_tools = {"channel_play_note"}
+        mode_tools = {"session_set_write_mode"}
+        groups = (
+            read_tools,
+            production_read_tools,
+            audio_tools,
+            creative_read_tools,
+            write_tools,
+            production_mutating_tools,
+            creative_fl_tools,
+            workflow_state_tools,
+            file_mutating_tools,
+            local_destructive_tools,
+            audition_tools,
+            mode_tools,
         )
+        self.assertEqual(sum(len(group) for group in groups), len(set().union(*groups)))
+        self.assertEqual(names, set().union(*groups))
+        self.assertEqual(len(names), 85)
+        # Every name is <area>_<verb>[_<object>] over a fixed set of areas.
+        areas = (
+            "session_", "project_", "transport_", "mixer_", "channel_", "pattern_",
+            "playlist_", "automation_", "plugin_", "atlas_", "processing_", "sound_",
+            "audio_", "compose_", "piano_roll_", "run_", "review_", "render_",
+        )
+        self.assertEqual([name for name in names if not name.startswith(areas)], [])
         # Only documented saved-project rendering is exposed; no generic
         # project save or reflective command escape hatch.
         prohibited_fragments = (
@@ -1124,22 +1064,12 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             [
                 name
                 for name in names
-                if name not in {
-                    "postfader_render_saved_project", "postfader_render_get_job",
-                    "postfader_render_cancel",
-                } and any(fragment in name for fragment in prohibited_fragments)
+                if not name.startswith("render_")
+                and any(fragment in name for fragment in prohibited_fragments)
             ]
         )
         by_name = {tool.name: tool for tool in tools}
-        for name in (
-            read_tools
-            | preset_read_tools
-            | sound_selection_read_tools
-            | production_read_tools
-            | audio_tools
-            | mix_read_tools
-            | creative_read_tools
-        ):
+        for name in read_tools | production_read_tools | audio_tools | creative_read_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertTrue(annotations and annotations.read_only_hint)
@@ -1148,8 +1078,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertIsNotNone(annotations)
-                self.assertIs(annotations.read_only_hint, True)
-                self.assertIs(annotations.destructive_hint, False)
                 self.assertIs(annotations.idempotent_hint, True)
         for name in write_tools:
             with self.subTest(tool=name):
@@ -1166,18 +1094,18 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 required = set(by_name[name].input_schema.get("required", []))
                 self.assertIn("session_fingerprint", properties)
                 self.assertNotIn("session_fingerprint", required)
-                if name == "fl_set_step_sequence":
+                if name == "channel_set_steps":
                     self.assertNotIn("expected_before", properties)
                     self.assertIn("expected_digest", properties)
                     self.assertIn("expected_digest", required)
-                elif name == "fl_apply_verified_batch":
+                elif name == "project_apply_edits":
                     self.assertNotIn("expected_before", properties)
                     self.assertIn("operations", properties)
                     self.assertIn("operations", required)
                 else:
                     self.assertIn("expected_before", properties)
                     self.assertNotIn("expected_before", required)
-        for name in production_mutating_tools:
+        for name in production_mutating_tools | creative_fl_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertIsNotNone(annotations)
@@ -1185,24 +1113,6 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 self.assertIs(annotations.destructive_hint, True)
                 self.assertIs(annotations.idempotent_hint, False)
                 self.assertIs(annotations.open_world_hint, True)
-        for name in preset_mutating_tools | sound_selection_mutating_tools:
-            with self.subTest(tool=name):
-                annotations = by_name[name].annotations
-                self.assertIsNotNone(annotations)
-                self.assertIs(annotations.read_only_hint, False)
-                self.assertIs(annotations.destructive_hint, True)
-                self.assertIs(annotations.idempotent_hint, False)
-                self.assertIs(annotations.open_world_hint, True)
-        annotations = by_name["fl_trigger_note"].annotations
-        self.assertIsNotNone(annotations)
-        self.assertIs(annotations.read_only_hint, False)
-        self.assertIs(annotations.destructive_hint, False)
-        self.assertIs(annotations.idempotent_hint, False)
-        mode_annotations = by_name["fl_set_write_mode"].annotations
-        self.assertIsNotNone(mode_annotations)
-        self.assertIs(mode_annotations.read_only_hint, False)
-        self.assertIs(mode_annotations.destructive_hint, True)
-        self.assertIs(mode_annotations.idempotent_hint, True)
         for name in workflow_state_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
@@ -1210,39 +1120,28 @@ class ReadOnlyInspectorTests(unittest.TestCase):
                 self.assertIs(annotations.read_only_hint, False)
                 self.assertIs(annotations.destructive_hint, False)
                 self.assertIs(annotations.idempotent_hint, False)
-        feedback_annotations = by_name["sound_selection_record_feedback"].annotations
-        self.assertIsNotNone(feedback_annotations)
-        self.assertIs(feedback_annotations.read_only_hint, False)
-        self.assertIs(feedback_annotations.destructive_hint, False)
-        self.assertIs(feedback_annotations.idempotent_hint, False)
-        self.assertIs(feedback_annotations.open_world_hint, False)
-        reset_annotations = by_name["sound_selection_history_reset"].annotations
-        self.assertIsNotNone(reset_annotations)
-        self.assertIs(reset_annotations.read_only_hint, False)
-        self.assertIs(reset_annotations.destructive_hint, True)
-        self.assertIs(reset_annotations.idempotent_hint, True)
-        self.assertIs(reset_annotations.open_world_hint, False)
-        plan_annotations = by_name["mix_apply_plan"].annotations
-        self.assertIsNotNone(plan_annotations)
-        self.assertIs(plan_annotations.read_only_hint, False)
-        self.assertIs(plan_annotations.destructive_hint, True)
-        self.assertIs(plan_annotations.idempotent_hint, False)
-        for name in creative_fl_tools:
+        for name in ("sound_record_feedback", "review_record_feedback", "review_stop"):
+            self.assertIs(by_name[name].annotations.open_world_hint, False)
+        for name in file_mutating_tools | local_destructive_tools:
             with self.subTest(tool=name):
                 annotations = by_name[name].annotations
                 self.assertIsNotNone(annotations)
                 self.assertIs(annotations.read_only_hint, False)
                 self.assertIs(annotations.destructive_hint, True)
-                self.assertIs(annotations.idempotent_hint, False)
-                self.assertIs(annotations.open_world_hint, True)
-        file_annotations = by_name["midi_export_type1"].annotations
-        self.assertIsNotNone(file_annotations)
-        self.assertIs(file_annotations.read_only_hint, False)
-        self.assertIs(file_annotations.destructive_hint, True)
-        self.assertIs(file_annotations.idempotent_hint, False)
-        self.assertIs(file_annotations.open_world_hint, False)
+                self.assertIs(annotations.open_world_hint, False)
+        self.assertIs(by_name["sound_reset_history"].annotations.idempotent_hint, True)
+        annotations = by_name["channel_play_note"].annotations
+        self.assertIsNotNone(annotations)
+        self.assertIs(annotations.read_only_hint, False)
+        self.assertIs(annotations.destructive_hint, False)
+        self.assertIs(annotations.idempotent_hint, False)
+        mode_annotations = by_name["session_set_write_mode"].annotations
+        self.assertIsNotNone(mode_annotations)
+        self.assertIs(mode_annotations.read_only_hint, False)
+        self.assertIs(mode_annotations.destructive_hint, True)
+        self.assertIs(mode_annotations.idempotent_hint, True)
         self.assertEqual(
-            set(by_name["fl_set_write_mode"].input_schema["properties"]),
+            set(by_name["session_set_write_mode"].input_schema["properties"]),
             {"enabled", "confirm_user_present"},
         )
         self.assertTrue(all(tool.output_schema for tool in tools))
@@ -2217,137 +2116,176 @@ class VerifiedWriteTests(unittest.TestCase):
         self.assertEqual(_state.TRACKS[3].slots[1].values[0], 0.6)
 
 
+MIXER_EFFECT = {"kind": "mixer_effect", "track_index": 3, "slot_index": 1}
+KEY_EFFECT = {"kind": "mixer_effect", "track_index": 9, "slot_index": 0}
+
+
+def mixer_case(changes, *, guard=None, stale=None, nested=None, sent):
+    """One mixer_set_track change with matching and stale guards.
+
+    ``nested`` names the list (eq or sends) whose single item carries the
+    guard; otherwise the guard is the call's top-level expected_before.
+    """
+
+    def guarded(value):
+        if nested is None:
+            return dict(changes, expected_before=value)
+        item = dict(changes[nested][0], expected_before=value)
+        return dict(changes, **{nested: [item]})
+
+    return {
+        "tool": "mixer_set_track",
+        "arguments": dict(changes, track_index=3),
+        "guarded": dict(guarded(guard), track_index=3),
+        "stale": dict(guarded(stale), track_index=3),
+        "sent": sent,
+    }
+
+
+def plugin_case(changes, *, guard, stale):
+    return {
+        "tool": "plugin_set_parameter",
+        "arguments": changes,
+        "guarded": dict(changes, expected_before=guard),
+        "stale": dict(changes, expected_before=stale),
+        "sent": guard,
+    }
+
+
 class VerifiedWriteToolTests(unittest.TestCase):
     """Every verified-kernel write as the agent reaches it through MCP."""
 
-    TOOLS = {
-        "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 0.65},
-        "fl_set_mixer_pan": {"track_index": 3, "pan": -0.4},
-        "fl_set_mixer_mute": {"track_index": 3, "muted": True},
-        "fl_set_mixer_solo": {"track_index": 3, "soloed": True},
-        "fl_set_mixer_arm": {"track_index": 3, "armed": True},
-        "fl_set_mixer_color": {"track_index": 3, "color": 0x0055AA},
-        "fl_set_mixer_stereo_separation": {
-            "track_index": 3,
-            "stereo_separation": 0.35,
-        },
-        "fl_select_mixer_track": {"track_index": 3},
-        "fl_set_track_eq": {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
-        "fl_set_plugin_param": {
-            "track_index": 3,
-            "slot_index": 1,
-            "parameter_index": 0,
-            "normalized_value": 0.3,
-        },
-        "fl_set_mixer_name": {"track_index": 3, "name": "Lead Verb"},
-        "fl_set_mixer_send": {
-            "track_index": 3,
-            "destination_track_index": 5,
-            "enabled": True,
-        },
-        "fl_set_mixer_send_level": {
-            "track_index": 3,
-            "destination_track_index": 0,
-            "level_normalized": 0.5,
-        },
-        "fl_set_plugin_param_display": {
-            "track_index": 3,
-            "slot_index": 1,
-            "parameter": "Threshold",
-            "target_value": 40.0,
-        },
-        "fl_set_plugin_param_option": {
-            "track_index": 9,
-            "slot_index": 0,
-            "parameter": "Key",
-            "option": "A",
-        },
-    }
-    EXPECTED_BEFORE = {
-        "fl_set_mixer_volume": 0.72,
-        "fl_set_mixer_pan": 0.0,
-        "fl_set_mixer_mute": False,
-        "fl_set_mixer_solo": False,
-        "fl_set_mixer_arm": False,
-        "fl_set_mixer_color": 0x565148,
-        "fl_set_mixer_stereo_separation": 0.0,
-        "fl_select_mixer_track": 0,
-        "fl_set_track_eq": {"gain_normalized": 0.5},
-        "fl_set_mixer_name": "Lead Vox",
-        "fl_set_mixer_send": False,
-        "fl_set_mixer_send_level": 0.8,
-        "fl_set_plugin_param": {
-            "normalized_value": 0.6,
-            "display_text": "60.0 %",
-        },
-        "fl_set_plugin_param_display": {
-            "normalized_value": 0.6,
-            "display_text": "60.0 %",
-        },
-        "fl_set_plugin_param_option": {
-            "normalized_value": 0.0,
-            "display_text": "C",
-        },
-    }
-    STALE_EXPECTED_BEFORE = {
-        "fl_set_mixer_volume": 0.1,
-        "fl_set_mixer_pan": 0.25,
-        "fl_set_mixer_mute": True,
-        "fl_set_mixer_solo": True,
-        "fl_set_mixer_arm": True,
-        "fl_set_mixer_color": 0x123456,
-        "fl_set_mixer_stereo_separation": -0.5,
-        "fl_select_mixer_track": 2,
-        "fl_set_track_eq": {"gain_normalized": 0.1},
-        "fl_set_mixer_name": "A Different Track",
-        "fl_set_mixer_send": True,
-        "fl_set_mixer_send_level": 0.1,
-        "fl_set_plugin_param": {"normalized_value": 0.1},
-        "fl_set_plugin_param_display": {"display_text": "not the live display"},
-        "fl_set_plugin_param_option": {"display_text": "not the live option"},
+    CASES = {
+        "volume": mixer_case(
+            {"volume_normalized": 0.65},
+            guard={"volume_normalized": 0.72},
+            stale={"volume_normalized": 0.1},
+            sent=0.72,
+        ),
+        "pan": mixer_case({"pan": -0.4}, guard={"pan": 0.0}, stale={"pan": 0.25}, sent=0.0),
+        "mute": mixer_case(
+            {"muted": True}, guard={"muted": False}, stale={"muted": True}, sent=False
+        ),
+        "solo": mixer_case(
+            {"soloed": True}, guard={"soloed": False}, stale={"soloed": True}, sent=False
+        ),
+        "arm": mixer_case(
+            {"armed": True}, guard={"armed": False}, stale={"armed": True}, sent=False
+        ),
+        "color": mixer_case(
+            {"color": 0x0055AA},
+            guard={"color": 0x565148},
+            stale={"color": 0x123456},
+            sent=0x565148,
+        ),
+        "stereo_separation": mixer_case(
+            {"stereo_separation": 0.35},
+            guard={"stereo_separation": 0.0},
+            stale={"stereo_separation": -0.5},
+            sent=0.0,
+        ),
+        "select": mixer_case(
+            {"select": True},
+            guard={"active_track_index": 0},
+            stale={"active_track_index": 2},
+            sent=0,
+        ),
+        "eq": mixer_case(
+            {"eq": [{"band_index": 1, "gain_normalized": 0.7}]},
+            guard={"gain_normalized": 0.5},
+            stale={"gain_normalized": 0.1},
+            nested="eq",
+            sent={"gain_normalized": 0.5},
+        ),
+        "name": mixer_case(
+            {"name": "Lead Verb"},
+            guard={"name": "Lead Vox"},
+            stale={"name": "A Different Track"},
+            sent="Lead Vox",
+        ),
+        "send": mixer_case(
+            {"sends": [{"destination_track_index": 5, "enabled": True}]},
+            guard={"enabled": False},
+            stale={"enabled": True},
+            nested="sends",
+            sent=False,
+        ),
+        "send_level": mixer_case(
+            {"sends": [{"destination_track_index": 0, "level_normalized": 0.5}]},
+            guard={"level_normalized": 0.8},
+            stale={"level_normalized": 0.1},
+            nested="sends",
+            sent=0.8,
+        ),
+        "plugin_normalized": plugin_case(
+            {"target": MIXER_EFFECT, "parameter": 0, "normalized_value": 0.3},
+            guard={"normalized_value": 0.6, "display_text": "60.0 %"},
+            stale={"normalized_value": 0.1},
+        ),
+        "plugin_display": plugin_case(
+            {"target": MIXER_EFFECT, "parameter": "Threshold", "display_value": 40.0},
+            guard={"normalized_value": 0.6, "display_text": "60.0 %"},
+            stale={"display_text": "not the live display"},
+        ),
+        "plugin_option": plugin_case(
+            {"target": KEY_EFFECT, "parameter": "Key", "option": "A"},
+            guard={"normalized_value": 0.0, "display_text": "C"},
+            stale={"display_text": "not the live option"},
+        ),
     }
     OUT_OF_RANGE = {
-        "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 1.5},
-        "fl_set_mixer_pan": {"track_index": 3, "pan": -4.0},
-        "fl_set_mixer_mute": {"track_index": -2, "muted": True},
-        "fl_set_mixer_solo": {"track_index": -2, "soloed": True},
-        "fl_set_mixer_arm": {"track_index": -2, "armed": True},
-        "fl_set_mixer_color": {"track_index": 3, "color": 0x100000000},
-        "fl_set_mixer_stereo_separation": {
-            "track_index": 3,
-            "stereo_separation": 4.0,
-        },
-        "fl_select_mixer_track": {"track_index": -1},
-        "fl_set_track_eq": {"track_index": 3, "band_index": 7, "gain_normalized": 0.7},
-        "fl_set_plugin_param": {
-            "track_index": 3,
-            "slot_index": 44,
-            "parameter_index": 0,
-            "normalized_value": 0.3,
-        },
-        "fl_set_mixer_name": {"track_index": 3, "name": "x" * 200},
-        "fl_set_mixer_send": {
-            "track_index": 3,
-            "destination_track_index": 3,  # a track cannot send to itself
-            "enabled": True,
-        },
-        "fl_set_mixer_send_level": {
-            "track_index": 3,
-            "destination_track_index": 0,
-            "level_normalized": 9.0,
-        },
-        "fl_set_plugin_param_display": {
-            "track_index": 3,
-            "slot_index": 44,
-            "parameter": "Threshold",
-            "target_value": 40.0,
-        },
-        "fl_set_plugin_param_option": {
-            "track_index": 9,
-            "slot_index": 0,
-            "parameter": "Key",
-            "option": "   ",
-        },
+        "volume": ("mixer_set_track", {"track_index": 3, "volume_normalized": 1.5}),
+        "pan": ("mixer_set_track", {"track_index": 3, "pan": -4.0}),
+        "negative track": ("mixer_set_track", {"track_index": -2, "muted": True}),
+        "color": ("mixer_set_track", {"track_index": 3, "color": 0x100000000}),
+        "stereo_separation": ("mixer_set_track", {"track_index": 3, "stereo_separation": 4.0}),
+        "eq band": (
+            "mixer_set_track",
+            {"track_index": 3, "eq": [{"band_index": 7, "gain_normalized": 0.7}]},
+        ),
+        "name": ("mixer_set_track", {"track_index": 3, "name": "x" * 200}),
+        "send to itself": (
+            "mixer_set_track",
+            {"track_index": 3, "sends": [{"destination_track_index": 3, "enabled": True}]},
+        ),
+        "send level": (
+            "mixer_set_track",
+            {"track_index": 3, "sends": [{"destination_track_index": 0, "level_normalized": 9.0}]},
+        ),
+        "removed send with a level": (
+            "mixer_set_track",
+            {
+                "track_index": 3,
+                "sends": [
+                    {"destination_track_index": 5, "enabled": False, "level_normalized": 0.5}
+                ],
+            },
+        ),
+        "two volume forms": (
+            "mixer_set_track",
+            {"track_index": 3, "volume_normalized": 0.5, "volume_db": -6.0},
+        ),
+        "no change": ("mixer_set_track", {"track_index": 3}),
+        "plugin slot": (
+            "plugin_set_parameter",
+            {
+                "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 44},
+                "parameter": 0,
+                "normalized_value": 0.3,
+            },
+        ),
+        "plugin display slot": (
+            "plugin_set_parameter",
+            {
+                "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 44},
+                "parameter": "Threshold",
+                "display_value": 40.0,
+            },
+        ),
+        "blank option": (
+            "plugin_set_parameter",
+            {"target": KEY_EFFECT, "parameter": "Key", "option": "   "},
+        ),
     }
 
     def setUp(self):
@@ -2355,13 +2293,10 @@ class VerifiedWriteToolTests(unittest.TestCase):
         self.client = WriteEnabledFakeClient()
 
     def call(self, name, arguments, client=None):
-        from fl_studio_mcp import mcp_server
-
         target = self.client if client is None else client
-        with mock.patch.object(
-            mcp_server,
-            "VerifiedWriter",
-            lambda: VerifiedWriter(WriteGateway(target)),
+        with (
+            mock.patch("fl_studio_mcp.workflows.get_client", return_value=target),
+            mock.patch("fl_studio_mcp.performance.get_client", return_value=target),
         ):
             return asyncio.run(mcp.call_tool(name, arguments))
 
@@ -2370,82 +2305,103 @@ class VerifiedWriteToolTests(unittest.TestCase):
         body = result.structured_content
         return body.get("result", body)
 
-    def test_each_write_tool_returns_its_verified_typed_result(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+    def receipt(self, case, body):
+        """Return the single receipt: setters wrap it, plug-in writes do not."""
+
+        if case["tool"] != "mixer_set_track":
+            return body
+        self.assertEqual(body["requested_count"], 1)
+        self.assertEqual(len(body["results"]), 1)
+        return body["results"][0]["receipt"]
+
+    def test_each_write_returns_its_verified_typed_receipt(self):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 _state.reset()
                 self.client = WriteEnabledFakeClient()
-                body = self.structured(self.call(name, arguments))
+                body = self.structured(self.call(case["tool"], case["arguments"]))
                 self.assertIs(body["verified"], True)
-                self.assertEqual(body["schema_version"], "1.0")
+                receipt = self.receipt(case, body)
+                self.assertIs(receipt["verified"], True)
+                self.assertEqual(receipt["schema_version"], "1.0")
                 self.assertEqual(
-                    body["verification_basis"], "readback_on_a_later_fl_idle_tick"
+                    receipt["verification_basis"], "readback_on_a_later_fl_idle_tick"
                 )
-                if name == "fl_select_mixer_track":
-                    self.assertIsNone(body["undo_point_created"])
+                if label == "select":
+                    self.assertIsNone(receipt["undo_point_created"])
                 else:
-                    self.assertIs(body["undo_point_created"], True)
-                self.assertIs(body["project_saved"], False)
-                self.assertEqual(body["session_fingerprint"], SESSION_FINGERPRINT)
-                self.assertIs(body["session_precondition_applied"], False)
-                self.assertIs(body["expected_before_applied"], False)
-                self.assertEqual(body["track_index"], arguments["track_index"])
-                self.assertIs(body["targeted_master"], False)
-                self.assertEqual(body["warnings"], [])
-                self.assertTrue(body["verification_summary"])
+                    self.assertIs(receipt["undo_point_created"], True)
+                self.assertIs(receipt["project_saved"], False)
+                self.assertEqual(receipt["session_fingerprint"], SESSION_FINGERPRINT)
+                self.assertIs(receipt["expected_before_applied"], False)
+                self.assertEqual(receipt["warnings"], [])
+                self.assertTrue(receipt["verification_summary"])
+                if case["tool"] == "mixer_set_track":
+                    # The setter pins every write to its one preflight session.
+                    self.assertIs(receipt["session_precondition_applied"], True)
+                    self.assertEqual(receipt["track_index"], 3)
+                    self.assertIs(receipt["targeted_master"], False)
+                else:
+                    self.assertIs(receipt["session_precondition_applied"], False)
+                    self.assertEqual(receipt["target"]["kind"], "mixer_effect")
                 self.assertEqual(len(self.client.commands), 1)
 
-    def test_all_ten_tools_accept_and_report_matching_optional_preconditions(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+    def test_every_write_accepts_and_reports_matching_optional_preconditions(self):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 _state.reset()
                 self.client = WriteEnabledFakeClient()
-                guarded = dict(
-                    arguments,
-                    session_fingerprint=SESSION_FINGERPRINT,
-                    expected_before=self.EXPECTED_BEFORE[name],
-                )
-                body = self.structured(self.call(name, guarded))
+                guarded = dict(case["guarded"], session_fingerprint=SESSION_FINGERPRINT)
+                body = self.structured(self.call(case["tool"], guarded))
                 self.assertIs(body["verified"], True)
-                self.assertEqual(body["session_fingerprint"], SESSION_FINGERPRINT)
-                self.assertIs(body["session_precondition_applied"], True)
-                self.assertIs(body["expected_before_applied"], True)
+                receipt = self.receipt(case, body)
+                self.assertEqual(receipt["session_fingerprint"], SESSION_FINGERPRINT)
+                self.assertIs(receipt["session_precondition_applied"], True)
+                self.assertIs(receipt["expected_before_applied"], True)
                 self.assertEqual(len(self.client.commands), 1)
                 sent = self.client.commands[0][1]
                 self.assertEqual(sent["session_fingerprint"], SESSION_FINGERPRINT)
-                self.assertEqual(sent["expected_before"], self.EXPECTED_BEFORE[name])
+                self.assertEqual(sent["expected_before"], case["sent"])
 
-    def test_all_ten_tools_refuse_stale_expected_before_without_mutating_or_undo(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+    def test_every_write_refuses_stale_expected_before_without_mutating_or_undo(self):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 _state.reset()
                 self.client = WriteEnabledFakeClient()
                 before = state_fingerprint()
-                stale = dict(
-                    arguments,
-                    session_fingerprint=SESSION_FINGERPRINT,
-                    expected_before=self.STALE_EXPECTED_BEFORE[name],
-                )
-                with self.assertRaises(ToolError) as caught:
-                    self.call(name, stale)
-                self.assertIn("expected_before", str(caught.exception))
-                self.assertIn("nothing was changed", str(caught.exception))
+                stale = dict(case["stale"], session_fingerprint=SESSION_FINGERPRINT)
+                if case["tool"] == "mixer_set_track":
+                    # After its preflight a setter reports each write, refusals
+                    # included, instead of raising away the earlier receipts.
+                    body = self.structured(self.call(case["tool"], stale))
+                    self.assertIs(body["verified"], False)
+                    self.assertEqual(body["stopped_reason"], "unknown_outcome")
+                    item = body["results"][0]
+                    self.assertEqual(item["status"], "error_unknown")
+                    self.assertIsNone(item["receipt"])
+                    message = item["error"]
+                else:
+                    with self.assertRaises(ToolError) as caught:
+                        self.call(case["tool"], stale)
+                    message = str(caught.exception)
+                self.assertIn("expected_before", message)
+                self.assertIn("nothing was changed", message)
                 self.assertEqual(state_fingerprint(), before)
                 self.assertEqual(_state.UNDO, [])
                 self.assertEqual(len(self.client.commands), 1)
 
-    def test_all_ten_tools_refuse_a_stale_session_without_mutating_or_undo(self):
+    def test_every_write_refuses_a_stale_session_without_mutating_or_undo(self):
         stale_session = "f" * 32
         if stale_session == SESSION_FINGERPRINT:
             stale_session = "e" * 32
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 _state.reset()
                 self.client = WriteEnabledFakeClient()
                 before = state_fingerprint()
-                stale = dict(arguments, session_fingerprint=stale_session)
+                stale = dict(case["arguments"], session_fingerprint=stale_session)
                 with self.assertRaises(ToolError) as caught:
-                    self.call(name, stale)
+                    self.call(case["tool"], stale)
                 self.assertIn("session", str(caught.exception).lower())
                 self.assertEqual(state_fingerprint(), before)
                 self.assertEqual(_state.UNDO, [])
@@ -2454,9 +2410,8 @@ class VerifiedWriteToolTests(unittest.TestCase):
                 self.assertEqual(self.client.commands, [])
 
     def test_plugin_write_exposes_proof_strength_through_mcp(self):
-        body = self.structured(
-            self.call("fl_set_plugin_param", self.TOOLS["fl_set_plugin_param"])
-        )
+        arguments = self.CASES["plugin_normalized"]["arguments"]
+        body = self.structured(self.call("plugin_set_parameter", arguments))
         self.assertIs(body["verified"], True)
         self.assertIs(body["display_changed"], True)
         self.assertIs(body["reads_at_requested_value"], False)
@@ -2464,95 +2419,106 @@ class VerifiedWriteToolTests(unittest.TestCase):
 
         _state.reset()
         self.client = WriteEnabledFakeClient()
-        already_there = dict(self.TOOLS["fl_set_plugin_param"], normalized_value=0.6)
-        body = self.structured(self.call("fl_set_plugin_param", already_there))
+        already_there = dict(arguments, normalized_value=0.6)
+        body = self.structured(self.call("plugin_set_parameter", already_there))
         self.assertIs(body["reads_at_requested_value"], True)
         self.assertEqual(body["verification_basis_detail"], "value_readback")
 
     def test_unverified_write_reaches_the_agent_as_a_result_not_an_error(self):
         with mock.patch.object(bridge.mixer, "setTrackVolume", lambda *a, **k: None):
             body = self.structured(
-                self.call("fl_set_mixer_volume", self.TOOLS["fl_set_mixer_volume"])
+                self.call("mixer_set_track", self.CASES["volume"]["arguments"])
             )
         self.assertIs(body["verified"], False)
-        self.assertTrue(body["warnings"][0].startswith("UNVERIFIED:"))
-        self.assertEqual(body["after_volume_normalized"], 0.72)
+        self.assertEqual(body["stopped_reason"], "unverified_receipt")
+        item = body["results"][0]
+        self.assertEqual(item["status"], "unverified")
+        self.assertTrue(item["receipt"]["warnings"][0].startswith("UNVERIFIED:"))
+        self.assertEqual(item["receipt"]["after_volume_normalized"], 0.72)
 
     def test_write_tools_name_the_missing_flag_when_the_bridge_cannot_write(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 with self.assertRaises(ToolError) as caught:
-                    self.call(name, arguments, client=WritesDisabledClient())
-                self.assertIn("fl_set_write_mode", str(caught.exception))
-                self.assertIn(
-                    "confirm_user_present=true",
-                    str(caught.exception),
-                )
+                    self.call(case["tool"], case["arguments"], client=WritesDisabledClient())
+                self.assertIn("session_set_write_mode", str(caught.exception))
+                self.assertIn("confirm_user_present=true", str(caught.exception))
 
     def test_write_tools_refuse_master_by_default_and_allow_it_explicitly(self):
-        for name, arguments in self.TOOLS.items():
-            with self.subTest(tool=name):
+        for label, case in self.CASES.items():
+            with self.subTest(case=label):
                 _state.reset()
                 self.client = WriteEnabledFakeClient()
-                # Slot 1 is empty on Master; slot 0 holds the Fruity Limiter.
-                master = dict(arguments, track_index=0)
-                # Master's slot 0 holds the Fruity Limiter; slot 1 is empty.
-                if name.startswith("fl_set_plugin_param"):
-                    master["slot_index"] = 0
-                if name == "fl_set_plugin_param_display":
-                    master["parameter"] = "GAIN"
-                    master["target_value"] = 40.0
-                if name == "fl_set_plugin_param_option":
-                    # That limiter has no text enumeration, so drive the option
-                    # matcher on a display string instead -- the same path a
-                    # nameless third-party control takes.
-                    master["parameter"] = "SAT"
-                    master["option"] = "0.0 %"
-                if name.startswith("fl_set_mixer_send"):
-                    # Master may not send to itself, and a level needs a route.
-                    master["destination_track_index"] = 5
-                    _state.TRACKS[0].routes[5] = 0.8
+                master = copy.deepcopy(case["arguments"])
+                allowed = copy.deepcopy(master)
+                if case["tool"] == "mixer_set_track":
+                    master["track_index"] = 0
+                    if "sends" in master:
+                        # Master may not send to itself, and a level needs a route.
+                        master["sends"][0]["destination_track_index"] = 5
+                        _state.TRACKS[0].routes[5] = 0.8
+                    allowed = dict(master, allow_master=True)
+                else:
+                    # Master's slot 0 holds the Fruity Limiter; slot 1 is empty.
+                    master["target"] = {"kind": "mixer_effect", "track_index": 0, "slot_index": 0}
+                    if label == "plugin_display":
+                        master["parameter"] = "GAIN"
+                    if label == "plugin_option":
+                        # That limiter has no text enumeration, so drive the option
+                        # matcher on a display string instead -- the same path a
+                        # nameless third-party control takes.
+                        master["parameter"] = "SAT"
+                        master["option"] = "0.0 %"
+                    allowed = copy.deepcopy(master)
+                    allowed["target"]["allow_master"] = True
                 with self.assertRaises(ToolError) as caught:
-                    self.call(name, master)
+                    self.call(case["tool"], master)
                 self.assertIn("allow_master", str(caught.exception))
                 self.assertEqual(self.client.commands, [])
 
-                body = self.structured(self.call(name, dict(master, allow_master=True)))
-                self.assertIs(body["targeted_master"], True)
+                body = self.structured(self.call(case["tool"], allowed))
                 self.assertIs(body["verified"], True)
+                if case["tool"] == "mixer_set_track":
+                    self.assertIs(self.receipt(case, body)["targeted_master"], True)
+                else:
+                    self.assertIs(body["target"]["allow_master"], True)
 
     def test_write_tools_reject_out_of_range_input_before_the_bridge(self):
-        for name, arguments in self.OUT_OF_RANGE.items():
-            with self.subTest(tool=name):
+        for label, (tool, arguments) in self.OUT_OF_RANGE.items():
+            with self.subTest(case=label):
                 self.client = WriteEnabledFakeClient()
                 with self.assertRaises(ToolError):
-                    self.call(name, arguments)
+                    self.call(tool, arguments)
                 self.assertEqual(self.client.commands, [])
 
     def test_mcp_schema_rejects_malformed_preconditions_before_dispatch(self):
         cases = (
             (
-                "fl_set_mixer_volume",
-                dict(self.TOOLS["fl_set_mixer_volume"], session_fingerprint="short"),
+                "mixer_set_track",
+                dict(self.CASES["volume"]["arguments"], session_fingerprint="short"),
             ),
             (
-                "fl_set_track_eq",
-                dict(self.TOOLS["fl_set_track_eq"], expected_before={}),
+                "mixer_set_track",
+                {
+                    "track_index": 3,
+                    "eq": [{"band_index": 1, "gain_normalized": 0.7, "expected_before": {}}],
+                },
+            ),
+            ("mixer_set_track", dict(self.CASES["volume"]["arguments"], expected_before={})),
+            (
+                "plugin_set_parameter",
+                dict(self.CASES["plugin_normalized"]["arguments"], expected_before={}),
             ),
             (
-                "fl_set_plugin_param",
-                dict(self.TOOLS["fl_set_plugin_param"], expected_before={}),
-            ),
-            (
-                "fl_set_plugin_param_option",
+                "plugin_set_parameter",
                 dict(
-                    self.TOOLS["fl_set_plugin_param_option"],
+                    self.CASES["plugin_option"]["arguments"],
                     expected_before={"normalized_value": 2.0},
                 ),
             ),
         )
         for name, arguments in cases:
-            with self.subTest(tool=name):
+            with self.subTest(tool=name, arguments=sorted(arguments)):
                 self.client = WriteEnabledFakeClient()
                 with self.assertRaises(ToolError):
                     self.call(name, arguments)

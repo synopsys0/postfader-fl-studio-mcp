@@ -12,7 +12,7 @@ MCP clients read and edit the FL Studio project you have open. Start with the
 | [FAQ](faq.md) | You want a quick answer about requirements, safety, or a common problem |
 | [Tool reference](tools.md) | You want to see every tool and resource, grouped by task |
 | [Comparison](comparison.md) | You're choosing between FL Studio MCP servers |
-| [V11 release notes](releases/v11.0.0.md) | You're upgrading from V10 |
+| [V12 release notes](releases/v12.0.0.md) | You're upgrading from V11; every tool has a new name |
 
 ## Workflows
 
@@ -54,6 +54,9 @@ MCP clients read and edit the FL Studio project you have open. Start with the
 
 ## Release notes
 
+- [V12.0.2](releases/v12.0.2.md)
+- [V12.0.1](releases/v12.0.1.md)
+- [V12.0.0](releases/v12.0.0.md)
 - [V11.0.0](releases/v11.0.0.md)
 - [V10.0.0](releases/v10.0.0.md) and [V10 development notes](releases/dev-v10.md)
 - [v0.20.0](releases/v0.20.0.md)
