@@ -1328,6 +1328,14 @@ class ProductionRunValidation(ProductionRunModel):
     )
 
 
+class ProductionRunCheck(ProductionRunModel):
+    """A zero-mutation dry run: plan validation, plus readiness on request."""
+
+    schema_version: Literal["1.0"] = SCHEMA_VERSION
+    validation: ProductionRunValidation
+    readiness: CreationReadinessReport | None = None
+
+
 class ProductionRunState(ProductionRunModel):
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     run_id: str = Field(pattern=r"^[0-9a-f]{32}$")
@@ -3780,6 +3788,20 @@ def creation_readiness(
     return _merge_structural_readiness_blockers(
         report,
         _bounded_blockers(live, limit=MAX_VALIDATION_BLOCKERS),
+    )
+
+
+def check_production_run(
+    request: ProductionRunRequest,
+    plan: ProductionRunPlan,
+    *,
+    include_readiness: bool = False,
+) -> ProductionRunCheck:
+    """Validate a plan and optionally score its setup readiness, mutating nothing."""
+
+    return ProductionRunCheck(
+        validation=validate_production_run(request, plan),
+        readiness=creation_readiness(request, plan) if include_readiness else None,
     )
 
 

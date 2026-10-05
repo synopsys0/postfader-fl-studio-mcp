@@ -155,9 +155,9 @@ The directory follows the same Windows Known Documents and
 absolute `POSTFADER_PIANO_ROLL_SCRIPTS_DIR` can override only this generated
 script location.
 
-For each new MCP process, call `piano_roll_bridge(action="prepare")`, open any
+For each new MCP process, call `piano_roll_setup(action="prepare")`, open any
 Piano Roll, and run **Scripts → Postfader → Postfader Apply** once. Then call
-`piano_roll_bridge(action="confirm", confirm_user_ran_script=true)`. Automatic
+`piano_roll_setup(action="confirm", confirm_user_ran_script=true)`. Automatic
 writes can then target the requested channel and pattern and dispatch FL's
 run-last-script shortcut. They report focus and key dispatch, never fabricated
 note readback; inspect the Piano Roll before issuing another mutation. Set
@@ -200,9 +200,9 @@ real run records them; it never saves the project or claims audible quality.
 Creation Review needs no second bridge, plug-in, or client installation. First
 complete a Production Run in the same connected MCP process, export a bounce
 from FL Studio, and give the connected AI the explicit absolute path. The AI
-can then call `postfader_review_start`, `postfader_review_attach_assets`, and
-`postfader_review_evaluate`; attach a reference or synchronized stem only when
-the requested finding needs that evidence. Review never captures FL's live
+can then call `review_start`, `review_attach_assets`, and `review_evaluate`;
+attach a reference or synchronized stem only when the requested finding needs
+that evidence. Review never captures FL's live
 audio and never renders or saves the live project. For an already-saved FLP,
 use the separate saved-project rendering tools described below;
 that export excludes unsaved changes.
@@ -223,10 +223,10 @@ and cloud identifiers are never stored. Keep the store on a local, user-only
 directory and back it up yourself if the review record matters.
 
 After a revision, export the new bounce with the same range, sample rate,
-channels, normalization, and tail policy before calling
-`postfader_review_compare`. Use `postfader_delivery_manifest` to inspect the
-final handoff and `postfader_delivery_export_manifest` to create new JSON or
-Markdown files. These manifests are create-only and do not save FL Studio.
+channels, normalization, and tail policy before calling `review_compare`. Use
+`review_get` with `view="delivery_manifest"` to inspect the final handoff and
+`review_export_delivery` to create new JSON or Markdown files. These manifests
+are create-only and do not save FL Studio.
 
 ## 4. Generate client configuration
 
@@ -381,7 +381,7 @@ Build a bassline and drums, keeping my existing lead.
 A Production Run enables writes once for that task. You can also explicitly
 ask to enable write mode when working through individual controls.
 
-The client calls `fl_set_write_mode(enabled=true,
+The client calls `session_set_write_mode(enabled=true,
 confirm_user_present=true)` under the user's edit request. Enabling requires
 compatible protocol, runtime-control support, and the current session
 fingerprint. A second handshake must then confirm all of:
@@ -395,7 +395,7 @@ does not restart. Ask the client to disable write mode when finished. A normal
 new FL process starts read-only, and a bridge reload also resets to the process
 startup default.
 
-For Sound Selection, begin with `sound_selection_inventory` or a read-only
+For Sound Selection, begin with `sound_get_inventory` or a read-only
 Production Run plan. Exact preset choices are available only for targets loaded
 in the current project; Atlas knowledge may recommend an unloaded product but
 cannot load it. Review the palette and its verification receipts before saving
@@ -460,8 +460,9 @@ Success reports `bridge_mode=write_test`, `verified_writes_enabled=true`, and
 **A write is unverified.** Do not retry automatically. Inspect before/after,
 verification detail, warnings, and the project itself.
 
-**Creation readiness is blocked.** Call `postfader_creation_readiness` (or
-inspect the `readiness_report` in the run result). It returns all detectable
+**Creation readiness is blocked.** Call `run_validate` with
+`include_readiness=true` and read its `readiness` scorecard (or inspect the
+`readiness_report` in the run result). The scorecard lists all detectable
 actions together, such as arming Postfader Apply, loading a generator with
 required drum roles, or leaving an empty pattern. Complete those actions in
 the disposable FL project, then submit a compatible run; do not repeatedly
@@ -483,7 +484,7 @@ run and its matching package process available for a revision.
 audio file selected by the user. Check that it is not a directory or unsafe
 symlink, is below the size/duration limits, and has not changed since its
 digest was captured. Use the exact asset IDs returned by
-`postfader_review_attach_assets` for later evaluation and comparison.
+`review_attach_assets` for later evaluation and comparison.
 
 **Evaluation has weak or missing evidence.** Provide authoritative section
 ranges when the source run has no usable section map. A full mix cannot prove
@@ -505,8 +506,9 @@ provide an explicit offset before comparing.
 
 **Delivery export refuses an existing file or directory.** Delivery artifacts
 are create-only. Choose a new output directory or filename and inspect the
-read-only `postfader_delivery_manifest` first; PostFader will not overwrite a
-manifest and will not save the FL Studio project.
+manifest first with the read-only `review_get` (`view="delivery_manifest"`);
+PostFader will not overwrite a manifest and will not save the FL Studio
+project.
 
 ## Host workflows
 
@@ -519,18 +521,18 @@ and bridge together before using them.
   content. Each page is a fresh observation. A missing or stale target receipt
   returns no attributed notes.
 - **Load a plug-in on macOS:** grant macOS Accessibility access to the launching
-  host when using the native-menu adapter. `plugins_list_available` reads the
-  current English Add-menu favorites; `plugins_load` adds one exact named
+  host when using the native-menu adapter. `plugin_list_available` reads the
+  current English Add-menu favorites; `plugin_load` adds one exact named
   instrument or effect once session write mode is on. Effects need a mixer
   destination; Master requires explicit permission. Windows loading and plug-in removal/reordering are not
   implemented. Stop after an unknown outcome and inspect the session.
-- **Recover a run:** `postfader_list_runs` and `postfader_get_run` read the local
-  journal. Explicit continuation revalidates the saved plan, current targets,
+- **Recover a run:** `run_list` and `run_get` read the local journal. Explicit
+  continuation with `run_continue` revalidates the saved plan, current targets,
   and authorization. Unknown in-flight operations remain blocked. Keep the
   SQLite journal and its companion files private; they retain production data.
 - **Render saved state:** select an existing absolute `.flp` path and a parent
-  output directory with `postfader_render_saved_project`. Optionally set
-  `POSTFADER_FL_STUDIO_PATH`. Poll `postfader_render_get_job`; `output_ready`
+  output directory with `render_start_job`. Optionally set
+  `POSTFADER_FL_STUDIO_PATH`. Poll `render_get_job`; `output_ready`
   proves decoded WAV availability, while `completed` also requires successful
   FL process exit. Cancellation may leave the separate macOS FL instance
   running, as reported in the response. Unsaved edits are excluded. Do not
@@ -547,7 +549,7 @@ acceptance remains pending. See the [contracts](tool-contracts.md) and
 | `FL_STUDIO_USER_DATA_DIR` | Absolute FL user-data directory. Relative values are rejected. |
 | `FL_BRIDGE_ENABLE_MIDI` | `1` allows construction of native MIDI transport. |
 | `FL_BRIDGE_MIDI_PORT` | Exact endpoint query; required on Windows for native MIDI. |
-| `FL_BRIDGE_ENABLE_WRITES` | Legacy FL-process startup opt-in. Ordinary clients use the session-only `fl_set_write_mode` tool instead. |
+| `FL_BRIDGE_ENABLE_WRITES` | Legacy FL-process startup opt-in. Ordinary clients use the session-only `session_set_write_mode` tool instead. |
 | `FL_BRIDGE_SANDBOXED` | `1` forbids native MIDI enumeration/open and live handshake. |
 | `FL_BRIDGE_TIMEOUT` | Bridge response timeout in seconds. |
 | `FL_BRIDGE_HOST`, `FL_BRIDGE_PORT` | Test-only loopback TCP transport. |

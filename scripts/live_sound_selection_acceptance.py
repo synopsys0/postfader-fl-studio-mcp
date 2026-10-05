@@ -333,7 +333,13 @@ def _plan_arguments(args: argparse.Namespace) -> dict[str, Any]:
             "include_current": True,
             "include_empty_names": False,
         },
-        "current_preset_before": {"target": _target(args.channel)},
+        # One preset row is enough: the page also reports the current preset.
+        "current_preset_before": {
+            "target": _target(args.channel),
+            "start": 0,
+            "limit": 1,
+            "include_current": True,
+        },
         "pad_map": {
             "target": _target(
                 args.channel if args.pad_map_channel is None else args.pad_map_channel
@@ -663,17 +669,16 @@ async def async_main(
                 }
             },
             "authoritative_tools": [
-                "sound_selection_inventory",
-                "plugins_list_presets",
-                "plugins_get_current_preset",
-                "plugins_inspect_pad_map",
-                "sound_selection_plan",
-                "fl_select_plugin_preset",
-                "sound_selection_apply",
-                "postfader_validate_run",
-                "postfader_execute_run",
-                "postfader_get_run",
-                "postfader_continue_run",
+                "sound_get_inventory",
+                "plugin_list_presets",
+                "plugin_get_pad_map",
+                "sound_plan_palette",
+                "plugin_select_preset",
+                "sound_apply_palette",
+                "run_validate",
+                "run_execute",
+                "run_get",
+                "run_continue",
             ],
             "arguments": arguments,
             "requested_midi_port": args.midi_port,
@@ -691,18 +696,17 @@ async def async_main(
 
     surface = await authoritative_tool_surface()
     required = {
-        "sound_selection_inventory",
-        "plugins_list_presets",
-        "plugins_get_current_preset",
-        "plugins_inspect_pad_map",
-        "sound_selection_plan",
-        "postfader_validate_run",
-        "postfader_execute_run",
-        "postfader_get_run",
-        "postfader_continue_run",
+        "sound_get_inventory",
+        "plugin_list_presets",
+        "plugin_get_pad_map",
+        "sound_plan_palette",
+        "run_validate",
+        "run_execute",
+        "run_get",
+        "run_continue",
     }
     if args.apply:
-        required.update({"fl_select_plugin_preset", "sound_selection_apply"})
+        required.update({"plugin_select_preset", "sound_apply_palette"})
     missing = sorted(required - set(surface.all_tools))
     if missing:
         raise AcceptanceConfigurationError(
@@ -811,7 +815,7 @@ async def async_main(
         return result
 
     try:
-        inventory = await invoke("sound_selection_inventory", arguments["inventory"])
+        inventory = await invoke("sound_get_inventory", arguments["inventory"])
         report["inventory"] = inventory
         generator_evidence = _generator_inventory_evidence(
             inventory, _target(args.channel)
@@ -820,7 +824,7 @@ async def async_main(
             "status": "passed"
             if generator_evidence["identity_page"]
             else "unverified",
-            "tool": "sound_selection_inventory",
+            "tool": "sound_get_inventory",
             **generator_evidence,
             "session_fingerprint_present": _session(inventory) is not None,
         }
@@ -830,11 +834,11 @@ async def async_main(
             )
             return report
 
-        preset_page = await invoke("plugins_list_presets", arguments["preset_inventory"])
+        preset_page = await invoke("plugin_list_presets", arguments["preset_inventory"])
         report["preset_inventory"] = preset_page
 
         before = await invoke(
-            "plugins_get_current_preset", arguments["current_preset_before"]
+            "plugin_list_presets", arguments["current_preset_before"]
         )
         report["preset_before"] = before
         selected: dict[str, Any] | None = None
@@ -857,7 +861,7 @@ async def async_main(
                 "reason": "--apply is required before a live preset mutation.",
             }
 
-        pad_map = await invoke("plugins_inspect_pad_map", arguments["pad_map"])
+        pad_map = await invoke("plugin_get_pad_map", arguments["pad_map"])
         report["pad_map"] = pad_map
         pad_body = _dict(pad_map) or {}
         pad_compatible = (
@@ -868,7 +872,7 @@ async def async_main(
         )
         report["checks"]["compatible_pad_map"] = {
             "status": "passed" if pad_compatible else "unverified",
-            "tool": "plugins_inspect_pad_map",
+            "tool": "plugin_get_pad_map",
             "target": arguments["pad_map"]["target"],
             "pad_count": pad_body.get("pad_count"),
             "complete": pad_body.get("complete"),
@@ -878,12 +882,12 @@ async def async_main(
             report.update({"overall": "fail", "phase": "pad_map_unverified"})
             return report
 
-        plan = await invoke("sound_selection_plan", arguments["plan"])
+        plan = await invoke("sound_plan_palette", arguments["plan"])
         report["plan"] = plan
         plan_body = _dict(plan) or {}
         report["checks"]["palette_planning"] = {
             "status": "blocked" if plan_body.get("blockers") else "passed",
-            "tool": "sound_selection_plan",
+            "tool": "sound_plan_palette",
             "palette_id": plan_body.get("palette_id"),
             "assignment_count": len(plan_body.get("assignments", []))
             if isinstance(plan_body.get("assignments"), list)
@@ -951,7 +955,7 @@ async def async_main(
             }:
                 selection_arguments["expected_current"] = expected_current
             selection = await invoke(
-                "fl_select_plugin_preset",
+                "plugin_select_preset",
                 selection_arguments,
                 mutating=True,
             )
@@ -989,7 +993,7 @@ async def async_main(
                 return report
 
             after = await invoke(
-                "plugins_get_current_preset", arguments["current_preset_before"]
+                "plugin_list_presets", arguments["current_preset_before"]
             )
             report["preset_after"] = after
             after_session = _session(after)
@@ -1001,7 +1005,7 @@ async def async_main(
             )
             report["checks"]["later_tick_preset_readback"] = {
                 "status": "passed" if readback_verified else "unverified",
-                "tool": "plugins_get_current_preset",
+                "tool": "plugin_list_presets",
                 "requested": selected,
                 "readback": {
                     "name": _current_identity(after)[0],
@@ -1018,7 +1022,7 @@ async def async_main(
             apply_arguments = dict(arguments["apply"])
             apply_arguments.update({"palette": plan, "session_fingerprint": session})
             applied = await invoke(
-                "sound_selection_apply", apply_arguments, mutating=True
+                "sound_apply_palette", apply_arguments, mutating=True
             )
             report["apply"] = applied
             applied_body = _dict(applied) or {}
@@ -1030,7 +1034,7 @@ async def async_main(
             )
             report["checks"]["palette_application"] = {
                 "status": "passed" if apply_verified else "unverified",
-                "tool": "sound_selection_apply",
+                "tool": "sound_apply_palette",
                 "status_from_tool": applied_body.get("status"),
                 "verified_count": applied_body.get("verified_count"),
                 "automatic_replay_attempted": False,
@@ -1050,11 +1054,11 @@ async def async_main(
         production_request = arguments["production_request"]
         production_plan = arguments["production_plan"]
         validation = await invoke(
-            "postfader_validate_run",
+            "run_validate",
             {"request": production_request, "plan": production_plan},
         )
         report["production_validation"] = validation
-        validation_body = _dict(validation) or {}
+        validation_body = _nested_dict(validation, "validation") or {}
         if validation_body.get("valid") is False or validation_body.get("blockers"):
             report.update(
                 {"overall": "fail", "phase": "production_run_validation_blocked"}
@@ -1062,7 +1066,7 @@ async def async_main(
             return report
 
         run_result = await invoke(
-            "postfader_execute_run",
+            "run_execute",
             {"request": production_request, "plan": production_plan},
             mutating=args.apply,
         )
@@ -1072,7 +1076,7 @@ async def async_main(
             report.update({"overall": "fail", "phase": "production_run_blocked"})
             return report
         run_id = _extract_run_id(run_result)
-        run_state = await invoke("postfader_get_run", {"run_id": run_id})
+        run_state = await invoke("run_get", {"run_id": run_id})
         report["production_run_initial"] = run_state
         initial_outputs = _outputs(run_state)
         anchor_before = _anchor_snapshot(initial_outputs)
@@ -1127,7 +1131,7 @@ async def async_main(
             return report
 
         continued = await invoke(
-            "postfader_continue_run",
+            "run_continue",
             {"run_id": run_id, "delta": arguments["production_continuation"]},
         )
         report["production_continuation"] = continued
@@ -1137,7 +1141,7 @@ async def async_main(
                 {"overall": "fail", "phase": "production_continuation_blocked"}
             )
             return report
-        final_state = await invoke("postfader_get_run", {"run_id": run_id})
+        final_state = await invoke("run_get", {"run_id": run_id})
         report["production_run_final"] = final_state
         anchor_preserved, continuation_detail = _variation_anchor_preserved(
             _outputs(final_state), anchor_before

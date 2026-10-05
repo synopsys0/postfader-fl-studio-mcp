@@ -5,7 +5,7 @@ This harness is intentionally conservative.  It expects a blank, disposable
 FL Studio project whose generators, empty pattern, and Piano Roll bridge are
 already prepared by the maintainer.  ``--plan`` builds the complete typed
 request without importing the MCP server or contacting FL Studio.  A live run
-uses one ``postfader_execute_run`` call and one process-local run context for
+uses one ``run_execute`` call and one process-local run context for
 either an armed-ready composition fixture or an armed-ready production
 fixture.
 
@@ -544,9 +544,9 @@ async def async_main(
                 ),
             ],
             "required_tools": [
-                "postfader_creation_readiness",
-                "postfader_execute_run",
-                "postfader_get_run",
+                "run_validate",
+                "run_execute",
+                "run_get",
             ],
             "requested_midi_port": args.midi_port,
         }
@@ -565,7 +565,7 @@ async def async_main(
         )
 
     surface = await authoritative_tool_surface()
-    required = {"postfader_creation_readiness", "postfader_execute_run", "postfader_get_run"}
+    required = {"run_validate", "run_execute", "run_get"}
     missing = sorted(required - set(surface.all_tools))
     if missing:
         raise AcceptanceConfigurationError(
@@ -667,13 +667,13 @@ async def async_main(
 
     try:
         run_result = await invoke(
-            "postfader_execute_run",
+            "run_execute",
             {"request": request, "plan": plan},
             mutating=True,
         )
         report["run_result"] = run_result
         run_id = _extract_run_id(run_result)
-        lookup = await invoke("postfader_get_run", {"run_id": run_id})
+        lookup = await invoke("run_get", {"run_id": run_id})
         report["run_state"] = lookup
         state = _state(lookup)
         status = _dict(run_result).get("status", state.get("status"))

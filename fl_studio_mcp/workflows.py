@@ -624,6 +624,45 @@ def _preflight_operations(operations: list[BatchOperation]) -> None:
             owners[key] = operation.operation_id
 
 
+def open_verified_session(
+    session_fingerprint: str | None, *, label: str = "batch"
+) -> tuple[_CachedPingClient, str]:
+    """Perform the one live preflight shared by batches and per-target setters.
+
+    Returns a client that serves later handshakes from this preflight, and the
+    bridge session that every write in the sequence is pinned to. ``label``
+    names the caller in refusals.
+    """
+
+    client = get_client()
+    ping = client.ping()
+    if not isinstance(ping, dict):
+        raise ValueError(f"FL bridge returned a malformed {label} preflight handshake")
+    transport = getattr(client, "transport", "unknown")
+    connection = connection_from_ping(ping, transport)
+    if not connection.connected or not connection.compatible:
+        raise IncompatibleFLStudio(
+            connection.error or connection.compatibility_reason
+        )
+    if not connection.verified_writes_enabled:
+        raise VerifiedWritesUnavailable(
+            WRITES_DISABLED_HELP.format(
+                mode=connection.bridge_mode,
+                enabled=connection.verified_writes_enabled,
+            )
+        )
+    session = connection.session_fingerprint
+    if session is None:
+        raise VerifiedWritesUnavailable(
+            f"{label} preflight requires a valid bridge session fingerprint"
+        )
+    if session_fingerprint is not None and session_fingerprint != session:
+        raise VerifiedWritesUnavailable(
+            f"{label} session precondition failed before the first mutation"
+        )
+    return _CachedPingClient(client, ping), session
+
+
 class VerifiedBatchExecutor:
     """Apply an ordered closed-union batch after one live-session handshake."""
 
@@ -637,34 +676,7 @@ class VerifiedBatchExecutor:
         parsed = validate_batch_operations(operations)
         if type(stop_on_unverified) is not bool:
             raise ValueError("stop_on_unverified must be true or false")
-        client = get_client()
-        ping = client.ping()
-        if not isinstance(ping, dict):
-            raise ValueError("FL bridge returned a malformed batch preflight handshake")
-        transport = getattr(client, "transport", "unknown")
-        connection = connection_from_ping(ping, transport)
-        if not connection.connected or not connection.compatible:
-            raise IncompatibleFLStudio(
-                connection.error or connection.compatibility_reason
-            )
-        if not connection.verified_writes_enabled:
-            raise VerifiedWritesUnavailable(
-                WRITES_DISABLED_HELP.format(
-                    mode=connection.bridge_mode,
-                    enabled=connection.verified_writes_enabled,
-                )
-            )
-        session = connection.session_fingerprint
-        if session is None:
-            raise VerifiedWritesUnavailable(
-                "batch preflight requires a valid bridge session fingerprint"
-            )
-        if session_fingerprint is not None and session_fingerprint != session:
-            raise VerifiedWritesUnavailable(
-                "batch session precondition failed before the first mutation"
-            )
-
-        cached = _CachedPingClient(client, ping)
+        cached, session = open_verified_session(session_fingerprint)
         writer = VerifiedWriter(WriteGateway(cached))
         controller = TrackBController(TrackBMutationGateway(cached))
         results: list[BatchItemResult] = []

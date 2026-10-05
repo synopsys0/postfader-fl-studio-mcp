@@ -40,8 +40,8 @@ fields may be retained; arbitrary metadata paths are still removed.
 The request defaults to three revision passes (hard cap eight); the store caps
 64 sessions, 256 assets, 256 findings per evaluation, 32 evaluations, 64
 comparisons, 32 delivery manifests, and a 16 MiB serialized document. The public
-`postfader_review_delete` requires explicit confirmation; store reset/repair is
-also explicit and never runs automatically.
+`review_delete` requires explicit confirmation (`confirm=true`); store
+reset/repair is also explicit and never runs automatically.
 
 The lifecycle is bounded: create or await assets, evaluate, plan and apply a
 revision, await a new bounce, compare, then accept, reject, stop, or complete.
@@ -69,7 +69,7 @@ enables writes.
 
 ## Public tools and Production Run operations
 
-The direct MCP surface has 13 tools. They are task-scoped calls, not a
+The direct MCP surface has 11 tools. They are task-scoped calls, not a
 persistent autonomous mode:
 
 An earlier analyze-only turn does not authorize a later write, but it also
@@ -79,19 +79,17 @@ revise may reuse the retained assets and evidence; the mutating call and its
 
 | Tool | Use |
 | --- | --- |
-| `postfader_review_start` | Start a Review Session from one completed Production Run. |
-| `postfader_review_attach_assets` | Validate and attach explicit full-mix, reference, stem, or section audio. |
-| `postfader_review_evaluate` | Measure an attached bounce globally and by the known section map. |
-| `postfader_review_get` | Read retained state, evidence, lifecycle status, and the next action. |
-| `postfader_review_compare` | Compare distinct aligned before/after bounces without implying approval. |
-| `postfader_review_plan_revision` | Compile and validate a closed, traceable revision plan. |
-| `postfader_delivery_manifest` | Build the current read-only multi-dimensional delivery view. |
-| `postfader_review_export_handoff` | Request one exact next full-mix export and only necessary stems. |
-| `postfader_review_apply_revision` | Apply one validated revision through the existing Production Run executor. |
-| `postfader_review_record_feedback` | Store explicit producer feedback and independent accepted-element locks. |
-| `postfader_review_stop` | Stop future Review Session work without undoing completed changes. |
-| `postfader_review_delete` | Delete Review Session metadata after explicit confirmation. |
-| `postfader_delivery_export_manifest` | Create JSON and/or Markdown delivery files without overwriting or saving FL. |
+| `review_start` | Start a Review Session from one completed Production Run. |
+| `review_attach_assets` | Validate and attach explicit full-mix, reference, stem, or section audio. |
+| `review_evaluate` | Measure an attached bounce globally and by the known section map. |
+| `review_get` | Read one Review Session by `view`: `session` (the default) returns retained state, evidence, lifecycle status, and the next action; `export_request` requests one exact next full-mix export and only necessary stems; `delivery_manifest` builds the current read-only multi-dimensional delivery view. |
+| `review_compare` | Compare distinct aligned before/after bounces without implying approval. |
+| `review_plan_revision` | Compile and validate a closed, traceable revision plan. |
+| `review_apply_revision` | Apply one validated revision through the existing Production Run executor. |
+| `review_record_feedback` | Store explicit producer feedback and independent accepted-element locks. |
+| `review_stop` | Stop future Review Session work without undoing completed changes. |
+| `review_delete` | Delete Review Session metadata after explicit confirmation. |
+| `review_export_delivery` | Create JSON and/or Markdown delivery files without overwriting or saving FL. |
 
 The same workflow can be expressed inside one typed Production Run through 9
 closed operations: `start_review_session`, `attach_review_assets`,

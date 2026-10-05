@@ -684,7 +684,7 @@ class ReadOnlyInspector:
                     "Unprofiled parameters are never considered safe to modify.",
                     "No plug-in parameter was read to produce this record. The "
                     "status reflects a reachable, compatible bridge only; call "
-                    "plugins_scan_parameters on a real slot to learn what this "
+                    "plugin_list_parameters on a real slot to learn what this "
                     "plug-in actually exposes.",
                 ],
                 evidence=[
@@ -769,7 +769,7 @@ class ReadOnlyInspector:
             CapabilityRecord(
                 capability="saved_project_wav_render",
                 status=CapabilityStatus.UNVALIDATED,
-                access_path="postfader_render_saved_project host job",
+                access_path="render_start_job host job",
                 limitations=[
                     "Renders the saved .flp only; unsaved live edits are excluded.",
                     "Requires installed FL Studio on macOS or Windows; live export acceptance remains pending.",

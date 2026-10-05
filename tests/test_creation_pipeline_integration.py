@@ -103,7 +103,7 @@ def semantic_action() -> SemanticPluginAction:
                 control_role="reverb.decay",
                 control_id="decay",
                 parameter_index=2,
-                setter="fl_set_plugin_param_display",
+                setter="display_value",
                 display_value=1.8,
             ),
         ),

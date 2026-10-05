@@ -49,9 +49,9 @@ def parse_args(argv=None):
 
 async def async_main(args):
     surface = await authoritative_tool_surface()
-    if "fl_trigger_note" not in surface.ephemeral_tools:
+    if "channel_play_note" not in surface.ephemeral_tools:
         raise AcceptanceConfigurationError(
-            "fl_trigger_note is not currently annotated as a separate ephemeral tool"
+            "channel_play_note is not currently annotated as a separate ephemeral tool"
         )
     arguments = {
         "channel_index": args.channel,
@@ -63,7 +63,7 @@ async def async_main(args):
         return {
             "mode": "plan_only",
             "physical_io_performed": False,
-            "tool": "fl_trigger_note",
+            "tool": "channel_play_note",
             "arguments": arguments,
             "requested_midi_port": args.midi_port,
         }
@@ -80,7 +80,7 @@ async def async_main(args):
     from fl_studio_mcp import mcp_server
 
     try:
-        result = tool_payload(await mcp_server.mcp.call_tool("fl_trigger_note", arguments))
+        result = tool_payload(await mcp_server.mcp.call_tool("channel_play_note", arguments))
     except Exception as exc:
         return {
             "schema_version": 1,
@@ -89,7 +89,7 @@ async def async_main(args):
             "phase": "note_dispatch",
             "contact_started": True,
             "project_saved": False,
-            "tool": "fl_trigger_note",
+            "tool": "channel_play_note",
             "attempts": 1,
             "automatic_replay": False,
             "error": str(exc),
@@ -101,7 +101,7 @@ async def async_main(args):
         "phase": "complete",
         "contact_started": True,
         "project_saved": False,
-        "tool": "fl_trigger_note",
+        "tool": "channel_play_note",
         "receipt": result,
     }
 

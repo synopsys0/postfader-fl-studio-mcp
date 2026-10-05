@@ -18,7 +18,6 @@ from unittest import mock
 
 from pydantic import ValidationError
 
-from fl_studio_mcp.mixing import inspect_plugin_compatibility, list_plugin_profiles
 from fl_studio_mcp.plugin_atlas import (
     AtlasLoadError,
     AtlasManifest,
@@ -854,50 +853,6 @@ class GenericDiscoveryAndMixCompatibilityTests(unittest.TestCase):
         self.assertEqual(record.matches, ())
         self.assertIsNone(record.best_match)
         self.assertIsNone(record.compatibility)
-
-    def test_existing_mix_profile_response_shape_remains_compatible(self) -> None:
-        complete_catalog = list_plugin_profiles()
-        payload = complete_catalog.model_dump(mode="json")
-        self.assertEqual(set(payload), {"schema_version", "profiles", "profile_count", "warnings"})
-        self.assertEqual(payload["profile_count"], len(payload["profiles"]))
-        expected_fields = {"profile_id", "plugin_names", "category", "supported_intents", "parameters", "recipes", "provenance", "exact_version_required", "warnings"}
-        for row in payload["profiles"]:
-            self.assertEqual(set(row), expected_fields)
-            self.assertIsInstance(row["plugin_names"], list)
-            self.assertIsInstance(row["parameters"], list)
-
-        catalog = list_plugin_profiles("compressor")
-        self.assertEqual(catalog.profile_count, 1)
-        profile = catalog.profiles[0]
-        self.assertEqual(profile.profile_id, "fl-fruity-compressor")
-        self.assertIn("Fruity Compressor", profile.plugin_names)
-        self.assertFalse(catalog.model_dump()["profiles"][0].get("exact_version"))
-
-        known = TargetedPluginSummary(
-            target=MixerEffectTarget(track_index=2, slot_index=0),
-            name="Fruity Compressor",
-            reported_parameter_count=6,
-            mix_level_normalized=1.0,
-        )
-        unknown = TargetedPluginSummary(
-            target=MixerEffectTarget(track_index=2, slot_index=1),
-            name="Vendor Mystery FX",
-            reported_parameter_count=6,
-            mix_level_normalized=1.0,
-        )
-        inventory = TargetedLoadedPluginInventory(
-            observed_at=datetime.now(timezone.utc), plugins=[known, unknown]
-        )
-        inspector = mock.Mock()
-        inspector.scan_loaded_plugins.return_value = inventory
-        with mock.patch("fl_studio_mcp.mixing.TrackBInspector", return_value=inspector):
-            report = inspect_plugin_compatibility(only_used=False)
-        self.assertEqual(report.profiled_count, 1)
-        self.assertEqual(report.unprofiled_count, 1)
-        self.assertEqual(
-            [item.compatibility for item in report.matches],
-            ["profiled", "unprofiled"],
-        )
 
 
 if __name__ == "__main__":

@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 
 ATLAS_SCHEMA_VERSION = "1.0"
@@ -325,6 +332,25 @@ class ProductKnowledge(AtlasModel):
         return self.modules
 
 
+# Which plugin_set_parameter value argument writes a control.  V11 stored the
+# names of its three parameter setters instead; bundled data, saved plans, and
+# saved runs that carry those spellings load as the matching value.
+ParameterWriteValue = Literal["display_value", "option", "normalized_value"]
+LEGACY_PARAMETER_WRITE_VALUES = {
+    "fl_set_plugin_param_display": "display_value",
+    "fl_set_plugin_param_option": "option",
+    "fl_set_plugin_param": "normalized_value",
+}
+
+
+def current_parameter_write_value(value: object) -> object:
+    """Read a V11 setter name as its plugin_set_parameter value argument."""
+
+    if isinstance(value, str):
+        return LEGACY_PARAMETER_WRITE_VALUES.get(value, value)
+    return value
+
+
 class AdapterControl(AtlasModel):
     """One expected control shape exposed by a specific adapter."""
 
@@ -348,12 +374,14 @@ class AdapterControl(AtlasModel):
         max_length=MAX_NAME_LENGTH,
         validation_alias=AliasChoices("unit", "display_unit"),
     )
-    preferred_write_tool: Literal[
-        "fl_set_plugin_param_display",
-        "fl_set_plugin_param_option",
-        "fl_set_plugin_param",
-        "unknown",
-    ] = "unknown"
+    preferred_write_value: Annotated[
+        Literal["display_value", "option", "normalized_value", "unknown"],
+        BeforeValidator(current_parameter_write_value),
+    ] = Field(
+        default="unknown",
+        validation_alias=AliasChoices("preferred_write_value", "preferred_write_tool"),
+        description="The plugin_set_parameter value argument that writes this control best.",
+    )
     required: bool = False
     evidence_ids: tuple[AtlasId, ...] = Field(
         default=(), max_length=MAX_LIST_ITEMS
@@ -1023,7 +1051,9 @@ __all__ = [
     "MAX_TECHNIQUES",
     "MAX_VENDORS",
     "ModuleKnowledge",
+    "LEGACY_PARAMETER_WRITE_VALUES",
     "ParameterMatchEvidence",
+    "ParameterWriteValue",
     "PluginFormat",
     "ProductKind",
     "ProductLifecycle",
@@ -1043,4 +1073,5 @@ __all__ = [
     "WriteValidationEvidence",
     "WriteEvidence",
     "OwnershipInstallationState",
+    "current_parameter_write_value",
 ]

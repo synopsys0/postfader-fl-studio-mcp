@@ -57,7 +57,7 @@ EXPECTED_RESOURCES = {
 # in-process without FL_BRIDGE_ENABLE_WRITES, so each of these must be refused
 # by name rather than reaching FL.
 WRITE_CALLS = {
-    "fl_apply_verified_batch": {
+    "project_apply_edits": {
         "operations": [
             {
                 "operation_id": "volume-1",
@@ -67,80 +67,59 @@ WRITE_CALLS = {
             }
         ]
     },
-    "fl_set_mixer_volume": {"track_index": 3, "volume_normalized": 0.65},
-    "fl_set_mixer_volume_db": {"track_index": 3, "volume_db": -6.0},
-    "fl_set_mixer_pan": {"track_index": 3, "pan": -0.4},
-    "fl_set_mixer_mute": {"track_index": 3, "muted": True},
-    "fl_set_mixer_solo": {"track_index": 3, "soloed": True},
-    "fl_set_mixer_arm": {"track_index": 3, "armed": True},
-    "fl_set_mixer_color": {"track_index": 3, "color": 0x0055AA},
-    "fl_set_mixer_stereo_separation": {
+    "project_step_history": {"direction": "undo"},
+    "mixer_set_track": {
         "track_index": 3,
+        "name": "Lead Verb",
+        "color": 0x0055AA,
+        "volume_db": -6.0,
+        "pan": -0.4,
         "stereo_separation": 0.35,
+        "muted": True,
+        "soloed": True,
+        "armed": True,
+        "eq": [{"band_index": 1, "gain_normalized": 0.7}],
+        "sends": [
+            {"destination_track_index": 5, "enabled": True, "level_normalized": 0.5}
+        ],
+        "select": True,
     },
-    "fl_select_mixer_track": {"track_index": 3},
-    "fl_set_track_eq": {"track_index": 3, "band_index": 1, "gain_normalized": 0.7},
-    "fl_set_mixer_name": {"track_index": 3, "name": "Lead Verb"},
-    "fl_set_mixer_send": {
-        "track_index": 3,
-        "destination_track_index": 5,
-        "enabled": True,
-    },
-    "fl_set_mixer_send_level": {
-        "track_index": 3,
-        "destination_track_index": 0,
-        "level_normalized": 0.5,
-    },
-    "fl_set_plugin_param": {
-        "track_index": 3,
-        "slot_index": 1,
-        "parameter_index": 0,
+    "plugin_set_parameter": {
+        "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 1},
+        "parameter": 0,
         "normalized_value": 0.3,
     },
-    "fl_set_plugin_param_display": {
-        "track_index": 3,
-        "slot_index": 1,
-        "parameter": "Threshold",
-        "target_value": 40.0,
+    "transport_set": {
+        "tempo_bpm": 128.0,
+        "time_signature_numerator": 3,
+        "loop_mode": "pattern",
+        "metronome": True,
+        "precount": True,
+        "position_normalized": 0.25,
+        "recording": True,
+        "playing": True,
     },
-    "fl_set_plugin_param_option": {
-        "track_index": 9,
-        "slot_index": 0,
-        "parameter": "Key",
-        "option": "A",
+    "channel_set": {
+        "channel_index": 0,
+        "name": "Demo",
+        "mixer_destination": 3,
+        "volume_normalized": 0.7,
+        "soloed": True,
+        "pitch_normalized": 0.25,
+        "select": True,
     },
-    "fl_set_playing": {"playing": True},
-    "fl_stop": {},
-    "fl_set_song_position": {"position_normalized": 0.25},
-    "fl_set_loop_mode": {"loop_mode": "pattern"},
-    "fl_set_tempo": {"tempo_bpm": 128.0},
-    "fl_set_recording": {"recording": True},
-    "fl_set_metronome": {"enabled": True},
-    "fl_set_precount": {"enabled": True},
-    "fl_set_time_signature_numerator": {"numerator": 3},
-    "fl_undo": {},
-    "fl_redo": {},
-    "fl_set_channel_mix": {"channel_index": 0, "volume_normalized": 0.7},
-    "fl_set_channel_solo": {"channel_index": 0, "soloed": True},
-    "fl_set_channel_pitch": {"channel_index": 0, "pitch_normalized": 0.25},
-    "fl_select_channel": {"channel_index": 1},
-    "fl_select_pattern": {"pattern_number": 2},
-    "fl_set_pattern_identity": {"pattern_number": 1, "name": "Intro"},
-    "fl_set_pattern_length": {"pattern_number": 1, "length_beats": 8},
-    "fl_set_playlist_track_identity": {"track_index": 1, "name": "Vocals"},
-    "fl_set_playlist_track_state": {"track_index": 1, "muted": True},
-    "fl_set_channel_identity": {"channel_index": 0, "name": "Demo"},
-    "fl_route_channel_to_mixer": {"channel_index": 0, "mixer_destination": 3},
-    "fl_set_step_sequence": {
+    "pattern_set": {"pattern_number": 1, "name": "Intro", "length_beats": 8, "select": True},
+    "playlist_set_track": {"track_index": 1, "name": "Vocals", "muted": True},
+    "channel_set_steps": {
         "pattern_number": 1,
         "channel_index": 0,
         "expected_digest": "0" * 64,
         "updates": [{"step_index": 0, "enabled": True}],
     },
-    "fl_trigger_note": {"channel_index": 0, "note": 60, "velocity": 100},
+    "channel_play_note": {"channel_index": 0, "note": 60, "velocity": 100},
 }
 PRESET_WRITE_CALLS = {
-    "fl_select_plugin_preset": {
+    "plugin_select_preset": {
         "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 1},
         "preset_name": "Preset 1",
     },
@@ -335,14 +314,14 @@ async def run():
                 patterns_resource,
             )
             section("read tools over stdio")
-            project = payload(await session.call_tool("fl_get_project_summary", {}))
+            project = payload(await session.call_tool("project_get_summary", {}))
             check("FL 2026 version gate passed", project["connection"]["compatible"], project)
             check(
                 "fixture project title returned",
                 project["project_title"] == "Synthetic Test Project",
             )
 
-            selection = payload(await session.call_tool("fl_get_selected_range", {}))
+            selection = payload(await session.call_tool("playlist_get_selection", {}))
             check(
                 "selection preserves raw PPQ-192 observation",
                 selection["raw_start_time"] == 576
@@ -365,7 +344,7 @@ async def run():
                 selection,
             )
             invalid_selection = await session.call_tool(
-                "fl_get_selected_range", {"unexpected": True}
+                "playlist_get_selection", {"unexpected": True}
             )
             check(
                 "selection tool rejects extra input",
@@ -373,29 +352,17 @@ async def run():
                 invalid_selection,
             )
 
-            mixer = payload(await session.call_tool("fl_list_mixer_tracks", {}))
+            mixer = payload(await session.call_tool("mixer_list_tracks", {}))
             check("mixer tracks returned", mixer["total_track_count"] == 126, mixer)
             check("loaded effects identified", any(t["plugins"] for t in mixer["tracks"]))
-
-            params = payload(
-                await session.call_tool(
-                    "plugins_inspect_parameter_map",
-                    {"track_index": 3, "slot_index": 1, "limit": 4},
-                )
-            )
-            check("parameter page bounded", params["scanned_count"] == 4, params)
-            check(
-                "parameters explicitly unsafe",
-                all(not item["safe_to_modify"] for item in params["parameters"]),
-            )
 
             # The de-padded whole-plug-in walk. It goes through the same
             # gateway allowlist, so a missing entry fails here rather than
             # only against live FL.
             scan = payload(
                 await session.call_tool(
-                    "plugins_scan_parameters",
-                    {"track_index": 3, "slot_index": 1},
+                    "plugin_list_parameters",
+                    {"target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 1}},
                 )
             )
             check(
@@ -415,8 +382,11 @@ async def run():
             )
             bounded = payload(
                 await session.call_tool(
-                    "plugins_scan_parameters",
-                    {"track_index": 3, "slot_index": 1, "max_indices": 2},
+                    "plugin_list_parameters",
+                    {
+                        "target": {"kind": "mixer_effect", "track_index": 3, "slot_index": 1},
+                        "max_indices": 2,
+                    },
                 )
             )
             check(
@@ -424,14 +394,6 @@ async def run():
                 bounded["truncated"] and bounded["truncated_by"] == "max_indices",
                 bounded,
             )
-
-            report = payload(
-                await session.call_tool(
-                    "copilot_capture_readonly_inspection",
-                    {"parameter_limit": 4, "max_plugins": 4},
-                )
-            )
-            check("capture declares read-only mode", report["mode"] == "read_only", report)
 
             section("writes are refused while the bridge is read-only")
             # This bridge starts read-only. Every project write must refuse
@@ -447,7 +409,7 @@ async def run():
                 check(
                     "%s refused before write mode was enabled" % name,
                     bool(getattr(refusal, "is_error", False))
-                    and "fl_set_write_mode" in text
+                    and "session_set_write_mode" in text
                     and "confirm_user_present=true" in text,
                     text,
                 )
@@ -465,7 +427,7 @@ async def run():
                 check(
                     "%s refused before write mode was enabled" % name,
                     bool(getattr(refusal, "is_error", False))
-                    and "fl_set_write_mode" in text
+                    and "session_set_write_mode" in text
                     and "confirm_user_present=true" in text,
                     text,
                 )
@@ -474,7 +436,7 @@ async def run():
             # authorization before it can resolve a process-local plan or
             # reach any FL write boundary.
             unauthorized_palette = await session.call_tool(
-                "sound_selection_apply",
+                "sound_apply_palette",
                 {
                     "palette": "missing",
                     "session_fingerprint": session_fingerprint,
@@ -487,7 +449,7 @@ async def run():
                 if getattr(block, "type", None) == "text"
             )
             check(
-                "sound_selection_apply requires explicit authorization",
+                "sound_apply_palette requires explicit authorization",
                 bool(getattr(unauthorized_palette, "is_error", False))
                 and "explicit authorization" in unauthorized_text,
                 unauthorized_text,
@@ -496,7 +458,7 @@ async def run():
             section("runtime write mode over stdio")
             state_before_mode = fingerprint()
             unconfirmed = await session.call_tool(
-                "fl_set_write_mode",
+                "session_set_write_mode",
                 {"enabled": True},
             )
             check(
@@ -511,7 +473,7 @@ async def run():
             )
             enabled = payload(
                 await session.call_tool(
-                    "fl_set_write_mode",
+                    "session_set_write_mode",
                     {"enabled": True, "confirm_user_present": True},
                 )
             )
@@ -526,7 +488,7 @@ async def run():
             )
             disabled = payload(
                 await session.call_tool(
-                    "fl_set_write_mode",
+                    "session_set_write_mode",
                     {"enabled": False},
                 )
             )
@@ -539,7 +501,7 @@ async def run():
                 disabled,
             )
             rejected_mode_argument = await session.call_tool(
-                "fl_set_write_mode",
+                "session_set_write_mode",
                 {"enabled": True, "confirm_user_present": True, "forever": True},
             )
             check(

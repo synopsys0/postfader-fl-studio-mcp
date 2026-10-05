@@ -72,17 +72,18 @@ STEPS = (
     "delivery",
 )
 REVIEW_TOOLS = {
-    "start": "postfader_review_start",
-    "attach": "postfader_review_attach_assets",
-    "evaluate": "postfader_review_evaluate",
-    "get": "postfader_review_get",
-    "feedback": "postfader_review_record_feedback",
-    "plan": "postfader_review_plan_revision",
-    "apply": "postfader_review_apply_revision",
-    "compare": "postfader_review_compare",
-    "export_handoff": "postfader_review_export_handoff",
-    "delivery": "postfader_delivery_manifest",
-    "delivery_export": "postfader_delivery_export_manifest",
+    "start": "review_start",
+    "attach": "review_attach_assets",
+    "evaluate": "review_evaluate",
+    "get": "review_get",
+    "feedback": "review_record_feedback",
+    "plan": "review_plan_revision",
+    "apply": "review_apply_revision",
+    "compare": "review_compare",
+    # The export request and delivery manifest are views of review_get.
+    "export_handoff": "review_get",
+    "delivery": "review_get",
+    "delivery_export": "review_export_delivery",
 }
 FORBIDDEN_TOOL_FRAGMENTS = ("render", "save", "click")
 MAX_JSON_BYTES = 4 * 1024 * 1024
@@ -1379,7 +1380,7 @@ async def async_main(
             if resolved_session is None:
                 blocker = _error_blocker(
                     code="review_session_id_missing",
-                    message="postfader_review_start returned no valid review_session_id",
+                    message="review_start returned no valid review_session_id",
                     step="start",
                     tool=REVIEW_TOOLS["start"],
                 )
@@ -1550,10 +1551,14 @@ async def async_main(
             handoff = await invoke(
                 "export_handoff",
                 REVIEW_TOOLS["export_handoff"],
-                {"review_session_id": session_id},
+                {"review_session_id": session_id, "view": "export_request"},
             )
             report["export_handoff"] = _normalise(handoff)
-            delivery = await invoke("delivery", REVIEW_TOOLS["delivery"], {"review_session_id": session_id})
+            delivery = await invoke(
+                "delivery",
+                REVIEW_TOOLS["delivery"],
+                {"review_session_id": session_id, "view": "delivery_manifest"},
+            )
             report["delivery_manifest"] = _normalise(delivery)
             if args.export_delivery:
                 output_directory = _private_directory(args.delivery_output_directory)
@@ -1562,9 +1567,11 @@ async def async_main(
                     "delivery_export",
                     REVIEW_TOOLS["delivery_export"],
                     {
-                        "review_session_id": session_id,
-                        "formats": ["json", "markdown"],
-                        "output_directory": os.fspath(output_directory),
+                        "request": {
+                            "review_session_id": session_id,
+                            "formats": ["json", "markdown"],
+                            "output_directory": os.fspath(output_directory),
+                        }
                     },
                 )
                 report["delivery_export"] = _normalise(exported)

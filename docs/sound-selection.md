@@ -97,15 +97,17 @@ existing role is not silently replaced by a variation.
 For a later section, Sound Selection normally develops the identity through an
 extra layer, changed register or voicing, complementary preset family,
 countermelody, articulation, percussion, texture, or section-specific
-processing. `sound_selection_create_variation` returns a read-only,
-section-scoped delta with unchanged role IDs and parent assignment references.
-It preserves anchors unless the request explicitly names a replacement. The
-delta is not an implicit FL mutation; apply it only through a later authorized
-workflow.
+processing. `sound_plan_palette` with a `base_palette_id` (plus an optional
+`section` and `replace_roles`) returns a read-only, section-scoped delta with
+unchanged role IDs and parent assignment references. It preserves anchors
+unless the call explicitly names a replacement, such as a role listed in
+`replace_roles`. The delta is not an implicit FL mutation; apply it only
+through a later authorized workflow, such as passing the returned variation
+object unchanged to `sound_apply_palette`.
 
 ## Inspecting the available pool
 
-`sound_selection_inventory` performs one target-aware read of the loaded
+`sound_get_inventory` performs one target-aware read of the loaded
 project and returns compact summaries for:
 
 - global Channel Rack generator targets;
@@ -116,9 +118,11 @@ project and returns compact summaries for:
 - current palette and locked roles; and
 - Atlas matches plus Atlas-known products not observed as loaded.
 
-Use the lower-level `plugins_list_presets`,
-`plugins_get_current_preset`, and `plugins_inspect_pad_map` tools for a focused
-read. The target model is shared with the rest of PostFader:
+`sound_plan_palette` reads the same inventory itself, so call
+`sound_get_inventory` only to show the user what is available. Use the
+lower-level `plugin_list_presets` (one preset page plus the preset count and
+current preset) and `plugin_get_pad_map` tools for a focused read. The target
+model is shared with the rest of PostFader:
 `mixer_effect` names a mixer track and effect slot, while
 `channel_generator` names a global Channel Rack channel. These are never
 interchanged, even when their display names match.
@@ -131,9 +135,10 @@ when its `partial` or `truncated` flag says otherwise.
 
 ## Exact preset selection and verification
 
-`fl_select_plugin_preset` accepts an exact reported `preset_name`, an exact
-`preset_index`, or both, plus optional expected-current, session, and target
-fingerprints. Duplicate names are ambiguous and require an index. The
+`plugin_select_preset` takes a plug-in `target` and an exact reported
+`preset_name`, an exact `preset_index`, or both, plus the optional
+`expected_current`, `session_fingerprint`, and `target_fingerprint` guards.
+Duplicate names are ambiguous and require an index. The
 operation validates the live target, reads the available catalog, chooses the
 shortest valid next/previous path when the current index is known, and otherwise
 uses a bounded fallback search.
@@ -151,7 +156,7 @@ Sound Palette application follows the same rule. It revalidates the inventory,
 applies assignments in deterministic role order, stops at the first unknown or
 unverified preset result, and retains earlier truthful receipts. Successfully
 verified assignments may update local usage history; planning alone never does.
-The public `sound_selection_apply` tool requires the current 32-character
+The public `sound_apply_palette` tool requires the current 32-character
 lowercase `session_fingerprint` from a recent live read; omission is rejected
 by MCP schema validation before the mutating service runs. Task-scoped
 Production Runs capture and forward that fingerprint automatically.
@@ -182,7 +187,7 @@ characteristic and outcome contracts.
 
 ## Drum kits and pad maps
 
-Drum-kit choice is part of the palette. `plugins_inspect_pad_map` reads the
+Drum-kit choice is part of the palette. `plugin_get_pad_map` reads the
 generic FL pad API and reports pad index, MIDI/semitone note, color, empty and
 muted state, and a reported semitone name where FL provides one. Sound
 Selection maps names to semantic roles such as kick, snare, clap, closed hat,
@@ -234,14 +239,13 @@ data. Writes are local, schema-versioned, bounded, thread-safe, atomic, and
 deterministically pruned. A corrupt file is isolated and left untouched with a
 warning; it is not silently replaced.
 
-Use `sound_selection_record_feedback` for an explicit `accepted`, `rejected`,
-or `neutral` verdict, optionally scoped to a role and descriptors. Silence is
+Use `sound_record_feedback` for an explicit `accepted`, `rejected`, or
+`neutral` verdict, optionally scoped to a role and descriptors. Silence is
 never inferred as acceptance. Feedback changes future ranking as a bounded
 preference, not an absolute rule. `persist_history=false` performs no history
-write, including during application. `sound_selection_history_status` reports
-path, health, schema, and counts. `sound_selection_history_reset(confirm=true)`
-is an explicit destructive local reset; the removed file is not recoverable by
-PostFader.
+write, including during application. `sound_get_history` reports path, health,
+schema, and counts. `sound_reset_history(confirm=true)` is an explicit
+destructive local reset; the removed file is not recoverable by PostFader.
 
 ## Production Runs and typed references
 
@@ -280,8 +284,8 @@ are reported separately from palette selection and arrangement delivery.
 ## What FL Studio cannot prove
 
 Sound Selection chooses from instruments and effects already loaded in the
-current project. On macOS, `plugins_list_available` reads the native Add menu
-and `plugins_load` adds one exact named instrument or an effect on a specified
+current project. On macOS, `plugin_list_available` reads the native Add menu
+and `plugin_load` adds one exact named instrument or an effect on a specified
 mixer track. The agent can load a missing choice, then refresh Sound Selection
 inventory and plan against its verified channel/slot. These host tools require
 macOS Accessibility access and currently support the English Add-menu structure;
@@ -301,10 +305,10 @@ undo, or rollback.
 
 “Create a melodic bass track with bright, colorful synths, keep the top end
 smooth, and choose all sounds yourself.” The AI can request roles for chords,
-lead, bass, sub, and drums; set descriptors and register; call
-`sound_selection_inventory`; plan with the balanced policy; apply the verified
-assignments; then generate notes and drums using the returned role and map
-references.
+lead, bass, sub, and drums; set descriptors and register; plan with
+`sound_plan_palette` under the balanced policy, which reads the loaded
+inventory itself; apply the verified assignments with `sound_apply_palette`;
+then generate notes and drums using the returned role and map references.
 
 ### Make a second drop bigger
 

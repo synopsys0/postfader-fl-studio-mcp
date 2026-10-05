@@ -80,7 +80,7 @@ class AtlasSearchHit(AtlasModel):
 
 
 class AtlasSearchResponse(AtlasModel):
-    """Typed response for :func:`plugins_atlas_search`."""
+    """Typed response for the ``atlas_search`` tool."""
 
     schema_version: Literal["1.0"] = "1.0"
     query: str = Field(max_length=MAX_ATLAS_QUERY_LENGTH)

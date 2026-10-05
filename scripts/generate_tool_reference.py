@@ -34,120 +34,83 @@ EFFECTS = {
     "MUTATING": "**Yes**",
 }
 
-PROJECT_AND_SESSION = {
-    "fl_get_capabilities",
-    "fl_get_project_summary",
-    "fl_get_transport_state",
-    "fl_get_selected_range",
-    "fl_get_project_history",
-    "copilot_capture_readonly_inspection",
-    "fl_set_write_mode",
-    "fl_undo",
-    "fl_redo",
-}
-TRANSPORT = {
-    "fl_set_playing",
-    "fl_stop",
-    "fl_set_song_position",
-    "fl_set_loop_mode",
-    "fl_set_tempo",
-    "fl_set_recording",
-    "fl_set_metronome",
-    "fl_set_precount",
-    "fl_set_time_signature_numerator",
-}
-PRODUCTION_RUNS = {
-    "postfader_creation_readiness",
-    "postfader_describe_operations",
-    "postfader_validate_run",
-    "postfader_execute_run",
-    "postfader_list_runs",
-    "postfader_get_run",
-    "postfader_continue_run",
-    "postfader_stop_run",
-    "processing_plan",
-    "processing_apply_plan",
-}
-
+# Tool names are <area>_<verb>[_<object>], so each group is a set of areas.
 # Ordered: the first matching group wins.
 GROUPS = (
     (
-        "Project and session",
-        "Read the open project and control write access and undo.",
-        lambda name: name in PROJECT_AND_SESSION,
+        "Session and project",
+        "Write access, the project summary, undo history, and multi-target edits.",
+        ("session_", "project_"),
     ),
     (
         "Transport",
-        "Playback, recording, position, tempo, and time signature.",
-        lambda name: name in TRANSPORT,
+        "Playback, recording, position, tempo, loop mode, and time signature.",
+        ("transport_",),
     ),
     (
         "Mixer",
-        "Levels, pan, routing, sends, names, colors, and the built-in EQ.",
-        lambda name: name.startswith(("fl_list_mixer", "fl_inspect_mixer", "fl_set_mixer"))
-        or name in {"fl_select_mixer_track", "fl_set_track_eq", "fl_apply_verified_batch"},
+        "Mixer tracks, levels, routing, sends, the built-in EQ, and peak watches.",
+        ("mixer_",),
     ),
     (
-        "Channels, patterns, and Playlist",
-        "Channel Rack, step sequencer, patterns, and Playlist tracks.",
-        lambda name: name.startswith(
-            ("fl_list_channels", "fl_set_channel", "fl_select_channel", "fl_route_channel")
-        )
-        or "step_sequence" in name
-        or "pattern" in name and name.startswith("fl_")
-        or "playlist" in name
-        or name == "fl_trigger_note",
+        "Channels",
+        "Channel Rack channels, the step sequencer, and note audition.",
+        ("channel_",),
+    ),
+    (
+        "Patterns, Playlist, and automation",
+        "Patterns, Playlist tracks, section markers, and automation recording.",
+        ("pattern_", "playlist_", "automation_"),
     ),
     (
         "Plug-ins and presets",
         "Loaded plug-in parameters, presets, drum pads, and loading on macOS.",
-        lambda name: name.startswith(("fl_set_plugin", "fl_select_plugin", "fl_get_plugin"))
-        or (name.startswith("plugins_") and not name.startswith("plugins_atlas")),
+        ("plugin_",),
     ),
     (
         "Plugin Atlas",
         "Offline knowledge about plug-ins, whether or not they are loaded.",
-        lambda name: name.startswith("plugins_atlas"),
+        ("atlas_",),
     ),
     (
-        "Audio analysis",
-        "Measure exported audio files. FL Studio's live output is not available.",
-        lambda name: name.startswith("audio_"),
-    ),
-    (
-        "Mixing workflows",
-        "Mix Doctor, reference and masking checks, peak watches, and mix plans.",
-        lambda name: name.startswith("mix_"),
-    ),
-    (
-        "Composition and MIDI",
-        "Generate chords, melodies, basslines, and drums; export MIDI files.",
-        lambda name: name.startswith("compose_") or name == "midi_export_type1",
-    ),
-    (
-        "Piano Roll and arrangement",
-        "Read and write notes, transform them, add markers, record automation.",
-        lambda name: name.startswith(("piano_roll_", "arrangement_", "automation_")),
+        "Effect processing",
+        "Turn processing goals into settings for loaded effects and apply them.",
+        ("processing_",),
     ),
     (
         "Sound Selection",
         "Choose and apply presets from the instruments already loaded.",
-        lambda name: name.startswith("sound_selection_"),
+        ("sound_",),
+    ),
+    (
+        "Audio analysis",
+        "Measure exported audio files. FL Studio's live output is not available.",
+        ("audio_",),
+    ),
+    (
+        "Composition and MIDI",
+        "Generate chords, melodies, basslines, and drums; export MIDI files.",
+        ("compose_",),
+    ),
+    (
+        "Piano Roll",
+        "Read, write, and transform notes through FL's Piano Roll scripting.",
+        ("piano_roll_",),
     ),
     (
         "Production Runs",
         "Multi-step jobs that PostFader validates and executes in order.",
-        lambda name: name in PRODUCTION_RUNS,
+        ("run_",),
     ),
     (
         "Creation Review and delivery",
         "Review an exported draft, plan one revision, and prepare delivery.",
-        lambda name: name.startswith(("postfader_review_", "postfader_delivery_")),
+        ("review_",),
     ),
     (
         "Saved-project rendering",
         "Render a saved .flp to WAV in a separate FL Studio process.",
-        lambda name: name.startswith("postfader_render_"),
+        ("render_",),
     ),
 )
 
@@ -222,7 +185,9 @@ def render() -> str:
         constant = effects.get(name)
         if constant not in EFFECTS:
             raise ValueError("tool %r has no recognised annotation constant" % name)
-        title = next((title for title, _, matches in GROUPS if matches(name)), None)
+        title = next(
+            (title for title, _, areas in GROUPS if name.startswith(areas)), None
+        )
         if title is None:
             raise ValueError("tool %r matches no group; add it to %s" % (name, __file__))
         grouped[title].append(tool)
@@ -241,11 +206,12 @@ def render() -> str:
         "the AI picks the tools. Use this page to see what is possible, or to check",
         "what your AI did.",
         "",
-        "%d tools can change the open project. They are refused until write mode is"
+        "%d tools can change the open project. Setters are refused until write mode"
         % changing,
-        "on for the session; a Production Run turns it on itself when you asked for",
-        "changes. PostFader never saves the project, and every other tool leaves it",
-        "as it is. Details: [security policy](../SECURITY.md) ·",
+        "is on for the session; Production Runs and the palette, processing, and",
+        "revision apply tools turn it on themselves when you asked for changes.",
+        "PostFader never saves the project, and every other tool leaves it as it is.",
+        "Details: [security policy](../SECURITY.md) ·",
         "[exact arguments and results](tool-contracts.md).",
         "",
         "| Group | Tools | What it covers |",

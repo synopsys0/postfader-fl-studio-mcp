@@ -72,6 +72,9 @@ class SemanticSetterCallbacks:
 
     def get(self, setter: str) -> SetterCallback | None:
         short = {
+            "display_value": "display",
+            "option": "option",
+            "normalized_value": "normalized",
             "fl_set_plugin_param_display": "display",
             "fl_set_plugin_param_option": "option",
             "fl_set_plugin_param": "normalized",
@@ -92,6 +95,8 @@ def _callbacks(value: SemanticSetterCallbacks | Mapping[str, SetterCallback] | A
             "display": "display",
             "option": "option",
             "normalized": "normalized",
+            "display_value": "display",
+            "normalized_value": "normalized",
             "fl_set_plugin_param_display": "display",
             "fl_set_plugin_param_option": "option",
             "fl_set_plugin_param": "normalized",
@@ -432,7 +437,7 @@ class SemanticActionExecutor:
                 by_id[action.action_id] = result
                 stopped_on = stopped_on or action.action_id
                 continue
-            if action.resolution.control.setter == "fl_set_plugin_param_display" and action.resolution.control.display_unit is not None and not _accepts_display_unit(callback):
+            if action.resolution.control.setter == "display_value" and action.resolution.control.display_unit is not None and not _accepts_display_unit(callback):
                 result = ProcessingActionReceipt(
                     action_id=action.action_id, status="missing_setter", outcome_known=True, verified=False,
                     warning="the injected display setter cannot accept the requested unit; use a unit-aware setter",

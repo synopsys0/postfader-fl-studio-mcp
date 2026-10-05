@@ -29,10 +29,10 @@ documents instead of expanding the homepage.
 
 ## Release scope
 
-PostFader V11 (11.0.0) contains 135 tools and 8 resources. Use the
-[V11 release notes](releases/v11.0.0.md) and the
+PostFader V12 (12.0.0) contains 85 tools and 8 resources. Use the
+[V12 release notes](releases/v12.0.0.md) and the
 [V10 limitations](releases/v10.0.0.md) for feature limits and live acceptance
-status. These counts apply to the matching V11 packages.
+status. These counts apply to the matching V12 packages.
 
 ## Hero
 
@@ -123,15 +123,14 @@ description typed into chat.
 
 ### PostFader uses
 
-- Mix Doctor;
+- Mix Doctor, including whether a mix is technically export-ready;
 - exported-audio peak, loudness, dynamics, tonal-balance, and stereo
   measurements;
 - reference comparison across aligned audio;
 - masking analysis for synchronized vocal and instrumental renders;
 - persistent mixer peak watches;
-- gain-staging plans;
-- finish assessment; and
-- reviewable one-shot mix plans.
+- gain-staging proposals; and
+- reviewed edits applied in order, each read back.
 
 ### What it does
 
@@ -145,8 +144,8 @@ creative opinion.
 
 For level decisions, start a peak watch for a chosen observation window.
 PostFader samples the mixer inserts included in the watch, keeps the highest
-value it observed for each, then can build a gain-staging plan around those
-results rather than one moment on the meters. These are sampled, process-local
+value it observed for each, then can propose gain-staging fader moves from
+those results rather than one moment on the meters. These are sampled, process-local
 observations, not proof that every transient was captured.
 
 ### You receive
@@ -186,14 +185,14 @@ from supported operations for you to review before proceeding to application.
 PostFader asks FL Studio which parameters each loaded mixer effect or Channel
 Rack generator exposes. The AI can search those names and values, identify a
 supported exposed control, and set a known value, target the number a plug-in
-displays, or choose an exact named option. Bundled profiles for selected FL
-Studio stock effects provide known parameter roles for supported workflows
-without requiring every plug-in to use the same parameter layout.
+displays, or choose an exact named option. Plugin Atlas control adapters for
+selected FL Studio stock effects provide known parameter roles for supported
+workflows without requiring every plug-in to use the same parameter layout.
 
-For those selected profiles, the AI can turn supported goals such as “tame
+For effects with an adapter, the AI can turn supported goals such as “tame
 harshness,” “control dynamics,” “limit peaks,” “shorten the reverb,” or “create
-a rhythmic echo” into matching parameter roles. Intent resolution is read-only;
-choosing values and applying a change remain separate steps.
+a rhythmic echo” into concrete first-pass settings. Planning is read-only;
+applying the reviewed settings remains a separate step.
 
 ### You receive
 
@@ -283,7 +282,7 @@ to WAV; it does not capture the open project or silently save it.
 A reviewable evaluation, traceable revision receipts, an exact next-export
 request, and a create-only JSON/Markdown delivery manifest when requested.
 
-See the [Creation Review guide](creation-review.md) for its 13 MCP tools, 9
+See the [Creation Review guide](creation-review.md) for its 11 MCP tools, 9
 Production Run operations, persistence controls, troubleshooting, and
 maintainer acceptance boundaries.
 
@@ -324,14 +323,14 @@ individual commands. PostFader connects them into a production workflow.
 
 - Diagnose an exported bounce with Mix Doctor.
 - Track the highest sampled mixer peak during a chosen observation window.
-- Build a gain-staging plan from those observations.
+- Propose gain-staging fader moves from those observations.
 - Compare loudness and tonal balance when candidate and reference inputs align
   and pass readiness checks.
 - Find possible spectral-overlap regions in synchronized vocal and instrumental
   renders.
 - Measure peaks, loudness, dynamics, tonal balance, and stereo behavior.
-- Run a read-only finish assessment, then separately use your AI to build and
-  apply a reviewable one-shot plan from selected recommendations.
+- Check whether a mix is technically export-ready, then separately have your
+  AI apply reviewed edits built from selected recommendations.
 
 ### Control the session
 
@@ -398,7 +397,7 @@ every other project.
 | Diagnose exported audio | Not part of the baseline | Mix Doctor, peaks, loudness, tonal balance, stereo analysis, masking, and references |
 | Monitor levels through playback | Point-in-time meter reads | Process-local per-insert peak watches sample across a chosen observation window |
 | Move from diagnosis to a separate apply request | Not part of the baseline | Diagnose → propose → review → apply → report |
-| Work with loaded plug-ins | Predefined controls | Runtime discovery, exact controls, named options, and selected stock-effect profiles |
+| Work with loaded plug-ins | Predefined controls | Runtime discovery, exact controls, named options, and control adapters for selected stock effects |
 | Generate musical parts | Individual note dispatch | Chords, melody, bass, drums, transcription, and Type-1 MIDI export |
 | Transform Piano Roll content | Not part of the baseline | Append, replace, quantize, transpose, humanize, duplicate, delete, and clear |
 | Help organize an arrangement | Not part of the baseline | Pattern preparation, markers, Playlist track tools, and automation helpers |
@@ -410,15 +409,15 @@ every other project.
 
 ## Plug-in compatibility follows what FL Studio exposes
 
-PostFader does not need a custom profile simply to inspect an unfamiliar loaded
+PostFader does not need a custom adapter simply to inspect an unfamiliar loaded
 effect or generator. It asks FL Studio for the exposed parameter surface at
-runtime. Bundled profiles add richer parameter roles for selected FL Studio
-stock effects; they do not gate basic discovery or imply universal plug-in
-support.
+runtime. Plugin Atlas control adapters add richer parameter roles for selected
+FL Studio stock effects; they do not gate basic discovery or imply universal
+plug-in support.
 
-For those selected profiles, supported outcome-level requests can resolve to
-known parameter roles without changing the project. The AI still chooses any
-values and makes a separate apply request.
+For effects with an adapter, supported outcome-level requests can resolve to
+concrete first-pass settings without changing the project. Applying them is a
+separate request.
 
 The community matrix separates three useful evidence levels: **detected** means
 FL Studio reported the plug-in, **read-profiled** means a bounded parameter
@@ -546,7 +545,7 @@ Python, or a virtual MIDI provider. Every path still requires the matching
 Universal Bridge, a user-created virtual MIDI endpoint, and FL Studio MIDI
 configuration.
 
-PostFader V11 supports Python 3.10–3.14, FL Studio 2026 version 26.1.3 build
+PostFader V12 supports Python 3.10–3.14, FL Studio 2026 version 26.1.3 build
 5336 or newer, and MIDI scripting API 44 or newer. Live qualification is
 limited to macOS 27.0 arm64 with FL Studio Producer Edition 26.1.3 build 5336
 and Windows 11 x64 with FL Studio Producer Edition 26.1.4 build 5589; it is not

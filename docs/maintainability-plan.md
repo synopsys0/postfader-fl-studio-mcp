@@ -50,7 +50,7 @@ boundary includes policy or protocol decisions and needs a staged design.
 | 5 | mcp_server.py Channel Rack/pattern/Playlist/step handlers; performance.py; track_b_contracts.py; bridge channel/pattern/sequence commands | channel_pattern_tools.py (or channel/ and pattern/ subpackages) | Global channel scope, current-pattern refusal, channel fingerprint/digest guards, bounded step batches, non-atomic receipts, and later readback | tests/test_performance.py, tests/test_readonly.py, tests/test_bridge.py, tests/test_tick_budget.py, tests/test_live_acceptance.py | Very high | No |
 | 6 | Composition, MIDI serialization, Piano Roll, arrangement, and automation sections of creative.py; corresponding mcp_server.py wrappers | creative/composition.py, creative/midi.py, creative/piano_roll.py, creative/arrangement.py | Deterministic note digests, Type-1 atomic write/reopen checks, manual Piano Roll handshake and dispatch-only evidence, marker/automation partial evidence, and bounded files | tests/test_creative.py, creative read-only assertions in tests/test_readonly.py, tests/test_package_hygiene.py | High: generated scripts and platform focus | No |
 | 7 | audio.py, advisory.py, music_analysis.py, and audio wrappers in mcp_server.py | audio_analysis/ package with dsp.py, advisory.py, music.py, and a thin host adapter | Absolute path policy, fixed recent-bounce roots, decoded-memory limits, synthetic provenance/hash reporting, confidence/limitations, and no FL live-buffer claim | tests/test_audio.py, tests/test_advisory.py, audio/music assertions in tests/test_creative.py and tests/test_readonly.py | Medium-high | No for path/DSP split; yes for wrapper wiring |
-| 8 | mixing.py, mix wrappers in mcp_server.py, and workflows.py plan/batch adapters | mix_workflows.py plus explicit batch_executor.py adapter | Mix Doctor thresholds, peak-watch bounds, process-local IDs, plan one-shot lifecycle, batch non-atomicity, and read-only analysis/application separation | tests/test_mixing.py, tests/test_workflows.py, tests/test_readonly_mcp.py, tests/test_readonly.py | High | No |
+| 8 | mixing.py, mix wrappers in mcp_server.py, workflows.py batch adapters, and the per-target setters in edits.py | mix_workflows.py plus explicit batch_executor.py adapter | Mix Doctor thresholds, peak-watch bounds, process-local IDs, gain-staging proposals applied only through the batch, the one-session preflight shared by batches and per-target setters, non-atomicity, and read-only analysis/application separation | tests/test_mixing.py, tests/test_workflows.py, tests/test_edits.py, tests/test_readonly_mcp.py, tests/test_readonly.py | High | No |
 | 9 | acceptance.py read supervisor, coverage validation, and read scenario helpers | acceptance/read.py and acceptance/contracts.py | Isolated worker/timeouts, read-only tool-surface coverage, evidence output policy, deadlines, and no live claim from fake tests | tests/test_live_acceptance.py, tests/test_file_transport.py, tests/test_readonly_mcp.py | High: subprocess/timeouts and output safety | No |
 | 10 | acceptance.py write scenario planning, templates, validation, and write runner | acceptance/write.py and acceptance/scenarios.py | Explicit disposable/live marker, precondition/template validation, Master refusal, non-replay, restore evidence, and private output destinations | tests/test_live_acceptance.py, tests/test_bridge.py, tests/test_readonly.py | Very high | No |
 | 11 | bridge_client.py TCP/file/MIDI framing, correlation, ownership, and recovery | transport/protocol.py, transport/mailbox.py, transport/midi.py, transport/ownership.py | Wire protocol version gates, fragment bounds/expiry, request serialization, response correlation, endpoint lock, read-only retry classification, and write no-replay | tests/test_midi_framing.py, tests/test_midi_transport.py, tests/test_file_transport.py, tests/test_bridge_client_recovery.py, tests/test_resource_bounds.py | Very high | No |
@@ -119,10 +119,12 @@ FL coverage or add a background scan/telemetry path.
 
 ### Mix workflows and batch execution
 
-mixing.py should remain explicit about which operations are analysis, plan
-creation, or application. The batch executor must remain closed-union,
-bounded, ordered, and non-atomic. If extraction creates a shared executor,
-make the plan one-shot state machine and its terminal partial/failed semantics
+mixing.py should remain explicit about which operations are analysis and which
+are proposals; a gain-staging proposal is applied only through the batch
+executor. The batch executor must remain closed-union, bounded, ordered, and
+non-atomic, and the per-target setters in edits.py share its one-session
+preflight. If extraction moves that shared preflight, keep the session pin,
+the stop-on-unverified and unknown-outcome semantics, and per-write receipts
 visible through tests rather than hiding them behind generic task helpers.
 
 ### Acceptance reads and writes

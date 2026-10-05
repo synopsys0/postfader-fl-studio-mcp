@@ -1099,7 +1099,7 @@ class SoundSelectionService:
     def _ensure_session(self, value: str | None) -> str:
         if not isinstance(value, str) or SESSION_RE.fullmatch(value) is None:
             raise SoundSelectionSessionError(
-                "sound_selection_apply requires a non-null 32-character lowercase session fingerprint"
+                "sound_apply_palette requires a non-null 32-character lowercase session fingerprint"
             )
         return value
 
@@ -1520,7 +1520,7 @@ class SoundSelectionService:
             raise ValueError("authorized_to_modify must be true or false")
         if not authorized_to_modify:
             raise SoundSelectionAuthorizationError(
-                "sound_selection_apply requires explicit authorization to modify FL Studio"
+                "sound_apply_palette requires explicit authorization to modify FL Studio"
             )
         session = self._ensure_session(session_fingerprint)
         (

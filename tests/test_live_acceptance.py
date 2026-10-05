@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import io
 import json
@@ -93,7 +94,7 @@ class ReadAcceptanceTests(unittest.TestCase):
 
         async def fake(name, arguments):
             calls.append((name, arguments))
-            if name == "fl_get_project_summary":
+            if name == "project_get_summary":
                 return {
                     "connection": {
                         "program_title": "Fake FL Studio",
@@ -404,92 +405,23 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def scenario(self):
         arguments = {
-            "fl_redo": {},
-            "fl_route_channel_to_mixer": {
-                "channel_index": 0,
-                "mixer_destination": 2,
-            },
-            "fl_select_channel": {"channel_index": 0},
-            "fl_select_mixer_track": {"track_index": 1},
-            "fl_select_pattern": {"pattern_number": 1},
-            "fl_set_channel_identity": {"channel_index": 0, "name": "Fixture"},
-            "fl_set_channel_mix": {
-                "channel_index": 0,
-                "volume_normalized": 0.5,
-            },
-            "fl_set_channel_pitch": {
-                "channel_index": 0,
-                "pitch_normalized": 0.55,
-            },
-            "fl_set_channel_solo": {"channel_index": 0, "soloed": True},
-            "fl_set_loop_mode": {"loop_mode": "song"},
-            "fl_set_metronome": {"enabled": True},
-            "fl_set_mixer_arm": {"track_index": 1, "armed": True},
-            "fl_set_mixer_color": {"track_index": 1, "color": 0x0055AA},
-            "fl_set_mixer_mute": {"track_index": 1, "muted": False},
-            "fl_set_mixer_name": {"track_index": 1, "name": "Fixture"},
-            "fl_set_mixer_pan": {"track_index": 1, "pan": 0.0},
-            "fl_set_mixer_send": {
-                "track_index": 1,
-                "destination_track_index": 2,
-                "enabled": True,
-            },
-            "fl_set_mixer_send_level": {
-                "track_index": 1,
-                "destination_track_index": 2,
-                "level_normalized": 0.5,
-            },
-            "fl_set_mixer_solo": {"track_index": 1, "soloed": True},
-            "fl_set_mixer_stereo_separation": {
-                "track_index": 1,
-                "stereo_separation": 0.25,
-            },
-            "fl_set_mixer_volume": {
-                "track_index": 1,
-                "volume_normalized": 0.8,
-            },
-            "fl_set_mixer_volume_db": {"track_index": 1, "volume_db": -6.0},
-            "fl_set_pattern_identity": {"pattern_number": 1, "name": "Fixture"},
-            "fl_set_pattern_length": {"pattern_number": 1, "length_beats": 16},
-            "fl_set_playing": {"playing": False},
-            "fl_set_playlist_track_identity": {"track_index": 1, "name": "Fixture"},
-            "fl_set_playlist_track_state": {"track_index": 1, "muted": True},
-            "fl_set_plugin_param": {
-                "parameter_index": 0,
-                "normalized_value": 0.5,
-                "track_index": 1,
-                "slot_index": 0,
-            },
-            "fl_set_plugin_param_display": {
-                "parameter": 0,
-                "target_value": 0.0,
-                "track_index": 1,
-                "slot_index": 0,
-            },
-            "fl_set_plugin_param_option": {
-                "parameter": 0,
-                "option": "Fixture option",
-                "track_index": 1,
-                "slot_index": 0,
-            },
-            "fl_set_song_position": {"position_normalized": 0.0},
-            "fl_set_step_sequence": {
+            "channel_set": {"channel_index": 0, "name": "Fixture"},
+            "channel_set_steps": {
                 "pattern_number": 1,
                 "channel_index": 0,
                 "expected_digest": "a" * 64,
                 "updates": [{"step_index": 0, "enabled": True}],
             },
-            "fl_set_tempo": {"tempo_bpm": 120.0},
-            "fl_set_precount": {"enabled": True},
-            "fl_set_recording": {"recording": True},
-            "fl_set_time_signature_numerator": {"numerator": 4},
-            "fl_set_track_eq": {
-                "track_index": 1,
-                "band_index": 0,
-                "gain_normalized": 0.5,
+            "mixer_set_track": {"track_index": 1, "volume_normalized": 0.8},
+            "pattern_set": {"pattern_number": 1, "name": "Fixture"},
+            "playlist_set_track": {"track_index": 1, "name": "Fixture"},
+            "plugin_set_parameter": {
+                "target": {"kind": "mixer_effect", "track_index": 1, "slot_index": 0},
+                "parameter": 0,
+                "normalized_value": 0.5,
             },
-            "fl_stop": {},
-            "fl_undo": {},
+            "project_step_history": {"direction": "undo"},
+            "transport_set": {"tempo_bpm": 120.0},
         }
         return {
             "scenario_version": 1,
@@ -498,17 +430,31 @@ class WriteAcceptanceTests(unittest.TestCase):
             "operations": [
                 {
                     "tool": name,
-                    "before": {"tool": "fl_get_transport_state", "arguments": {}},
-                    "mutation_arguments": arguments[name],
-                    "restore": [{"tool": name, "arguments": arguments[name]}],
-                    "verify_paths": ["playing", "recording"],
+                    "before": {"tool": "project_get_summary", "arguments": {}},
+                    "mutation_arguments": copy.deepcopy(arguments[name]),
+                    "restore": [{"tool": name, "arguments": copy.deepcopy(arguments[name])}],
+                    "verify_paths": ["transport.playing", "transport.recording"],
                 }
                 for name in self.surface.persistent_write_tools
             ],
         }
 
     @staticmethod
-    def project_summary():
+    def operation(scenario, tool):
+        return next(item for item in scenario["operations"] if item["tool"] == tool)
+
+    @staticmethod
+    def prepared(prepared, tool, field):
+        """The fixture operation that exercises one field of a setter."""
+
+        return next(
+            item
+            for item in prepared
+            if item.tool == tool and field in json.dumps(item.mutation_arguments)
+        )
+
+    @staticmethod
+    def project_summary(extra=None, **transport):
         return {
             "connection": {
                 "bridge_provenance_verified": True,
@@ -517,16 +463,16 @@ class WriteAcceptanceTests(unittest.TestCase):
                 "bridge_transport": "midi",
                 "bridge_protocol_version": 2,
                 "bridge_source_sha256": "d" * 64,
-            }
+            },
+            "transport": {"playing": False, "recording": False, **transport},
+            **(extra or {}),
         }
 
     def passing_caller(self, calls):
         async def fake(name, arguments):
             calls.append((name, dict(arguments)))
-            if name == "fl_get_project_summary":
+            if name == "project_get_summary":
                 return self.project_summary()
-            if name == "fl_get_transport_state":
-                return {"playing": False, "recording": False}
             return {"verified": True, "session_fingerprint": "c" * 32}
 
         return fake
@@ -559,12 +505,12 @@ class WriteAcceptanceTests(unittest.TestCase):
         )
         self.assertTrue(all(item["mutation_attempts"] == 1 for item in report["operations"]))
         self.assertFalse(report["project_saved"])
-        self.assertNotIn("fl_trigger_note", self.surface.persistent_write_tools)
-        self.assertIn("fl_trigger_note", self.surface.ephemeral_tools)
-        self.assertNotIn("fl_set_write_mode", self.surface.persistent_write_tools)
+        self.assertNotIn("channel_play_note", self.surface.persistent_write_tools)
+        self.assertIn("channel_play_note", self.surface.ephemeral_tools)
+        self.assertNotIn("session_set_write_mode", self.surface.persistent_write_tools)
         self.assertEqual(
             self.surface.session_control_tools,
-            ("fl_set_write_mode", "sound_selection_history_reset"),
+            ("session_set_write_mode", "sound_reset_history"),
         )
 
     def test_required_confirmations_refuse_before_preflight_or_writes(self):
@@ -600,9 +546,9 @@ class WriteAcceptanceTests(unittest.TestCase):
 
         async def fake(name, arguments):
             calls.append((name, arguments))
-            if name == "fl_get_project_summary":
-                return self.project_summary()
-            return {"playing": True, "recording": False}
+            if name == "project_get_summary":
+                return self.project_summary(playing=True)
+            return {"verified": True}
 
         report = self.run_acceptance(self.scenario(), fake)
         self.assertEqual(report["overall"], "fail")
@@ -616,10 +562,8 @@ class WriteAcceptanceTests(unittest.TestCase):
 
         async def fake(name, arguments):
             calls.append((name, arguments))
-            if name == "fl_get_project_summary":
+            if name == "project_get_summary":
                 return self.project_summary()
-            if name == "fl_get_transport_state":
-                return {"playing": False, "recording": False}
             if name == first:
                 raise TimeoutError("ambiguous transport loss")
             return {"verified": True}
@@ -740,10 +684,8 @@ class WriteAcceptanceTests(unittest.TestCase):
 
         async def fake(name, arguments):
             calls.append((name, arguments))
-            if name == "fl_get_project_summary":
+            if name == "project_get_summary":
                 return self.project_summary()
-            if name == "fl_get_transport_state":
-                return {"playing": False, "recording": False}
             if name == first:
                 raise TimeoutError("injected ambiguous transport loss")
             return {"verified": True}
@@ -780,17 +722,16 @@ class WriteAcceptanceTests(unittest.TestCase):
         first = self.surface.persistent_write_tools[0]
         first_operation = scenario["operations"][0]
         first_operation["restore"].append(dict(first_operation["restore"][0]))
-        transport_reads = 0
+        summary_reads = 0
 
         async def fake(name, _arguments):
-            nonlocal transport_reads
-            if name == "fl_get_project_summary":
-                return self.project_summary()
-            if name == "fl_get_transport_state":
-                transport_reads += 1
-                if transport_reads > 1 + len(scenario["operations"]):
+            nonlocal summary_reads
+            if name == "project_get_summary":
+                # One preflight read and one before-state read per operation.
+                summary_reads += 1
+                if summary_reads > 1 + len(scenario["operations"]):
                     raise TimeoutError("injected independent reread loss")
-                return {"playing": False, "recording": False}
+                return self.project_summary()
             return {"verified": True}
 
         with tempfile.TemporaryDirectory(prefix="postfader-checkpoints-") as temp:
@@ -834,10 +775,8 @@ class WriteAcceptanceTests(unittest.TestCase):
         async def fake(name, arguments):
             nonlocal write_calls
             calls.append((name, arguments))
-            if name == "fl_get_project_summary":
+            if name == "project_get_summary":
                 return self.project_summary()
-            if name == "fl_get_transport_state":
-                return {"playing": False, "recording": False}
             if name == first:
                 write_calls += 1
                 return {"verified": write_calls == 1}
@@ -852,8 +791,8 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_master_requires_per_tool_acknowledgement(self):
         scenario = self.scenario()
-        first = "fl_set_mixer_volume"
-        operation = next(item for item in scenario["operations"] if item["tool"] == first)
+        first = "mixer_set_track"
+        operation = self.operation(scenario, first)
         operation["mutation_arguments"]["track_index"] = 0
         operation["mutation_arguments"]["allow_master"] = True
         operation["restore"][0]["arguments"]["track_index"] = 0
@@ -873,10 +812,10 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_nested_plugin_target_master_requires_acknowledgement(self):
         scenario = self.scenario()
-        first = "fl_set_plugin_param"
-        operation = next(item for item in scenario["operations"] if item["tool"] == first)
+        first = "plugin_set_parameter"
+        operation = self.operation(scenario, first)
         operation["mutation_arguments"] = {
-            "parameter_index": 0,
+            "parameter": 0,
             "normalized_value": 0.5,
             "target": {"kind": "mixer_effect", "track_index": 0, "slot_index": 1}
         }
@@ -893,19 +832,17 @@ class WriteAcceptanceTests(unittest.TestCase):
     def test_schema_and_role_errors_are_refused_before_preflight(self):
         cases = []
         empty = self.scenario()
-        next(item for item in empty["operations"] if item["tool"] == "fl_set_tempo")[
-            "mutation_arguments"
-        ] = {}
+        self.operation(empty, "mixer_set_track")["mutation_arguments"] = {}
         cases.append((empty, "required property"))
 
         wrong_type = self.scenario()
-        next(
-            item for item in wrong_type["operations"] if item["tool"] == "fl_set_tempo"
-        )["mutation_arguments"]["tempo_bpm"] = "fast"
+        self.operation(wrong_type, "mixer_set_track")["mutation_arguments"][
+            "track_index"
+        ] = "first"
         cases.append((wrong_type, "not of type"))
 
         write_before = self.scenario()
-        write_before["operations"][0]["before"]["tool"] = "fl_set_tempo"
+        write_before["operations"][0]["before"]["tool"] = "transport_set"
         cases.append((write_before, "not authoritatively read-only"))
 
         unknown_restore = self.scenario()
@@ -913,11 +850,10 @@ class WriteAcceptanceTests(unittest.TestCase):
         cases.append((unknown_restore, "not an authoritative persistent-write tool"))
 
         malformed_restore = self.scenario()
-        next(
-            item
-            for item in malformed_restore["operations"]
-            if item["tool"] == "fl_set_tempo"
-        )["restore"][0]["arguments"] = {"tempo_bpm": "slow"}
+        self.operation(malformed_restore, "mixer_set_track")["restore"][0]["arguments"] = {
+            "track_index": "first",
+            "volume_normalized": 0.8,
+        }
         cases.append((malformed_restore, "not of type"))
 
         for scenario, message in cases:
@@ -929,10 +865,8 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_late_resolved_schema_error_prevents_all_writes(self):
         scenario = self.scenario()
-        tempo = next(
-            item for item in scenario["operations"] if item["tool"] == "fl_set_tempo"
-        )
-        tempo["mutation_arguments"] = {"tempo_bpm": {"$before": "playing"}}
+        tempo = self.operation(scenario, "transport_set")
+        tempo["mutation_arguments"] = {"tempo_bpm": {"$before": "transport.playing"}}
         calls = []
         report = self.run_acceptance(scenario, self.passing_caller(calls))
         self.assertEqual(report["overall"], "fail")
@@ -943,9 +877,7 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_before_template_resolving_to_master_refuses_all_writes(self):
         scenario = self.scenario()
-        operation = next(
-            item for item in scenario["operations"] if item["tool"] == "fl_set_mixer_volume"
-        )
+        operation = self.operation(scenario, "mixer_set_track")
         operation["mutation_arguments"] = {
             "track_index": {"$before": "track_index"},
             "volume_normalized": 0.7,
@@ -961,10 +893,8 @@ class WriteAcceptanceTests(unittest.TestCase):
 
         async def fake(name, arguments):
             calls.append((name, dict(arguments)))
-            if name == "fl_get_project_summary":
-                return self.project_summary()
-            if name == "fl_get_transport_state":
-                return {"playing": False, "recording": False, "track_index": 0}
+            if name == "project_get_summary":
+                return self.project_summary(extra={"track_index": 0})
             return {"verified": True}
 
         report = self.run_acceptance(scenario, fake)
@@ -981,23 +911,22 @@ class WriteAcceptanceTests(unittest.TestCase):
             )
         )
         prepared = validate_write_scenario_plan(self.surface, scenario)
-        self.assertEqual(len(prepared), len(self.surface.persistent_write_tools))
-        step = next(item for item in prepared if item.tool == "fl_set_step_sequence")
+        self.assertEqual(len(prepared), len(scenario["operations"]))
+        self.assertEqual(
+            {item.tool for item in prepared}, set(self.surface.persistent_write_tools)
+        )
+        step = next(item for item in prepared if item.tool == "channel_set_steps")
         self.assertEqual(
             step.restore_actions[0][1]["expected_digest"],
             "e729573f357c04daf32a05078da93e10ac32019fc638c2a422f11dea58a9589a",
         )
 
-        identity = next(
-            item for item in prepared if item.tool == "fl_set_channel_identity"
-        )
+        identity = self.prepared(prepared, "channel_set", "color")
         self.assertEqual(identity.mutation_arguments["color"], 0xFF1480FF)
 
-        position = next(
-            item for item in prepared if item.tool == "fl_set_song_position"
-        )
+        position = self.prepared(prepared, "transport_set", "position_normalized")
         self.assertEqual(position.mutation_arguments["position_normalized"], 0.5)
-        self.assertEqual(position.mutation_arguments["tolerance"], 0.001)
+        self.assertEqual(position.mutation_arguments["position_tolerance"], 0.001)
 
     def test_mixer_route_restoration_uses_destination_identity_not_position(self):
         scenario = json.loads(
@@ -1006,13 +935,21 @@ class WriteAcceptanceTests(unittest.TestCase):
             )
         )
         prepared = validate_write_scenario_plan(self.surface, scenario)
-        send = next(item for item in prepared if item.tool == "fl_set_mixer_send")
+        send = self.prepared(prepared, "mixer_set_track", '"enabled"')
         level = next(
-            item for item in prepared if item.tool == "fl_set_mixer_send_level"
+            item
+            for item in prepared
+            if item.tool == "mixer_set_track"
+            and "level_normalized" in json.dumps(item.mutation_arguments)
+            and "enabled" not in json.dumps(item.mutation_arguments)
         )
-        self.assertTrue(send.restore_actions[0][1]["enabled"])
-        self.assertEqual(send.restore_actions[1][1]["level_normalized"], 0.8)
-        self.assertEqual(level.restore_actions[0][1]["level_normalized"], 0.8)
+        # One restore call re-creates the route and then sets its level.
+        restored_send = send.restore_actions[0][1]["sends"][0]
+        self.assertTrue(restored_send["enabled"])
+        self.assertEqual(restored_send["level_normalized"], 0.8)
+        self.assertEqual(
+            level.restore_actions[0][1]["sends"][0]["level_normalized"], 0.8
+        )
 
         target_level = level.verify_specs[-1]
         wrong_destination_only = {
@@ -1046,11 +983,7 @@ class WriteAcceptanceTests(unittest.TestCase):
         for routes, match_count in cases:
             with self.subTest(match_count=match_count):
                 scenario = self.scenario()
-                route = next(
-                    item
-                    for item in scenario["operations"]
-                    if item["tool"] == "fl_set_mixer_send_level"
-                )
+                route = self.operation(scenario, "mixer_set_track")
                 selector = {
                     "$select": {
                         "path": "routes",
@@ -1058,20 +991,21 @@ class WriteAcceptanceTests(unittest.TestCase):
                         "value": "level_normalized",
                     }
                 }
-                route["restore"][0]["arguments"]["level_normalized"] = selector
+                route["mutation_arguments"] = {
+                    "track_index": 1,
+                    "sends": [{"destination_track_index": 2, "level_normalized": 0.5}],
+                }
+                route["restore"][0]["arguments"] = {
+                    "track_index": 1,
+                    "sends": [{"destination_track_index": 2, "level_normalized": selector}],
+                }
                 route["verify_paths"] = [selector]
                 calls = []
 
-                async def fake(name, arguments):
+                async def fake(name, arguments, routes=routes, calls=calls):
                     calls.append((name, dict(arguments)))
-                    if name == "fl_get_project_summary":
-                        return self.project_summary()
-                    if name == "fl_get_transport_state":
-                        return {
-                            "playing": False,
-                            "recording": False,
-                            "routes": routes,
-                        }
+                    if name == "project_get_summary":
+                        return self.project_summary(extra={"routes": routes})
                     return {"verified": True}
 
                 report = self.run_acceptance(scenario, fake)
@@ -1089,20 +1023,25 @@ class WriteAcceptanceTests(unittest.TestCase):
 
     def test_playback_position_is_restored_before_a_later_failure(self):
         scenario = self.scenario()
-        playback = next(
-            item for item in scenario["operations"] if item["tool"] == "fl_set_playing"
-        )
+        playback = self.operation(scenario, "transport_set")
         playback["mutation_arguments"] = {"playing": True}
         playback["restore"] = [
-            {"arguments": {"playing": False}},
             {
-                "tool": "fl_set_song_position",
                 "arguments": {
-                    "position_normalized": {"$before": "song_position_normalized"}
-                },
+                    "playing": False,
+                    "position_normalized": {
+                        "$before": "transport.song_position_normalized"
+                    },
+                }
             },
         ]
-        playback["verify_paths"] = ["playing", "song_position_normalized"]
+        playback["verify_paths"] = [
+            "transport.playing",
+            "transport.song_position_normalized",
+        ]
+        # Run playback first so the injected plug-in failure comes after it.
+        scenario["operations"].remove(playback)
+        scenario["operations"].insert(0, playback)
         state = {
             "playing": False,
             "recording": False,
@@ -1110,49 +1049,52 @@ class WriteAcceptanceTests(unittest.TestCase):
         }
 
         async def fake(name, arguments):
-            if name == "fl_get_project_summary":
-                return self.project_summary()
-            if name == "fl_get_transport_state":
-                return dict(state)
-            if name == "fl_set_playing":
-                state["playing"] = arguments["playing"]
-                if arguments["playing"]:
-                    state["song_position_normalized"] = 0.35
+            if name == "project_get_summary":
+                return self.project_summary(**state)
+            if name == "transport_set":
+                # transport_set pauses before it moves the playhead.
+                if "playing" in arguments:
+                    state["playing"] = arguments["playing"]
+                    if arguments["playing"]:
+                        state["song_position_normalized"] = 0.35
+                if "position_normalized" in arguments:
+                    state["song_position_normalized"] = arguments[
+                        "position_normalized"
+                    ]
                 return {"verified": True}
-            if name == "fl_set_song_position":
-                state["song_position_normalized"] = arguments[
-                    "position_normalized"
-                ]
-                return {"verified": True}
-            if name == "fl_set_plugin_param":
+            if name == "plugin_set_parameter":
                 raise TimeoutError("injected later failure")
             return {"verified": True}
 
         report = self.run_acceptance(scenario, fake)
         self.assertEqual(report["overall"], "fail")
-        playback_result = next(
-            item for item in report["operations"] if item["tool"] == "fl_set_playing"
-        )
+        playback_result = report["operations"][0]
+        self.assertEqual(playback_result["tool"], "transport_set")
         self.assertEqual(playback_result["status"], "passed")
         self.assertFalse(state["playing"])
         self.assertEqual(state["song_position_normalized"], 0.25)
 
     def test_playback_restore_cannot_pass_at_the_advanced_position(self):
         scenario = self.scenario()
-        playback = next(
-            item for item in scenario["operations"] if item["tool"] == "fl_set_playing"
-        )
+        playback = self.operation(scenario, "transport_set")
         playback["mutation_arguments"] = {"playing": True}
         playback["restore"] = [
-            {"arguments": {"playing": False}},
             {
-                "tool": "fl_set_song_position",
                 "arguments": {
-                    "position_normalized": {"$before": "song_position_normalized"}
-                },
+                    "playing": False,
+                    "position_normalized": {
+                        "$before": "transport.song_position_normalized"
+                    },
+                }
             },
         ]
-        playback["verify_paths"] = ["playing", "song_position_normalized"]
+        playback["verify_paths"] = [
+            "transport.playing",
+            "transport.song_position_normalized",
+        ]
+        # Run playback first so the injected plug-in failure comes after it.
+        scenario["operations"].remove(playback)
+        scenario["operations"].insert(0, playback)
         state = {
             "playing": False,
             "recording": False,
@@ -1160,28 +1102,24 @@ class WriteAcceptanceTests(unittest.TestCase):
         }
 
         async def fake(name, arguments):
-            if name == "fl_get_project_summary":
-                return self.project_summary()
-            if name == "fl_get_transport_state":
-                return dict(state)
-            if name == "fl_set_playing":
+            if name == "project_get_summary":
+                return self.project_summary(**state)
+            if name == "transport_set":
                 state["playing"] = arguments["playing"]
                 if arguments["playing"]:
                     state["song_position_normalized"] = 0.35
-                return {"verified": True}
-            if name == "fl_set_song_position":
-                # Inject a lying transport result: independent evidence must win.
+                # The restore asks for the captured position too, but this
+                # lying transport ignores it: independent evidence must win.
                 return {"verified": True}
             return {"verified": True}
 
         report = self.run_acceptance(scenario, fake)
-        playback_result = next(
-            item for item in report["operations"] if item["tool"] == "fl_set_playing"
-        )
+        playback_result = report["operations"][0]
+        self.assertEqual(playback_result["tool"], "transport_set")
         self.assertEqual(report["overall"], "fail")
         self.assertEqual(playback_result["status"], "failed")
         self.assertIn(
-            "song_position_normalized",
+            "transport.song_position_normalized",
             playback_result["restoration_mismatches"],
         )
         self.assertEqual(state["song_position_normalized"], 0.35)

@@ -3,7 +3,7 @@
   "name": "io.github.synopsys0/postfader-fl-studio-mcp",
   "title": "PostFader",
   "description": "FL Studio MCP server: read, mix, compose, and edit your open FL Studio project from any MCP client.",
-  "version": "11.0.0",
+  "version": "12.0.0",
   "repository": {
     "url": "https://github.com/synopsys0/postfader-fl-studio-mcp",
     "source": "github"
@@ -13,7 +13,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "postfader-fl-studio-mcp",
-      "version": "11.0.0",
+      "version": "12.0.0",
       "transport": {
         "type": "stdio"
       },
