@@ -200,10 +200,12 @@ installation check all agree.
 
 ## Signed annotated tags for future releases
 
-`v0.20.0` is already public and unsigned. Leave that tag exactly as published:
-do not delete it, force-push it, move it, or recreate it. Starting with the next
-release, use a signed annotated tag after all version synchronization and CI
-checks pass.
+`v0.20.0` and `v12.0.1` are already public and unsigned. Leave all published
+tags exactly as published: do not delete, force-push, move, or recreate them.
+Use a signed annotated tag for the next release after all version
+synchronization and CI checks pass. V12.0.1's signed artifact attestations are
+separate from Git tag signing; see the
+[published supply-chain evidence](docs/supply-chain.md#published-v1201-evidence).
 
 For a GPG signing key:
 
@@ -211,6 +213,7 @@ For a GPG signing key:
 git config user.signingkey <GPG_KEY_ID>
 git config tag.gpgSign true
 git tag --sign --annotate vX.Y.Z --message 'PostFader vX.Y.Z'
+git verify-tag vX.Y.Z
 git show --show-signature vX.Y.Z
 git push origin vX.Y.Z
 ```
@@ -223,10 +226,11 @@ git config gpg.format ssh
 git config user.signingkey ~/.ssh/release_signing_key
 git config gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
 git tag --sign --annotate vX.Y.Z --message 'PostFader vX.Y.Z'
+git verify-tag vX.Y.Z
 git show --show-signature vX.Y.Z
 git push origin vX.Y.Z
 ```
 
 Confirm on GitHub that the tag is shown as verified before relying on the tag
 as a release input. A signed tag improves provenance for future releases; it is
-not a reason to rewrite the already-public v0.20.0 history.
+not a reason to rewrite already-public history.

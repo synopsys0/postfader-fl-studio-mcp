@@ -30,7 +30,7 @@
       "formats": ["native"],
       "scope": "mixer_effect",
       "category": "compressor",
-      "supported_intents": ["control_dynamics", "add_punch", "level_vocal"],
+      "supported_intents": ["control_dynamics", "add_punch", "level_vocal", "tighten_low_end"],
       "controls": [
         {"id": "threshold", "role": "threshold", "names": ["Threshold"], "unit": "dB", "preferred_write_value": "display_value"},
         {"id": "ratio", "role": "ratio", "names": ["Ratio"], "unit": "ratio", "preferred_write_value": "display_value"},
@@ -60,7 +60,8 @@
         {"id": "release", "role": "release", "names": ["REL", "Release", "Limiter release time"], "unit": "ms", "preferred_write_value": "display_value"}
       ],
       "recipes": [
-        {"id": "limiter-headroom", "intent": "limit_peaks", "parameter_roles": ["ceiling", "input_gain"], "guidance": "Set ceiling from a new true-peak bounce; do not use live sample peaks as proof of codec headroom."}
+        {"id": "limiter-headroom", "intent": "limit_peaks", "parameter_roles": ["ceiling", "input_gain"], "guidance": "Set ceiling from a new true-peak bounce; do not use live sample peaks as proof of codec headroom."},
+        {"id": "limiter-dynamics", "intent": "control_dynamics", "parameter_roles": ["ceiling"], "guidance": "Use peak limiting as an alternative to compression; the starting ceiling is not a measured gain-reduction target or a compressor-mode change."}
       ],
       "provenance": "bundled_postfader_profile",
       "exact_version_required": false
@@ -81,7 +82,8 @@
         {"id": "high-cut", "role": "high_cut", "names": ["HighCut", "High cut"], "unit": "Hz", "preferred_write_value": "display_value"}
       ],
       "recipes": [
-        {"id": "reverb-depth", "intent": "add_depth", "parameter_roles": ["decay", "wet", "high_cut"], "guidance": "Use a send when possible; raise wet amount in context and filter the return to preserve intelligibility."}
+        {"id": "reverb-depth", "intent": "add_depth", "parameter_roles": ["decay", "wet", "high_cut"], "guidance": "Use a send when possible; raise wet amount in context and filter the return to preserve intelligibility."},
+        {"id": "reverb-darken", "intent": "darken_reverb", "parameter_roles": ["high_cut"], "guidance": "Lower the observed numeric high-cut frequency. An unavailable or nonnumeric cutoff requires an explicit control value instead of a guessed starting point."}
       ],
       "provenance": "bundled_postfader_profile",
       "exact_version_required": false
@@ -101,7 +103,7 @@
         {"id": "time", "role": "time", "names": ["Time"], "unit": "beats_or_ms", "preferred_write_value": "display_value"}
       ],
       "recipes": [
-        {"id": "delay-depth", "intent": "add_depth", "parameter_roles": ["time", "feedback"], "guidance": "Choose a tempo-related time and automate/filter the return; verify that feedback remains bounded."}
+        {"id": "delay-depth", "intent": "add_depth", "parameter_roles": ["wet", "feedback"], "guidance": "Set wet output and bounded feedback while preserving the current delay time and tempo-sync mode; audition the existing timing in context."}
       ],
       "provenance": "bundled_postfader_profile",
       "exact_version_required": false
