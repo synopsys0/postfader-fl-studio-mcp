@@ -790,7 +790,10 @@ class CreationReadinessService:
                 )
             )
         seen: set[tuple[str | None, str]] = set()
-        for item in missing:
+        # A category can be requested by both optional and required goals.
+        # Keep the required diagnostic before deduplicating, independent of
+        # goal order; an optional gap must never hide a blocking one.
+        for item in sorted(missing, key=lambda item: not item.required_for_completion):
             key = (item.role_id, item.category)
             if key in seen:
                 continue

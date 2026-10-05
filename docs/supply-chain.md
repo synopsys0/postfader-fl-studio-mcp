@@ -33,7 +33,7 @@ telemetry.
 
 ## Release SBOM
 
-Future tagged releases generate
+Tagged releases generate
 `PostFader-vX.Y.Z-SBOM.cdx.json` in CycloneDX 1.6 format. The build first installs
 the wheel into an isolated temporary environment, runs `pip inspect --local`,
 and follows the installed project's runtime dependency closure. Build tools,
@@ -61,7 +61,7 @@ ZIP result should not be generalized to the whole release.
 
 ## Attestations
 
-Future tagged release assets are attested before PyPI and GitHub publication:
+Tagged release assets are attested before PyPI and GitHub publication:
 
 - the wheel, source archive, four platform setup ZIPs, MCPB, and SBOM receive a
   signed build-provenance attestation; and
@@ -77,7 +77,7 @@ does not receive release-write credentials or the optional
 `artifact-metadata: write` permission because it does not push artifacts to a
 registry's linked-artifacts page.
 
-After a future release, a maintainer can verify a downloaded artifact with the
+After a release, a maintainer can verify a downloaded artifact with the
 GitHub CLI (the repository must be supplied so GitHub can locate its
 attestation):
 
@@ -91,6 +91,33 @@ SBOM. Then compare its SHA-256 value with the matching line in the release
 checksum file. `gh attestation verify` validates GitHub's signed attestation;
 the checksum comparison validates that the local bytes match the published
 release asset.
+
+For a package's CycloneDX SBOM attestation, also run:
+
+```bash
+gh attestation verify PostFader-vX.Y.Z-macOS.zip \
+  --repo synopsys0/postfader-fl-studio-mcp \
+  --predicate-type https://cyclonedx.org/bom
+```
+
+### Published V12.0.1 evidence
+
+[V12.0.1](https://github.com/synopsys0/postfader-fl-studio-mcp/releases/tag/v12.0.1)
+was built from `a3d3b889b3cf669a42593af8a4a5dfccbfafd244`. Its
+[tag-triggered release workflow](https://github.com/synopsys0/postfader-fl-studio-mcp/actions/runs/37265350063)
+completed all nine jobs, including PyPI and MCP Registry publication. The
+release has nine assets: eight payloads and the checksum file. Downloaded
+payload checksums, all eight build-provenance attestations, and the seven
+package SBOM attestations were verified against that commit.
+
+The annotated Git tag is unsigned and remains immutable. A verified merge
+commit or signed artifact attestation does not make the Git tag signed.
+[Issue #21](https://github.com/synopsys0/postfader-fl-studio-mcp/issues/21)
+therefore still needs a future signed tag and its release verification before
+its signing requirements can be considered complete. See
+[the release procedure](../RELEASING.md#signed-annotated-tags-for-future-releases).
+These results do not establish byte-for-byte reproducibility or new live FL
+Studio qualification.
 
 The authoritative references are GitHub's [artifact-attestation
 guide](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations),

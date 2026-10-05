@@ -61,6 +61,7 @@ PROCESSING_SCHEMA_VERSION = "1.0"
 MAX_PROCESSING_TEXT = 256
 MAX_PROCESSING_REASON = 1024
 MAX_PROCESSING_LIST = 128
+MAX_PROCESSING_GAPS = 2 * MAX_PROCESSING_LIST
 MAX_PROCESSING_CONTROLS = 64
 MAX_PROCESSING_ACTIONS = 256
 MAX_PROCESSING_BATCH = 128
@@ -356,6 +357,8 @@ class ProcessingRequest(ProcessingModel):
     def require_processing_source(self) -> ProcessingRequest:
         if self.goal is not None and self.role is None:
             raise ValueError("a convenience goal requires a role")
+        if len(self.expanded_goals()) > MAX_PROCESSING_LIST:
+            raise ValueError("a request accepts at most 128 processing goals across all roles")
         return self
 
     def expanded_goals(self) -> tuple[ProcessingGoal, ...]:
@@ -364,7 +367,14 @@ class ProcessingRequest(ProcessingModel):
         result: list[ProcessingGoal] = list(self.goals)
         for role_request in self.roles:
             if role_request.goals:
-                result.extend(role_request.goals)
+                result.extend(
+                    goal.model_copy(update={
+                        "role": role_request.role,
+                        "target": goal.target or role_request.target,
+                        "required": goal.required or role_request.processing_required,
+                    })
+                    for goal in role_request.goals
+                )
             else:
                 for index, technique in enumerate(
                     role_request.requested_techniques, start=1
@@ -525,7 +535,7 @@ class RoleEffectCoverage(ProcessingModel):
         default=(), max_length=MAX_PROCESSING_LIST
     )
     missing_capabilities: tuple[MissingProcessingCapability, ...] = Field(
-        default=(), max_length=MAX_PROCESSING_LIST
+        default=(), max_length=MAX_PROCESSING_GAPS
     )
     state: CoverageState = "not_applicable"
     dry_playback_intentional: bool = False
@@ -559,7 +569,7 @@ class EffectCoverageReport(ProcessingModel):
         default=(), max_length=MAX_PROCESSING_LIST
     )
     missing_capabilities: tuple[MissingProcessingCapability, ...] = Field(
-        default=(), max_length=MAX_PROCESSING_LIST
+        default=(), max_length=MAX_PROCESSING_GAPS
     )
     state: CoverageState = "not_applicable"
     processing_state: ProcessingStatus = "dry_by_design"
@@ -684,7 +694,7 @@ class ProcessingPlan(ProcessingModel):
         default=(), max_length=MAX_PROCESSING_ACTIONS
     )
     missing_capabilities: tuple[MissingProcessingCapability, ...] = Field(
-        default=(), max_length=MAX_PROCESSING_LIST
+        default=(), max_length=MAX_PROCESSING_GAPS
     )
     warnings: tuple[str, ...] = Field(default=(), max_length=MAX_PROCESSING_LIST)
     max_actions: int = Field(default=MAX_PROCESSING_BATCH, ge=1, le=MAX_PROCESSING_ACTIONS)
@@ -780,16 +790,21 @@ GOAL_CATEGORIES: dict[str, tuple[str, ...]] = {
     "add_presence": ("equalizer",),
     "add_air": ("equalizer",),
     "tighten_low_end": ("equalizer", "compressor"),
-    "control_dynamics": ("compressor",),
+    "control_dynamics": ("compressor", "limiter"),
     "add_punch": ("compressor",),
     "level_vocal": ("compressor",),
     "limit_peaks": ("limiter",),
-    "add_depth": ("reverb",),
+    "add_depth": ("reverb", "delay"),
     "shorten_space": ("reverb",),
+    "darken_reverb": ("reverb",),
     "rhythmic_echo": ("delay",),
     "keep_low_end_centered": ("equalizer",),
     "restrained_section_contrast": ("reverb", "delay", "compressor"),
 }
+
+# Most category tuples are alternatives. Low-end tightening explicitly asks
+# for both an EQ and a compressor; observing one cannot cover the other.
+COMPOUND_GOALS = frozenset({"tighten_low_end"})
 
 
 def _canonical(value: str) -> str:
@@ -1170,20 +1185,21 @@ def _target_requires_processing(target: CompletionTarget) -> bool:
 def _capability_supports_goal(
     capability: LoadedProcessingCapability,
     goal: ProcessingGoal,
+    adapter: ControlAdapter,
 ) -> bool:
     if not capability.atlas_match or not capability.adapter_available:
         return False
     categories = _goal_categories(goal)
     if _canonical(goal.goal) not in GOAL_CATEGORIES and goal.technique is None:
         return False
-    if capability.category not in categories:
+    if capability.category != adapter.category or adapter.category not in categories:
         return False
     if not capability.control_evidence:
         return False
-    supported = {_canonical(value) for value in capability.supported_techniques}
+    supported = {_canonical(value) for value in adapter.supported_intents}
     requested = {_canonical(goal.goal), _canonical(goal.technique or "")}
     requested.discard("")
-    return not supported or bool(supported & requested) or goal.technique is None
+    return bool(supported & requested)
 
 
 def _select_candidates(
@@ -1204,7 +1220,7 @@ def _select_candidates(
         ):
             adapter = None
         category_match = capability.category in _goal_categories(goal)
-        intent_match = _capability_supports_goal(capability, goal)
+        intent_match = adapter is not None and _capability_supports_goal(capability, goal, adapter)
         resolutions: tuple[SemanticControlResolution, ...] = ()
         if adapter is not None:
             resolutions = tuple(
@@ -1234,6 +1250,8 @@ def _select_candidates(
             reasons.append("loaded effect category is unrelated to the requested goal")
         if intent_match:
             score += 0.10
+        else:
+            reasons.append("the loaded adapter does not support the requested intent with control evidence")
         if unresolved:
             reasons.append("one or more requested controls are unresolved")
         if not goal.controls and resolutions:
@@ -1317,7 +1335,7 @@ def _starting_controls(
             control("attack", 25.0 if intent == "add_punch" else 10.0, "ms"),
             control("release", 80.0 + 60.0 * strength, "ms"),
         )
-    if product == "image-line.fruity-limiter" and intent == "limit_peaks":
+    if product == "image-line.fruity-limiter" and intent in {"limit_peaks", "control_dynamics"}:
         return (control("ceiling", -0.3 - 1.4 * strength, "dB"),)
     if product == "image-line.fruity-reeverb-2":
         if intent == "add_depth":
@@ -1326,7 +1344,11 @@ def _starting_controls(
             decay, wet = observed_value("Decay", "seconds"), observed_value("Wet", "percent")
             if decay is not None and wet is not None:
                 return (control("decay", max(0.0, decay * (1.0 - 0.7 * strength)), "seconds"), control("wet", max(0.0, wet * (1.0 - 0.6 * strength)), "percent"))
-    if product == "image-line.fruity-delay-3" and intent == "rhythmic_echo":
+        if intent == "darken_reverb":
+            cutoff = observed_value("high_cut", "Hz")
+            if cutoff is not None and cutoff > 0.0:
+                return (control("high_cut", cutoff / (1.0 + 3.0 * strength), "Hz"),)
+    if product == "image-line.fruity-delay-3" and intent in {"rhythmic_echo", "add_depth"}:
         # The adapter's Time unit is ambiguous (beats_or_ms), so leave its
         # current timing intact until an explicit display-unit value is supplied.
         return (control("wet", 5.0 + 20.0 * strength, "percent"), control("feedback", 10.0 + 25.0 * strength, "percent"))
@@ -1336,13 +1358,16 @@ def _starting_controls(
 def _missing_for_goal(
     goal: ProcessingGoal,
     capabilities: Sequence[LoadedProcessingCapability],
+    *,
+    category: str | None = None,
 ) -> MissingProcessingCapability:
     categories = _goal_categories(goal)
-    category = categories[0] if categories else "unknown"
+    category = category or (categories[0] if categories else "unknown")
     same_target = [
         item
         for item in capabilities
-        if goal.target is None or item.target == goal.target
+        if (goal.target is None or item.target == goal.target)
+        and item.category == category
     ]
     if not same_target:
         reason = "no loaded effect target matched the requested processing category"
@@ -1382,179 +1407,103 @@ def evaluate_effect_coverage(
 
     if isinstance(request, ProcessingRequest):
         if completion_target is not None and completion_target != request.completion_target:
-            raise ValueError(
-                "completion_target conflicts with the ProcessingRequest target"
-            )
-        completion_target = request.completion_target
-        goals = request.expanded_goals()
-        explicit_dry = request.dry_by_design
-        processing_required = request.processing_required or _target_requires_processing(
-            completion_target
-        )
-        role_sources: dict[str, tuple[ProcessingGoal, ...]] = {}
-        for goal in goals:
-            role_sources.setdefault(goal.role, ())
-            role_sources[goal.role] = (*role_sources[goal.role], goal)
-        for role_request in request.roles:
-            if role_request.dry_by_design:
-                role_sources.setdefault(role_request.role, ())
-        role_requests = tuple(
-            RoleProcessingRequest(
-                role=role,
-                target=next((goal.target for goal in role_goals if goal.target), None),
-                goals=role_goals,
-                requested_techniques=tuple(goal.goal for goal in role_goals),
-                dry_by_design=explicit_dry,
-                processing_required=processing_required,
-            )
-            for role, role_goals in sorted(role_sources.items())
-        )
-        if not role_requests and explicit_dry:
-            role_requests = (RoleProcessingRequest(role="project", dry_by_design=True),)
+            raise ValueError("completion_target conflicts with the ProcessingRequest target")
+        normalized = request
     else:
-        role_requests_list: list[RoleProcessingRequest] = []
+        roles: list[RoleProcessingRequest] = []
+        goals: list[ProcessingGoal] = []
         for item in request:
             if isinstance(item, RoleProcessingRequest):
-                role_requests_list.append(item)
+                roles.append(item)
             elif isinstance(item, ProcessingGoal):
-                role_requests_list.append(
-                    RoleProcessingRequest(
-                        role=item.role,
-                        target=item.target,
-                        goals=(item,),
-                        requested_techniques=(item.goal,),
-                        processing_required=item.required,
-                    )
-                )
+                goals.append(item)
             else:
                 raise TypeError("coverage request items must be roles or processing goals")
-        completion_target = "restrained_first_pass"
-        completion_target = completion_target or "restrained_first_pass"
-        processing_required = _target_requires_processing(completion_target)
-        role_requests = tuple(role_requests_list)
+        normalized = ProcessingRequest(
+            roles=tuple(roles), goals=tuple(goals),
+            completion_target=completion_target or "restrained_first_pass",
+        )
+    completion_target = normalized.completion_target
+    processing_required = normalized.processing_required or _target_requires_processing(completion_target)
     if loaded_effects is not None:
         loaded_plugins = loaded_effects
     capabilities = resolve_loaded_capabilities(loaded_plugins, registry=registry)
+    # Use the same intent, control, target, conflict and compound-category
+    # resolution as the plan. Category presence alone cannot certify coverage.
+    plan = plan_processing(normalized, loaded_plugins=capabilities, registry=registry)
+    role_goals: dict[str, list[ProcessingGoal]] = {}
+    for goal in normalized.expanded_goals():
+        role_goals.setdefault(goal.role, []).append(goal)
+    dry_roles = {role.role for role in normalized.roles if role.dry_by_design}
+    for role in normalized.roles:
+        role_goals.setdefault(role.role, [])
+    if not role_goals and normalized.dry_by_design:
+        role_goals["project"] = []
     role_reports: list[RoleEffectCoverage] = []
     missing: list[MissingProcessingCapability] = []
-    for role_request in role_requests:
-        goals = role_request.goals
-        requested = tuple(
-            dict.fromkeys(
-                technique
-                for technique in (
-                    *role_request.requested_techniques,
-                    *(goal.goal for goal in goals),
-                )
-            )
-        )
-        categories = tuple(
-            dict.fromkeys(
-                category
-                for goal in goals
-                for category in _goal_categories(goal)
-            )
+    for role, goals in sorted(role_goals.items()):
+        required = processing_required or any(
+            item.processing_required for item in normalized.roles if item.role == role
         )
         targeted = tuple(
-            capability
-            for capability in capabilities
-            if role_request.target is None or capability.target == role_request.target
+            item for item in capabilities
+            if any(goal.target is None or item.target == goal.target for goal in goals)
         )
         matching = tuple(
-            capability
-            for capability in targeted
-            if capability.category in categories
-        )
-        product_matches = tuple(
-            dict.fromkeys(
-                item.product_id for item in matching if item.product_id is not None
-            )
-        )
-        adapter_matches = tuple(
-            dict.fromkeys(
-                item.adapter_id for item in matching if item.adapter_id is not None
-            )
-        )
-        supported = tuple(
-            dict.fromkeys(
-                technique
-                for item in matching
-                for technique in item.supported_techniques
-            )
-        )
-        unresolved_controls = tuple(
-            dict.fromkeys(
-                control
-                for item in matching
-                for control in item.unresolved_controls
-            )
-        )
-        if role_request.dry_by_design or not requested:
-            state: CoverageState = "dry_by_design"
-            intentional = True
-            limitation = ()
-        elif not matching:
-            state = "missing_requested_effect"
-            intentional = False
-            limitation = ("No loaded compatible effect covers the requested technique.",)
-        elif not any(item.atlas_match and item.adapter_available for item in matching):
-            state = "unresolved_effect"
-            intentional = False
-            limitation = ("Loaded effect identity or semantic adapter could not be established.",)
-        elif not any(item.control_evidence for item in matching) or unresolved_controls:
-            state = "unresolved_effect"
-            intentional = False
-            limitation = ("Loaded effect controls are not sufficiently proven for semantic writes.",)
-        else:
-            state = "effect_covered"
-            intentional = False
-            limitation = ()
-        role_report = RoleEffectCoverage(
-            role=role_request.role,
-            role_id=role_request.role,
-            target=role_request.target,
-            loaded_effects=targeted,
-            product_matches=product_matches,
-            adapter_matches=adapter_matches,
-            available_semantic_adapters=adapter_matches,
-            supported_techniques=supported,
-            unresolved_controls=unresolved_controls,
-            requested_techniques=requested,
-            state=state,
-            dry_playback_intentional=intentional,
-            dry_playback_allowed=not (
-                processing_required or role_request.processing_required
-            ),
-            processing_required=processing_required or role_request.processing_required,
-            processing_required_for_completion=(
-                processing_required or role_request.processing_required
-            ),
-            missing_capabilities=tuple(
-                _missing_for_goal(goal, targeted)
+            item for item in targeted
+            if any(
+                (goal.target is None or item.target == goal.target)
+                and item.category in _goal_categories(goal)
                 for goal in goals
-                if not any(
-                    _capability_supports_goal(capability, goal)
-                    for capability in targeted
-                )
-            ),
-            limitations=limitation,
+            )
         )
-        role_reports.append(role_report)
-        if state in {"missing_requested_effect", "unresolved_effect"}:
-            for goal in goals or (
-                ProcessingGoal(
-                    role=role_request.role,
-                    goal=(requested[0] if requested else "processing"),
-                    target=role_request.target,
-                    required=role_request.processing_required,
-                ),
-            ):
-                missing.append(_missing_for_goal(goal, targeted))
+        role_missing = tuple(
+            item.model_copy(update={"required": item.required or processing_required,
+                                    "required_for_completion": item.required or processing_required})
+            for item in plan.missing_capabilities if item.role == role
+        )
+        intentional = normalized.dry_by_design or role in dry_roles or not goals
+        if intentional:
+            state: CoverageState = "dry_by_design"
+        elif not role_missing:
+            state = "effect_covered"
+        elif any(not any(
+            item.category == gap.category
+            and (gap.target is None or item.target == gap.target)
+            for item in targeted
+        ) for gap in role_missing):
+            state = "missing_requested_effect"
+        else:
+            state = "unresolved_effect"
+        missing.extend(role_missing)
+        unresolved_controls = tuple(dict.fromkeys(
+            resolution.request.control_role
+            for candidate in plan.candidates if candidate.role == role
+            for resolution in candidate.control_resolutions
+            if resolution.status != "resolved"
+        )) if role_missing else ()
+        targets = [goal.target for goal in goals]
+        common_target = targets[0] if targets and all(target == targets[0] for target in targets) else None
+        role_reports.append(RoleEffectCoverage(
+            role=role, role_id=role, target=common_target,
+            loaded_effects=targeted,
+            product_matches=tuple(dict.fromkeys(item.product_id for item in matching if item.product_id)),
+            adapter_matches=tuple(dict.fromkeys(item.adapter_id for item in matching if item.adapter_id)),
+            available_semantic_adapters=tuple(dict.fromkeys(item.adapter_id for item in matching if item.adapter_id)),
+            supported_techniques=tuple(dict.fromkeys(technique for item in matching for technique in item.supported_techniques)),
+            unresolved_controls=unresolved_controls,
+            requested_techniques=tuple(dict.fromkeys(goal.technique or goal.goal for goal in goals)),
+            state=state, dry_playback_intentional=intentional,
+            dry_playback_allowed=not required, processing_required=required,
+            processing_required_for_completion=required,
+            missing_capabilities=role_missing,
+            limitations=tuple(dict.fromkeys(item.reason for item in role_missing)),
+        ))
     states = tuple(item.state for item in role_reports)
     if not states or all(state == "dry_by_design" for state in states):
         project_state: CoverageState = "dry_by_design"
         processing_state: ProcessingStatus = "dry_by_design"
-    elif all(state == "effect_covered" for state in states):
+    elif all(state in {"effect_covered", "dry_by_design"} for state in states):
         project_state = "effect_covered"
         processing_state = "processed"
     elif any(state == "missing_requested_effect" for state in states):
@@ -1563,32 +1512,21 @@ def evaluate_effect_coverage(
     else:
         project_state = "unresolved_effect"
         processing_state = "dry_missing_effects"
-    required_missing = processing_required and bool(missing)
-    requested_categories = tuple(
-        dict.fromkeys(
-            category
-            for report in role_reports
-            for technique in report.requested_techniques
-            for category in GOAL_CATEGORIES.get(_canonical(technique), (_canonical(technique),))
-        )
-    )
-    warnings = [
-        "Effect coverage is based on injected read-only observations; it does not evaluate audible quality.",
-        "Atlas-only products are not treated as loaded effects.",
-    ]
     return EffectCoverageReport(
         completion_target=completion_target,
-        requested_categories=requested_categories,
-        roles=tuple(role_reports),
-        loaded_capabilities=capabilities,
-        missing_capabilities=tuple(missing),
-        state=project_state,
+        requested_categories=tuple(dict.fromkeys(
+            category for goal in normalized.expanded_goals() for category in _goal_categories(goal)
+        )),
+        roles=tuple(role_reports), loaded_capabilities=capabilities,
+        missing_capabilities=tuple(missing), state=project_state,
         processing_state=processing_state,
         processing_required_for_completion=processing_required,
-        can_produce_dry_draft=True,
-        dry_by_design=project_state == "dry_by_design",
-        required_processing_missing=required_missing,
-        warnings=tuple(warnings),
+        can_produce_dry_draft=True, dry_by_design=project_state == "dry_by_design",
+        required_processing_missing=any(item.required for item in missing),
+        warnings=(
+            "Effect coverage is based on injected read-only observations; it does not evaluate audible quality.",
+            "Atlas-only products are not treated as loaded effects.",
+        ),
     )
 
 
@@ -1878,103 +1816,117 @@ def plan_processing(
             continue
         goal_candidates = _select_candidates(goal, capabilities, registry)
         candidates.extend(goal_candidates)
-        selected = next((candidate for candidate in goal_candidates if candidate.valid and (goal.controls or not conflicts(candidate))), None)
-        if selected is None:
-            # Keep optional gaps visible in the plan as well as in the
-            # coverage report.  ``required`` controls whether readiness must
-            # stop; it must not hide a requested category from the final
-            # structured result.
-            conflicting = next((candidate for candidate in goal_candidates if candidate.valid and conflicts(candidate)), None)
-            if conflicting is not None:
-                missing.append(MissingProcessingCapability(
-                    role=goal.role, category=_goal_categories(goal)[0], requested_techniques=(goal.technique or goal.goal,),
-                    required=goal.required, target=conflicting.target,
-                    reason="automatic recipe conflicts with earlier settings on the same effect control; use another loaded effect or explicit controls",
-                ))
-            else:
-                missing.append(_missing_for_goal(goal, capabilities))
-            continue
-        # A read-only inventory may carry ``allow_master=true`` so its target
-        # can be represented safely.  That observation is not authorization to
-        # mutate the Master bus; the run request must opt in explicitly.
-        if (
-            isinstance(selected.target, MixerEffectTarget)
-            and selected.target.track_index == 0
-            and not request.allow_master
-        ):
-            missing.append(
-                MissingProcessingCapability(
-                    role=goal.role,
-                    category=_goal_categories(goal)[0],
-                    requested_techniques=(goal.technique or goal.goal,),
-                    reason="Master processing requires explicit allow_master authorization",
-                    required=goal.required,
-                    target=selected.target,
-                )
+        categories = _goal_categories(goal)
+        intent = _canonical(goal.goal)
+        if intent not in GOAL_CATEGORIES and goal.technique:
+            intent = _canonical(goal.technique)
+        category_groups = tuple((category,) for category in categories) if intent in COMPOUND_GOALS else (categories,)
+        for category_group in category_groups:
+            category_candidates = tuple(candidate for candidate in goal_candidates if candidate.category in category_group)
+            missing_category = next(
+                (candidate.category for candidate in category_candidates if candidate.category),
+                category_group[0],
             )
-            continue
-        controls = tuple(item.request for item in selected.control_resolutions)
-        if not controls:
-            if goal.strength > 0.0:
-                missing.append(MissingProcessingCapability(
-                    role=goal.role, category=_goal_categories(goal)[0],
-                    requested_techniques=(goal.technique or goal.goal,), required=goal.required,
-                    target=selected.target, reason="this goal has no documented starting recipe for the loaded adapter; supply explicit controls",
-                ))
-            continue
-        for index, control in enumerate(controls, start=1):
-            resolution = (
-                selected.control_resolutions[index - 1]
-                if index - 1 < len(selected.control_resolutions)
-                else SemanticControlResolution(
-                    request=control,
-                    status="unresolved",
-                    reason="selected candidate did not carry a control resolution",
-                )
-            )
-            # This guard keeps malformed injected records from creating a
-            # mutation action with an unknown control.
-            if resolution.status != "resolved":
+            selected = next((candidate for candidate in category_candidates if candidate.valid and (goal.controls or not conflicts(candidate))), None)
+            if selected is None:
+                # Keep optional gaps visible in the plan as well as in the
+                # coverage report.  ``required`` controls whether readiness must
+                # stop; it must not hide a requested category from the final
+                # structured result.
+                conflicting = next((candidate for candidate in category_candidates if candidate.valid and conflicts(candidate)), None)
+                if conflicting is not None:
+                    missing.append(MissingProcessingCapability(
+                        role=goal.role, category=conflicting.category or missing_category, requested_techniques=(goal.technique or goal.goal,),
+                        required=goal.required, target=conflicting.target,
+                        reason="automatic recipe conflicts with earlier settings on the same effect control; use another loaded effect or explicit controls",
+                    ))
+                else:
+                    missing.append(_missing_for_goal(goal, capabilities, category=missing_category))
                 continue
-            if resolution.control is not None:
-                planned_values[(_target_key(selected.target), resolution.control.parameter_index)] = setting(resolution.control)
-            action_id = f"{goal.goal_id}-{index}"
-            dependencies = () if selected.candidate_id not in previous_by_candidate else (
-                previous_by_candidate[selected.candidate_id],
-            )
-            previous_by_candidate[selected.candidate_id] = action_id
-            actions.append(
-                SemanticPluginAction(
-                    action_id=action_id,
-                    goal_id=goal.goal_id,
-                    role=goal.role,
-                    target=selected.target,
-                    target_fingerprint=selected.target_fingerprint,
-                    plugin_name=selected.plugin_name,
-                    product_id=selected.product_id,
-                    adapter_id=selected.adapter_id,
-                    control=control,
-                    resolution=resolution,
-                    depends_on=dependencies,
-                    session_fingerprint=request.session_fingerprint,
-                    allow_master=(
-                        request.allow_master
-                        or (
-                            isinstance(selected.target, MixerEffectTarget)
-                            and selected.target.allow_master
-                        )
-                    ),
-                    rationale=(
-                        goal.rationale
-                        or (f"Adapter starting recipe for {goal.goal}, strength {goal.strength:g}; evaluate against the source."
-                            if not goal.controls else "Explicit semantic processing controls.")
-                    ),
+            # A read-only inventory may carry ``allow_master=true`` so its target
+            # can be represented safely.  That observation is not authorization to
+            # mutate the Master bus; the run request must opt in explicitly.
+            if (
+                isinstance(selected.target, MixerEffectTarget)
+                and selected.target.track_index == 0
+                and not request.allow_master
+            ):
+                missing.append(
+                    MissingProcessingCapability(
+                        role=goal.role,
+                        category=selected.category or missing_category,
+                        requested_techniques=(goal.technique or goal.goal,),
+                        reason="Master processing requires explicit allow_master authorization",
+                        required=goal.required,
+                        target=selected.target,
+                    )
                 )
-            )
-    # Keep the action surface bounded and deterministic even if a caller
-    # supplied a larger request.  The plan is still useful as a report.
-    if len(actions) > MAX_PROCESSING_ACTIONS:
-        actions = actions[:MAX_PROCESSING_ACTIONS]
+                continue
+            controls = tuple(item.request for item in selected.control_resolutions)
+            if not controls:
+                if goal.strength > 0.0:
+                    missing.append(MissingProcessingCapability(
+                        role=goal.role, category=selected.category or missing_category,
+                        requested_techniques=(goal.technique or goal.goal,), required=goal.required,
+                        target=selected.target, reason="this goal has no documented starting recipe for the loaded adapter; supply explicit controls",
+                    ))
+                continue
+            if len(actions) + len(controls) > MAX_PROCESSING_ACTIONS:
+                missing.append(MissingProcessingCapability(
+                    role=goal.role, category=selected.category or missing_category,
+                    requested_techniques=(goal.technique or goal.goal,), required=goal.required,
+                    target=selected.target, reason="processing action limit reached; split the request into smaller plans",
+                ))
+                continue
+            for index, control in enumerate(controls, start=1):
+                resolution = (
+                    selected.control_resolutions[index - 1]
+                    if index - 1 < len(selected.control_resolutions)
+                    else SemanticControlResolution(
+                        request=control,
+                        status="unresolved",
+                        reason="selected candidate did not carry a control resolution",
+                    )
+                )
+                # This guard keeps malformed injected records from creating a
+                # mutation action with an unknown control.
+                if resolution.status != "resolved":
+                    continue
+                if resolution.control is not None:
+                    planned_values[(_target_key(selected.target), resolution.control.parameter_index)] = setting(resolution.control)
+                action_id = f"action-{len(actions) + 1}"
+                dependencies = () if selected.candidate_id not in previous_by_candidate else (
+                    previous_by_candidate[selected.candidate_id],
+                )
+                previous_by_candidate[selected.candidate_id] = action_id
+                actions.append(
+                    SemanticPluginAction(
+                        action_id=action_id,
+                        goal_id=goal.goal_id,
+                        role=goal.role,
+                        target=selected.target,
+                        target_fingerprint=selected.target_fingerprint,
+                        plugin_name=selected.plugin_name,
+                        product_id=selected.product_id,
+                        adapter_id=selected.adapter_id,
+                        control=control,
+                        resolution=resolution,
+                        depends_on=dependencies,
+                        session_fingerprint=request.session_fingerprint,
+                        allow_master=(
+                            request.allow_master
+                            or (
+                                isinstance(selected.target, MixerEffectTarget)
+                                and selected.target.allow_master
+                            )
+                        ),
+                        rationale=(
+                            goal.rationale
+                            or (f"Adapter starting recipe for {goal.goal}, strength {goal.strength:g}; evaluate against the source."
+                                if not goal.controls else "Explicit semantic processing controls.")
+                        ),
+                    )
+                )
     plan_material = json.dumps(
         {"request": request.model_dump(mode="json"), "actions": [item.model_dump(mode="json") for item in actions]},
         sort_keys=True, separators=(",", ":"),
@@ -1993,7 +1945,7 @@ def plan_processing(
         session_fingerprint=request.session_fingerprint,
         candidates=tuple(candidates[:MAX_PROCESSING_LIST]),
         actions=tuple(actions),
-        missing_capabilities=tuple(missing[:MAX_PROCESSING_LIST]),
+        missing_capabilities=tuple(missing),
         warnings=tuple(warnings),
     )
 
