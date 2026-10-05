@@ -7,14 +7,15 @@ builds and inspects the Python distributions, validates the MCPB and platform
 bundles, publishes to PyPI and the MCP Registry, and attaches the verified
 assets and SHA-256 checksums to GitHub.
 
-## V11 publication
+## V12 publication
 
-V11 uses package version `11.0.0` and exposes 135 tools and 8 resources.
-Publish the reviewed dev feature set through a main pull request, then the
-matching version tag. The host-adapter paths keep their documented
-live-validation limits; do not imply a new hardware qualification matrix.
-Earlier assets and tags remain immutable. Version 10.0.1 was never tagged; its
-changes ship in 11.0.0.
+V12 uses package version `12.0.0` and exposes 85 tools and 8 resources. Every
+tool was renamed, so the release notes carry the full V11-to-V12 name table;
+keep it complete. Publish the reviewed dev feature set through a main pull
+request, then the matching version tag. The Universal Bridge script did not
+change, and the host-adapter paths keep their documented live-validation
+limits; do not imply a new hardware qualification matrix. Earlier assets and
+tags remain immutable.
 
 ## Before preparing a version
 

@@ -1,12 +1,13 @@
-"""Advertise compact MCP input schemas without loosening argument validation.
+"""Advertise compact MCP tool schemas without loosening argument validation.
 
 Every tool argument is still parsed by its full pydantic model with unknown
-fields rejected. This module only shapes the JSON Schema that clients receive
-from ``tools/list``. Many clients load that listing into the model's context in
+fields rejected, and every result is built from its full model. This module
+only shapes the input and output JSON Schemas that clients receive from
+``tools/list``. Many clients load that listing into the model's context in
 full, and before these reductions the four Production Run tools advertised
-roughly 240 KB of schema each.
+roughly 240 KB of input schema each.
 
-The reductions, applied to every tool:
+The reductions, applied to every input and output schema:
 
 * pydantic's generated ``title`` keywords are dropped; property and definition
   names already carry them;
@@ -29,7 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from .production_runs import ProductionOperation, UnavailableProductionOperation
 
 
-DESCRIBE_OPERATIONS_TOOL = "postfader_describe_operations"
+DESCRIBE_OPERATIONS_TOOL = "run_describe_operations"
 MAX_DESCRIBED_OPERATIONS = 8
 
 # Keywords whose value is one subschema, a list of them, or a name -> subschema
@@ -276,8 +277,8 @@ def _prune_definitions(schema: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def compact_input_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Return the advertised form of one tool's input schema."""
+def compact_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return the advertised form of one tool's input or output schema."""
 
     root = schema
     root = _transform(root, lambda node: _compact_production_operations(schema, node))
@@ -313,8 +314,8 @@ class OperationCatalog(BaseModel):
 _CATALOG_GUIDANCE = (
     "Build a plan as {plan_id, operations: [...]}; every operation needs a unique "
     "operation_id and runs in order. Request exact schemas only for the operations "
-    "you will use. Validate with postfader_validate_run when the user wants a plan "
-    "reviewed, otherwise call postfader_execute_run directly; validation errors name "
+    "you will use. Validate with run_validate when the user wants a plan "
+    "reviewed, otherwise call run_execute directly; validation errors name "
     "the exact field to fix."
 )
 
@@ -352,7 +353,7 @@ def describe_operations(
                     if info.is_required() and field != "operation"
                 ),
                 json_schema=(
-                    compact_input_schema(TypeAdapter(model).json_schema())
+                    compact_schema(TypeAdapter(model).json_schema())
                     if name in requested
                     else None
                 ),

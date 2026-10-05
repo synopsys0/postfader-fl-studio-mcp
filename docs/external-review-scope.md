@@ -156,7 +156,7 @@ reproduction where useful.
 
 ### Write-mode authorization
 
-- Trace `fl_set_write_mode` through the host gateway, bridge command, and
+- Trace `session_set_write_mode` through the host gateway, bridge command, and
   second handshake.
 - Confirm that enabling requires literal `confirm_user_present=true`, a
   current session fingerprint, compatible protocol, runtime-control
@@ -203,15 +203,20 @@ describe the current field as an out-of-band confirmation mechanism.
 - Cover mixer, plug-in, transport, Channel Rack, pattern, Playlist, and step
   digest guards, including current-pattern and observation-scoped channel
   identity requirements.
-- Confirm that omitted guards preserve the documented compatibility call shape
-  without being described as concurrency protection.
+- Confirm that a per-target setter (`mixer_set_track`, `channel_set`,
+  `pattern_set`, `playlist_set_track`, `transport_set`) refuses a guard for a
+  field that no write in the call checks, and that a `channel_set`
+  `channel_fingerprint` guard covers every write up to and including the first
+  one that changes the fingerprint.
+- Confirm that omitted optional guards are not described as concurrency
+  protection.
 
 ### Master protection
 
 - Confirm that mixer track 0 and a Master-source send require explicit
   `allow_master` authorization for mutations.
-- Check all aliases, batch operation kinds, plan/application paths, and direct
-  bridge commands for a bypass.
+- Check all aliases, per-target setters, batch operation kinds,
+  plan/application paths, and direct bridge commands for a bypass.
 - Confirm that sending *to* Master retains the documented distinction and does
   not accidentally broaden source authorization.
 
@@ -236,20 +241,29 @@ not be retried for the caller.
 ### Batch non-atomicity
 
 - Verify that the closed batch union is bounded (currently 1–32 operations),
-  ordered, and explicitly non-atomic.
+  ordered, and explicitly non-atomic, and that the per-target setters (at most
+  32 writes per call) behave the same way.
 - Confirm that earlier verified changes remain when a later item fails or is
   unverified, that `stop_on_unverified` only controls later dispatch, and that
   no rollback or save is implied.
 - Check session pinning, per-item receipts, Master protection, and duplicate or
   conflicting target validation.
 
-### Plan one-shot behavior
+### Plan application
 
-- Trace plan creation, retrieval, application, and terminal state transitions.
-- Confirm that applying a plan is a distinct destructive operation, occurs at
-  most once, and does not retry a `partial` or `failed` plan automatically.
-- Verify that plans and peak watches are process-local and that a restart does
-  not create durable project or approval state.
+- Trace how plans become changes: `processing_plan`, `sound_plan_palette`,
+  `review_plan_revision`, `mixer_plan_gain_staging`, and `run_validate` leave
+  the project unchanged, and only the separate apply calls
+  (`processing_apply`, `sound_apply_palette`, `review_apply_revision`,
+  `project_apply_edits`, `run_execute`, and `run_continue`) change it.
+- Confirm that applying is a distinct destructive call, that a completed
+  Production Run operation is never re-run, that an operation with an unknown
+  outcome is never replayed, and that a `blocked`, `failed`, or `stopped` run
+  is not retried automatically.
+- Verify that `sound_plan_palette` palettes and peak watches are
+  process-local, that saved Production Runs and opted-in Review Sessions
+  survive a restart only as local records, and that a restart creates no
+  project or approval state.
 
 ### Undo evidence
 
@@ -311,9 +325,9 @@ not be retried for the caller.
 
 ### No implicit save
 
-Search every bridge and host workflow for save calls, including batches, plans,
-arrangement preparation, option sweeps, Piano Roll operations, and acceptance
-harnesses. Confirm that project dirty state and undo observations are reported
+Search every bridge and host workflow for save calls, including batches,
+per-target setters, plans, pattern creation, option sweeps, Piano Roll
+operations, and acceptance harnesses. Confirm that project dirty state and undo observations are reported
 honestly and that neither successful readback nor a completed plan saves the
 project.
 

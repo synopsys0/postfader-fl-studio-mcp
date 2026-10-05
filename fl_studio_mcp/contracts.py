@@ -692,7 +692,7 @@ class VerifiedPluginParameterWrite(VerifiedWrite):
     # landed on the requested value. "display_change_only" proves it moved but
     # not where it moved to, because FL's getParamValue keeps returning the
     # previous number and cannot cross-check the destination; prefer
-    # fl_set_plugin_param_display when the destination has to be guaranteed.
+    # a display_value write when the destination has to be guaranteed.
     verification_basis_detail: PluginVerificationBasis
     bridge_command: Literal["plugin.set_param"] = "plugin.set_param"
     slot_index: int = Field(ge=0, le=9)

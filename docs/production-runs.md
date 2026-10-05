@@ -45,13 +45,13 @@ the old write-mode transition before every operation.
 ## Creation readiness and phases
 
 For a complete creation request, PostFader performs one read-only readiness
-preflight before the first mutation. The same service is available directly as
-`postfader_creation_readiness`, and the normal `postfader_execute_run` path
-uses it internally. It aggregates independently detectable blockers and
-non-blocking limitations across the connection/bridge, Piano Roll, loaded
-instrument pool, drum coverage, patterns and arrangement, mixer/effect
-coverage, and manual-scope dimensions. Readiness does not enable writes,
-change FL Studio, or claim that a sound was heard.
+preflight before the first mutation. The normal `run_execute` path uses it
+internally, and `run_validate` with `include_readiness=true` returns the same
+scorecard in its `readiness` field. The preflight aggregates independently
+detectable blockers and non-blocking limitations across the connection/bridge,
+Piano Roll, loaded instrument pool, drum coverage, patterns and arrangement,
+mixer/effect coverage, and manual-scope dimensions. Readiness does not enable
+writes, change FL Studio, or claim that a sound was heard.
 
 The run caches a bounded context snapshot containing the session and relevant
 target fingerprints, project checkpoint, palette/preset/drum/effect digests,
@@ -81,22 +81,25 @@ continuation; completed receipts are never rewritten.
 
 The normal high-level flow is:
 
-1. `postfader_describe_operations` returns the exact fields of the operations
-   the AI plans to use. The plan schemas in the tool listing name operations
-   but don't spell out each one's fields, which keeps the listing small.
-2. `postfader_validate_run` checks the request and plan without enabling
-   writes or mutating FL Studio. It returns the plan digest, resolved order,
-   required capabilities, expected mutation categories, and known blockers.
-3. `postfader_execute_run` accepts the request and plan, validates them again,
+1. `run_describe_operations` returns the exact fields of the operations the AI
+   plans to use. The plan schemas in the tool listing name operations but
+   don't spell out each one's fields, which keeps the listing small.
+2. `run_validate` checks the request and plan without enabling writes or
+   mutating FL Studio. It returns `{validation, readiness}`: `validation`
+   holds the plan digest, resolved order, required capabilities, expected
+   mutation categories, and known blockers; `readiness` holds the setup
+   scorecard when `include_readiness=true` and is null otherwise. This step is
+   optional and meant for when the user wants a plan reviewed or a diagnosis.
+3. `run_execute` accepts the request and plan, validates them itself,
    captures the current session fingerprint, enables the existing session write
    gate once when authorized, and executes the bounded plan.
-4. `postfader_get_run` returns current or journaled state and a concise
-   summary. `postfader_list_runs` finds recent run IDs after an MCP restart.
-5. `postfader_continue_run` accepts additional operations, a plan delta, or a
+4. `run_get` returns current or journaled state and a concise summary.
+   `run_list` finds recent run IDs after an MCP restart.
+5. `run_continue` accepts additional operations, a plan delta, or a
    replacement for the not-yet-executed remainder. Completed receipts cannot
    be rewritten. Use `delta={"mode":"resume"}` to continue the saved plan.
-6. `postfader_stop_run` prevents future operations. It does not undo changes
-   that already completed.
+6. `run_stop` prevents future operations. It does not undo changes that
+   already completed.
 
 Use lower-level tools for a precise one-off change. Use a Production Run when
 the requested outcome spans several supported creative, arrangement, Piano
@@ -127,9 +130,9 @@ operation union supports:
 - planning and applying a Sound Palette, creating a section-scoped palette
   variation, selecting an exact loaded plug-in preset or drum kit, inspecting a
   drum map, and recording explicit local sound feedback; and
-- applying an existing closed verified batch of supported mixer, channel,
-  pattern, Playlist-track metadata/state, tempo, routing, and loaded plug-in
-  parameter changes.
+- applying a closed verified batch of supported mixer, channel, pattern,
+  Playlist-track metadata/state, tempo, routing, and loaded plug-in parameter
+  changes (the same edits that `project_apply_edits` takes).
 
 Generated sequences and sound palettes are structured outputs, not opaque
 Python objects. The sound operations are:
@@ -232,10 +235,13 @@ variation request so anchors remain stable across sections.
 When processing is requested, the run evaluates effect coverage before writing
 parameters. A semantic action is eligible only when a loaded target, Atlas
 capability evidence, a compatible adapter, and runtime control evidence agree.
-The plan prefers displayed-value or exact-option setters and the executor uses
-the existing later-tick readback boundary. Missing effects or unresolved
-controls remain visible as `dry_missing_effects` or partial processing; an
-Atlas product by itself never creates a processing target.
+Each action's resolved control records its `setter`, the
+`plugin_set_parameter` value argument that writes the control; the plan
+prefers `display_value` or exact `option` writes over a raw
+`normalized_value`, and the executor uses the existing later-tick readback
+boundary. Missing effects or unresolved controls remain visible as
+`dry_missing_effects` or partial processing; an Atlas product by itself never
+creates a processing target.
 
 ## Durable run journal
 
@@ -245,9 +251,9 @@ in a local SQLite journal. The default file is
 folder; `POSTFADER_PRODUCTION_RUN_PATH` overrides it. The database opens lazily
 when a run is created or looked up. No audio or project files are copied into it.
 
-After restarting MCP, call `postfader_list_runs`, inspect a selected run with
-`postfader_get_run`, and continue its remaining plan with
-`postfader_continue_run(run_id=..., delta={"mode":"resume"})`. Recovery rebuilds
+After restarting MCP, call `run_list`, inspect a selected run with `run_get`,
+and continue its remaining plan with
+`run_continue(run_id=..., delta={"mode":"resume"})`. Recovery rebuilds
 typed output references and rechecks the live session and targets. It does not
 restore write-mode ownership or reuse cached readiness. Piano Roll setup and
 process-local Sound Selection dependencies may need refreshing.
@@ -266,7 +272,7 @@ version manually in FL Studio after reviewing the receipts and warnings.
 
 Sound Selection chooses only from generators and effects already loaded in the
 current project. Atlas-only products can be recommended but cannot become run
-assignments. On macOS the separate `plugins_load` host tool can add a missing
+assignments. On macOS the separate `plugin_load` host tool can add a missing
 instrument or effect before planning the run. Removal and replacement remain
 unavailable. Loop Starter is a separate explicit source strategy;
 its reroll has dispatch-only identity and is not a verified palette assignment.
@@ -301,9 +307,10 @@ point. A send level requires an existing route. Plug-in operations target
 already loaded, supported parameters; unprofiled controls remain unsafe to
 modify. Live-project rendering, project saving, Playlist clip creation,
 and live-audio claims remain explicitly unsupported. The separate
-`postfader_render_saved_project` host tool renders an already-saved `.flp`
-through FL Studio's command-line exporter; it is not a live Production Run operation.
-Likewise, the macOS `plugins_load` host tool can add an instrument or effect
+`render_start_job` host tool renders an already-saved `.flp` through FL
+Studio's command-line exporter as a background job; it is not a live
+Production Run operation.
+Likewise, the macOS `plugin_load` host tool can add an instrument or effect
 before a run, then the run can use its verified inventory target. Plug-in
 insertion is not yet an executable Production Run operation.
 

@@ -105,14 +105,12 @@ async def authoritative_tool_surface() -> ToolSurface:
     # isolated one-tool acceptance worker: that worker intentionally starts
     # with fresh process state. Its creating workflow has dedicated tests.
     session_workflow_reads = {
-        "postfader_review_start",
-        "postfader_review_attach_assets",
-        "postfader_review_evaluate",
-        "postfader_review_get",
-        "postfader_review_compare",
-        "postfader_review_plan_revision",
-        "postfader_delivery_manifest",
-        "postfader_review_export_handoff",
+        "review_start",
+        "review_attach_assets",
+        "review_evaluate",
+        "review_get",
+        "review_compare",
+        "review_plan_revision",
     }
     workflow_reads = tuple(
         name
@@ -124,7 +122,7 @@ async def authoritative_tool_surface() -> ToolSurface:
                     "required", ()
                 )
             )
-            & {"watch_id", "plan_id", "palette_id", "review_session_id", "job_id"}
+            & {"watch_id", "palette_id", "review_session_id", "job_id"}
         )
     )
     reads = tuple(name for name in all_reads if name not in set(workflow_reads))
@@ -471,95 +469,78 @@ def read_acceptance_arguments(
         if sound_selection_channel_index is None
         else sound_selection_channel_index
     )
+    plugin_target = {
+        "kind": "mixer_effect",
+        "track_index": plugin_track_index,
+        "slot_index": plugin_slot_index,
+    }
+    if plugin_track_index == 0:
+        plugin_target["allow_master"] = True
+    read_only_run_request = {
+        "brief": "Generate a bounded read-only melody proposal.",
+        "scope": {
+            "kind": "whole_project",
+            "description": "Proposal only; do not change the project.",
+        },
+        "allowed_changes": ["composition"],
+        "completion_target": "One structured melody option.",
+        "interaction_policy": "plan_only",
+        "authorized_to_modify": False,
+    }
     return {
-        "fl_get_capabilities": {},
-        "fl_get_project_summary": {},
-        "fl_get_transport_state": {},
-        "fl_get_selected_range": {},
-        "fl_list_mixer_tracks": {
+        "session_get_capabilities": {},
+        "project_get_summary": {},
+        "project_get_history": {},
+        "playlist_get_selection": {},
+        "mixer_list_tracks": {
             "only_used": False,
             "include_peaks": False,
             "max_tracks": None,
         },
-        "fl_inspect_mixer_track": {"track_index": mixer_track_index},
-        "plugins_scan_loaded_plugins": {
-            "only_used": False,
-            "include_channel_generators": True,
-        },
-        "plugins_inspect_parameter_map": {
-            "track_index": plugin_track_index,
-            "slot_index": plugin_slot_index,
-            "limit": 128,
-            "offset": 0,
-        },
-        "plugins_scan_parameters": {
-            "track_index": plugin_track_index,
-            "slot_index": plugin_slot_index,
+        "mixer_get_track": {"track_index": mixer_track_index},
+        "plugin_list_loaded": {"only_used": False},
+        "plugin_list_parameters": {
+            "target": dict(plugin_target),
             "start": 0,
             "max_indices": 8192,
             "max_results": 2048,
         },
-        "plugins_atlas_search": {
+        "plugin_list_presets": {
+            "target": dict(plugin_target),
+            "start": 0,
+            "limit": 64,
+            "include_current": True,
+            "include_empty_names": False,
+        },
+        "plugin_get_pad_map": {
+            "target": {
+                "kind": "channel_generator",
+                "channel_index": sound_channel,
+            }
+        },
+        "atlas_search": {
             "request": {"query": "compressor", "limit": 16}
         },
-        "plugins_atlas_get_product": {
+        "atlas_get_product": {
             "request": {"product_id": "image-line.fruity-compressor"}
         },
-        "plugins_atlas_recommend": {
+        "atlas_recommend": {
             "request": {
                 "query": "control vocal dynamics",
                 "prefer_stock": True,
                 "limit": 16,
             }
         },
-        "plugins_atlas_inspect_loaded": {
+        "atlas_match_loaded": {
             "request": {"only_used": False, "match_limit": 16}
         },
-        "copilot_capture_readonly_inspection": {
-            "only_used": False,
-            "parameter_limit": 64,
-            "max_plugins": 64,
-        },
-        "fl_list_channels": {},
-        "fl_list_patterns": {},
-        "fl_find_empty_pattern": {"start_pattern_number": pattern_number},
-        "fl_list_playlist_tracks": {},
-        "fl_get_project_history": {},
-        "fl_get_plugin_preset_count": {
-            "target": {
-                "kind": "mixer_effect",
-                "track_index": plugin_track_index,
-                "slot_index": plugin_slot_index,
-            }
-        },
-        "plugins_list_presets": {
-            "target": {
-                "kind": "mixer_effect",
-                "track_index": plugin_track_index,
-                "slot_index": plugin_slot_index,
-            },
-            "start": 0,
-            "limit": 64,
-            "include_current": True,
-            "include_empty_names": False,
-        },
-        "plugins_get_current_preset": {
-            "target": {
-                "kind": "mixer_effect",
-                "track_index": plugin_track_index,
-                "slot_index": plugin_slot_index,
-            }
-        },
-        "plugins_inspect_pad_map": {
-            "target": {
-                "kind": "channel_generator",
-                "channel_index": sound_channel,
-            }
-        },
-        "fl_get_step_sequence": {
+        "channel_list": {},
+        "channel_get_steps": {
             "pattern_number": pattern_number,
             "channel_index": channel_index,
         },
+        "pattern_list": {},
+        "playlist_list_tracks": {},
         "audio_analyze_file": {"path": os.fspath(reference), "max_seconds": 30.0},
         "audio_compare_files": {
             "reference_path": os.fspath(reference),
@@ -568,42 +549,27 @@ def read_acceptance_arguments(
         },
         "audio_analyze_masking": {
             "vocal_path": os.fspath(vocal),
-            "instrument_path": os.fspath(reference),
+            "instrumental_path": os.fspath(reference),
             "max_seconds": 30.0,
         },
-        "audio_find_recent_bounces": {"limit": 200},
-        "mix_doctor": {
+        "audio_diagnose_mix": {
             "candidate_path": os.fspath(candidate),
             "reference_path": os.fspath(reference),
             "vocal_path": os.fspath(vocal),
             "instrumental_path": os.fspath(reference),
             "max_seconds": 30.0,
         },
-        "mix_reference_recommendations": {
-            "reference_path": os.fspath(reference),
-            "candidate_path": os.fspath(candidate),
+        "audio_list_recent_bounces": {"limit": 200},
+        "audio_estimate_tempo_and_key": {
+            "path": os.fspath(reference),
             "max_seconds": 30.0,
         },
-        "mix_masking_recommendations": {
-            "vocal_path": os.fspath(vocal),
-            "instrumental_path": os.fspath(reference),
+        "audio_transcribe_melody": {
+            "path": os.fspath(vocal),
+            "tempo_bpm": 120.0,
             "max_seconds": 30.0,
         },
-        "mix_list_plugin_profiles": {},
-        "mix_inspect_plugin_compatibility": {"only_used": False},
-        "mix_resolve_processing_intent": {
-            "intent": "reduce_mud",
-            "track_index": mixer_track_index,
-            "strength": 0.5,
-        },
-        "mix_finish_assessment": {
-            "candidate_path": os.fspath(candidate),
-            "reference_path": os.fspath(reference),
-            "vocal_path": os.fspath(vocal),
-            "instrumental_path": os.fspath(reference),
-            "max_seconds": 30.0,
-        },
-        "sound_selection_inventory": {
+        "sound_get_inventory": {
             "request": {
                 "brief": "Inspect a bounded loaded sound pool for acceptance.",
                 "source_strategy": "mixed",
@@ -619,50 +585,17 @@ def read_acceptance_arguments(
             "include_pad_maps": True,
             "include_atlas": True,
         },
-        "sound_selection_plan": {
+        "sound_plan_palette": {
             "request": {
                 "brief": "Plan one bounded acceptance sound palette.",
                 "source_strategy": "mixed",
                 "persist_history": False,
             }
         },
-        "sound_selection_history_status": {},
-        "postfader_creation_readiness": {
-            "request": {
-                "brief": "Generate a bounded read-only melody proposal.",
-                "scope": {
-                    "kind": "whole_project",
-                    "description": "Proposal only; do not change the project.",
-                },
-                "allowed_changes": ["composition"],
-                "completion_target": "One structured melody option.",
-                "interaction_policy": "plan_only",
-                "authorized_to_modify": False,
-            },
-            "plan": {
-                "plan_id": "acceptance-readiness-plan",
-                "operations": [
-                    {
-                        "operation_id": "acceptance-melody",
-                        "operation": "generate_melody",
-                        "bars": 1,
-                        "seed": 20,
-                    }
-                ],
-            },
-        },
-        "postfader_validate_run": {
-            "request": {
-                "brief": "Generate a bounded read-only melody proposal.",
-                "scope": {
-                    "kind": "whole_project",
-                    "description": "Proposal only; do not change the project.",
-                },
-                "allowed_changes": ["composition"],
-                "completion_target": "One structured melody option.",
-                "interaction_policy": "plan_only",
-                "authorized_to_modify": False,
-            },
+        "sound_get_history": {},
+        "run_describe_operations": {"operations": ["generate_melody"]},
+        "run_validate": {
+            "request": dict(read_only_run_request),
             "plan": {
                 "plan_id": "acceptance-read-plan",
                 "operations": [
@@ -674,21 +607,16 @@ def read_acceptance_arguments(
                     }
                 ],
             },
+            "include_readiness": True,
         },
-        "postfader_get_run": {"run_id": "0" * 32},
-        "postfader_list_runs": {},
-        "postfader_describe_operations": {"operations": ["generate_melody"]},
+        "run_get": {"run_id": "0" * 32},
+        "run_list": {},
         "processing_plan": {
             "request": {
                 "request_id": "acceptance-processing-plan",
                 "completion_target": "restrained_first_pass",
                 "role": "lead",
-                "target": {
-                    "kind": "mixer_effect",
-                    "track_index": plugin_track_index,
-                    "slot_index": plugin_slot_index,
-                    "allow_master": plugin_track_index == 0,
-                },
+                "target": dict(plugin_target),
                 "goal": "add_depth",
                 "processing_required": False,
                 "allow_master": plugin_track_index == 0,
@@ -703,15 +631,6 @@ def read_acceptance_arguments(
             "seed": 20,
         },
         "compose_drums": {"style": "house", "bars": 4, "seed": 20},
-        "audio_estimate_tempo_and_key": {
-            "path": os.fspath(reference),
-            "max_seconds": 30.0,
-        },
-        "audio_transcribe_melody": {
-            "path": os.fspath(vocal),
-            "tempo_bpm": 120.0,
-            "max_seconds": 30.0,
-        },
     }
 
 
@@ -727,21 +646,15 @@ def _validate_read_coverage(
             % (sorted(expected - actual), sorted(actual - expected))
         )
     large_read_requirements = {
-        "fl_list_mixer_tracks": arguments["fl_list_mixer_tracks"].get("only_used")
+        "mixer_list_tracks": arguments["mixer_list_tracks"].get("only_used")
         is False
-        and arguments["fl_list_mixer_tracks"].get("max_tracks") is None,
-        "plugins_inspect_parameter_map": arguments["plugins_inspect_parameter_map"].get(
-            "limit"
-        )
-        == 128,
-        "plugins_scan_parameters": arguments["plugins_scan_parameters"].get(
+        and arguments["mixer_list_tracks"].get("max_tracks") is None,
+        "plugin_list_parameters": arguments["plugin_list_parameters"].get(
             "max_indices"
         )
         == 8192,
-        "plugins_scan_loaded_plugins": arguments["plugins_scan_loaded_plugins"].get(
-            "include_channel_generators"
-        )
-        is True,
+        "plugin_list_loaded": arguments["plugin_list_loaded"].get("only_used")
+        is False,
     }
     missing = [
         name for name, satisfied in large_read_requirements.items() if not satisfied
@@ -941,7 +854,7 @@ async def run_read_acceptance(
                     "monotonic_elapsed_seconds": elapsed(),
                 }
             )
-            if name == "fl_get_project_summary" and isinstance(payload, dict):
+            if name == "project_get_summary" and isinstance(payload, dict):
                 connection = payload.get("connection")
                 if isinstance(connection, dict):
                     report["connection"] = {
@@ -1136,10 +1049,10 @@ def _resolve_restore_templates(
     if isinstance(value, dict) and set(value) == {"$after_step_digest"}:
         if (
             value["$after_step_digest"] is not True
-            or mutation_tool != "fl_set_step_sequence"
+            or mutation_tool != "channel_set_steps"
         ):
             raise AcceptanceConfigurationError(
-                "$after_step_digest is only valid for fl_set_step_sequence restoration"
+                "$after_step_digest is only valid for channel_set_steps restoration"
             )
         from .track_b_contracts import compute_step_sequence_digest
 
@@ -1162,11 +1075,14 @@ def _resolve_restore_templates(
             cells=cells,
         )
     if isinstance(value, dict) and set(value) == {"$before_loop_mode"}:
-        if value["$before_loop_mode"] is not True:
+        # The value is the captured loop mode's path, such as
+        # "transport.loop_mode" in a project_get_summary read.
+        loop_mode_path = value["$before_loop_mode"]
+        if not isinstance(loop_mode_path, str) or not loop_mode_path:
             raise AcceptanceConfigurationError(
-                "$before_loop_mode must have the literal value true"
+                "$before_loop_mode must name the captured loop_mode path"
             )
-        raw = _path(before, "loop_mode")
+        raw = _path(before, loop_mode_path)
         mapping = {0: "pattern", 1: "song", "pattern": "pattern", "song": "song"}
         try:
             resolved_loop_mode = mapping[raw]
@@ -1267,18 +1183,14 @@ def validate_write_scenario(surface: ToolSurface, scenario: Mapping[str, Any]) -
     names = [item.get("tool") for item in operations if isinstance(item, dict)]
     expected = set(surface.persistent_write_tools)
     actual = set(names)
-    if actual != expected or len(names) != len(expected):
+    # A per-target setter changes many fields, so a scenario may exercise one
+    # tool in several operations (normalized and dB volume, for example). It
+    # must still reach every persistent-write tool and nothing else.
+    if actual != expected:
         raise AcceptanceConfigurationError(
-            "write scenario does not cover the authoritative persistent-write surface exactly once; "
-            "missing=%s extra_or_duplicate=%s"
-            % (
-                sorted(expected - actual),
-                sorted(
-                    name
-                    for name in names
-                    if names.count(name) > 1 or name not in expected
-                ),
-            )
+            "write scenario does not cover the authoritative persistent-write surface; "
+            "missing=%s extra=%s"
+            % (sorted(expected - actual), sorted(actual - expected))
         )
     if set(surface.ephemeral_tools) & actual:
         raise AcceptanceConfigurationError(
@@ -1470,31 +1382,32 @@ def prepare_write_scenario(
         verify_expected = tuple(
             resolve_evidence_reference(reference, before) for reference in verify_specs
         )
-        if tool == "fl_set_playing" and mutation_arguments.get("playing") is True:
-            captured_playing = _path(before, "playing")
-            captured_position = _path(before, "song_position_normalized")
+        if tool == "transport_set" and mutation_arguments.get("playing") is True:
+            captured_playing = _path(before, "transport.playing")
+            captured_position = _path(before, "transport.song_position_normalized")
             if captured_playing is not False:
                 raise AcceptanceConfigurationError(
-                    "fl_set_playing=true requires captured playing=false"
+                    "transport_set playing=true requires captured playing=false"
                 )
+            # transport_set pauses before it moves the playhead, so one
+            # restore call can stop playback and put the position back.
             if (
-                len(restore_actions) < 2
-                or restore_actions[0][0] != "fl_set_playing"
+                not restore_actions
+                or restore_actions[0][0] != "transport_set"
                 or restore_actions[0][1].get("playing") is not False
-                or restore_actions[1][0] != "fl_set_song_position"
-                or restore_actions[1][1].get("position_normalized") != captured_position
+                or restore_actions[0][1].get("position_normalized") != captured_position
             ):
                 raise AcceptanceConfigurationError(
-                    "fl_set_playing=true must restore playing=false first and "
-                    "then restore captured song_position_normalized"
+                    "transport_set playing=true must first restore playing=false "
+                    "together with the captured song_position_normalized"
                 )
             if (
-                "playing" not in verify_specs
-                or "song_position_normalized" not in verify_specs
+                "transport.playing" not in verify_specs
+                or "transport.song_position_normalized" not in verify_specs
             ):
                 raise AcceptanceConfigurationError(
-                    "fl_set_playing=true must independently verify playing and "
-                    "song_position_normalized"
+                    "transport_set playing=true must independently verify "
+                    "transport.playing and transport.song_position_normalized"
                 )
         prepared.append(
             PreparedWriteOperation(
@@ -1609,8 +1522,8 @@ async def run_write_acceptance(
     if not save_checkpoint("preflight_attempt", writes_attempted=0):
         return report
     try:
-        project = tool_payload(await invoke("fl_get_project_summary", {}))
-        transport = tool_payload(await invoke("fl_get_transport_state", {}))
+        project = tool_payload(await invoke("project_get_summary", {}))
+        transport = project.get("transport") if isinstance(project, dict) else None
     except Exception as exc:
         report["overall"] = "fail"
         report["preflight"] = {"status": "failed", "error": str(exc)}

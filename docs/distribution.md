@@ -17,12 +17,12 @@ open, on Windows and macOS.
 
 ## Release scope and directory copy
 
-PostFader **V11 (11.0.0)** exposes **135 tools and 8 resources**. Use that
+PostFader **V12 (12.0.0)** exposes **85 tools and 8 resources**. Use that
 count in current listings. Older version counts belong only in historical
 release notes. The immutable package version, registry record, and GitHub tag
 must agree before a listing is marked updated.
 
-> PostFader is a local FL Studio MCP server for Windows and macOS. Its 135
+> PostFader is a local FL Studio MCP server for Windows and macOS. Its 85
 > tools and 8 resources cover project inspection, mixer and plug-in control,
 > exported-mix analysis, MIDI composition, sound selection, multi-step
 > Production Runs, draft review, and saved-project rendering. It starts
@@ -80,11 +80,12 @@ packages, a Claude Desktop extension, and Python distributions are available.
   Master protection.
 - Supported direct setters use later-update readback; weaker evidence is
   labeled partial or unverified.
-- The current V11 surface has 135 tools and 8 live resources, including
-  13 Creation Review tools and 9 corresponding Production Run operations.
-- The tool listing is compact: Production Run operations are described on
-  demand by `postfader_describe_operations`, and every call is still
-  validated against its full model.
+- The current V12 surface has 85 tools and 8 live resources, including
+  11 Creation Review tools and 9 corresponding Production Run operations.
+- The tool listing is compact: input and output schemas are advertised in a
+  reduced form, Production Run operations are described on demand by
+  `run_describe_operations`, and every call is still validated against its
+  full model.
 - Plug-in loading on macOS requires session write mode, like every other
   change.
 - Creation Review measures explicit bounces, preserves producer feedback and
@@ -112,7 +113,7 @@ packages, a Claude Desktop extension, and Python distributions are available.
 - Every plug-in is fully supported.
 - PostFader can hear FL Studio's live audio output.
 - PostFader can load every plug-in, insert on Windows, or remove/reorder plug-ins.
-- Older release downloads contain V11 features.
+- Older release downloads contain V12 features.
 - PostFader is officially ranked first or independently certified as the best
   FL Studio MCP server without current, attributable evidence.
 - PostFader cannot damage or dirty a project.
@@ -141,7 +142,7 @@ Do not add `remote MCP`, `hosted service`, `telemetry`, `rollback`, or
 | Sound Selection | [docs/sound-selection.md](sound-selection.md) |
 | Creation Pipeline | [docs/creation-pipeline.md](creation-pipeline.md) |
 | Creation Review | [docs/creation-review.md](creation-review.md) |
-| V11 release notes | [docs/releases/v11.0.0.md](releases/v11.0.0.md) |
+| V12 release notes | [docs/releases/v12.0.0.md](releases/v12.0.0.md) |
 | Tool reference | [docs/tools.md](tools.md) |
 | FAQ | [docs/faq.md](faq.md) |
 | Comparison | [docs/comparison.md](comparison.md) |

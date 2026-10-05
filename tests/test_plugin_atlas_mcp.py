@@ -70,12 +70,12 @@ class PluginAtlasMCPTests(unittest.TestCase):
         tools = {
             tool.name: tool
             for tool in asyncio.run(mcp.list_tools())
-            if tool.name.startswith("plugins_atlas_")
+            if tool.name.startswith("atlas_")
         }
         for name in (
-            "plugins_atlas_search",
-            "plugins_atlas_get_product",
-            "plugins_atlas_recommend",
+            "atlas_search",
+            "atlas_get_product",
+            "atlas_recommend",
         ):
             with self.subTest(tool=name):
                 annotations = tools[name].annotations
@@ -92,7 +92,7 @@ class PluginAtlasMCPTests(unittest.TestCase):
         tool = next(
             tool
             for tool in asyncio.run(mcp.list_tools())
-            if tool.name == "plugins_atlas_inspect_loaded"
+            if tool.name == "atlas_match_loaded"
         )
         self.assertIsNotNone(tool.annotations)
         assert tool.annotations is not None

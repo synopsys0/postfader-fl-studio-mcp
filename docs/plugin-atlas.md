@@ -53,9 +53,9 @@ processing candidate must be a currently loaded mixer effect with a matching
 Atlas capability, compatible adapter, and runtime control evidence. The
 read-only `processing_plan` tool reports candidates, requested technique
 categories, resolved display/option controls, missing capabilities, and
-warnings. `processing_apply_plan` applies one authorized plan through the
-existing verified setters and later-idle-tick readback; it does not bypass
-Master protection or claim that the result was heard.
+warnings. `processing_apply` applies one authorized plan through the same
+verified writes as `plugin_set_parameter` and later-idle-tick readback; it does
+not bypass Master protection or claim that the result was heard.
 
 When a complete creation request includes processing, Production Runs keep
 effect coverage in the readiness report and return `restrained_first_pass`,
@@ -179,13 +179,16 @@ runtime state.
 
 The MCP server exposes four generic, read-only Atlas tools:
 
-- `plugins_atlas_search` searches static knowledge with bounded text, vendor,
+- `atlas_search` searches static knowledge with bounded text, vendor,
   kind, stock, and result filters.
-- `plugins_atlas_get_product` fetches one product by exact ID together with
-  related vendor, adapter, evidence, and stock-alternative records.
-- `plugins_atlas_recommend` ranks products or explicit stock alternatives from
+- `atlas_get_product` fetches one product by exact ID together with
+  related vendor, adapter, evidence, and stock-alternative records. Each
+  adapter control's `preferred_write_value` names the `plugin_set_parameter`
+  argument that writes it best (`display_value`, `option`, or
+  `normalized_value`), or is `unknown`.
+- `atlas_recommend` ranks products or explicit stock alternatives from
   bounded production criteria.
-- `plugins_atlas_inspect_loaded` matches the current target-aware Track B
+- `atlas_match_loaded` matches the current target-aware Track B
   inventory to static Atlas knowledge.
 
 The first three are local closed-world reads. The loaded-inventory tool reads

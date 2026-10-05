@@ -48,12 +48,12 @@ class SoundSelectionMcpTests(unittest.TestCase):
             set(arguments),
         )
         self.assertEqual(
-            arguments["plugins_inspect_pad_map"]["target"],
+            arguments["plugin_get_pad_map"]["target"],
             {"kind": "channel_generator", "channel_index": 2},
         )
 
     def test_sound_selection_apply_requires_session_fingerprint_before_service_call(self) -> None:
-        tool = _tool_map()["sound_selection_apply"]
+        tool = _tool_map()["sound_apply_palette"]
         self.assertIn("session_fingerprint", tool.input_schema["required"])
         with self.assertRaisesRegex(
             Exception,
@@ -61,7 +61,7 @@ class SoundSelectionMcpTests(unittest.TestCase):
         ):
             asyncio.run(
                 mcp.call_tool(
-                    "sound_selection_apply",
+                    "sound_apply_palette",
                     {"palette": "missing", "authorized_to_modify": True},
                 )
             )
@@ -69,7 +69,7 @@ class SoundSelectionMcpTests(unittest.TestCase):
     def test_missing_palette_lookup_is_a_strict_process_local_result(self) -> None:
         result = asyncio.run(
             mcp.call_tool(
-                "sound_selection_get",
+                "sound_get_palette",
                 {"palette_id": "missing-mcp-palette"},
             )
         )
@@ -165,17 +165,16 @@ class SoundSelectionMcpTests(unittest.TestCase):
     def _fake_live_surface():
         return SimpleNamespace(
             all_tools={
-                "sound_selection_inventory",
-                "plugins_list_presets",
-                "plugins_get_current_preset",
-                "plugins_inspect_pad_map",
-                "sound_selection_plan",
-                "fl_select_plugin_preset",
-                "sound_selection_apply",
-                "postfader_validate_run",
-                "postfader_execute_run",
-                "postfader_get_run",
-                "postfader_continue_run",
+                "sound_get_inventory",
+                "plugin_list_presets",
+                "plugin_get_pad_map",
+                "sound_plan_palette",
+                "plugin_select_preset",
+                "sound_apply_palette",
+                "run_validate",
+                "run_execute",
+                "run_get",
+                "run_continue",
             }
         )
 
@@ -224,7 +223,7 @@ class SoundSelectionMcpTests(unittest.TestCase):
 
         async def fake_call(name, arguments, _timeout):
             calls.append((name, arguments))
-            if name == "sound_selection_inventory":
+            if name == "sound_get_inventory":
                 return {
                     "session_fingerprint": session,
                     "loaded_generators": [
@@ -239,37 +238,35 @@ class SoundSelectionMcpTests(unittest.TestCase):
                         }
                     ],
                 }
-            if name == "plugins_list_presets":
+            if name == "plugin_list_presets":
+                # One page carries the presets and the current preset, like
+                # PluginPresetPage; the script also reads it with limit=1.
                 return {
                     "session_fingerprint": session,
                     "target_fingerprint": target_fingerprint,
                     "presets": [
                         {"name": "Initial", "index": 0},
                         {"name": "Acceptance Lead", "index": 1},
-                    ],
-                }
-            if name == "plugins_get_current_preset":
-                return {
-                    "session_fingerprint": session,
+                    ][: arguments.get("limit", 2)],
                     "current_preset_name": state["preset"],
                     "current_preset_index": 0
                     if state["preset"] == "Initial"
                     else 1,
                     "current_preset_status": "stable",
                 }
-            if name == "plugins_inspect_pad_map":
+            if name == "plugin_get_pad_map":
                 return {
                     "session_fingerprint": session,
                     "pad_count": 1,
                     "complete": True,
                     "pads": [{"pad_index": 0}],
                 }
-            if name == "sound_selection_plan":
+            if name == "sound_plan_palette":
                 return {
                     "palette_id": "palette-acceptance",
                     "assignments": [assignment],
                 }
-            if name == "fl_select_plugin_preset":
+            if name == "plugin_select_preset":
                 if unknown_selection:
                     return {
                         "verified": False,
@@ -290,16 +287,16 @@ class SoundSelectionMcpTests(unittest.TestCase):
                         "identity_status": "stable",
                     },
                 }
-            if name == "sound_selection_apply":
+            if name == "sound_apply_palette":
                 return {"status": "applied", "verified_count": 1, "blockers": []}
-            if name == "postfader_validate_run":
-                return {"valid": True, "blockers": []}
-            if name == "postfader_execute_run":
+            if name == "run_validate":
+                return {"validation": {"valid": True, "blockers": []}, "readiness": None}
+            if name == "run_execute":
                 return {"status": "completed", "run_id": run_id}
-            if name == "postfader_get_run":
+            if name == "run_get":
                 outputs = final_outputs if state["continued"] else initial_outputs
                 return {"state": {"generated_outputs": outputs}}
-            if name == "postfader_continue_run":
+            if name == "run_continue":
                 state["continued"] = True
                 return {"status": "completed", "run_id": run_id}
             raise AssertionError(name)
@@ -329,19 +326,19 @@ class SoundSelectionMcpTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _arguments in calls],
             [
-                "sound_selection_inventory",
-                "plugins_list_presets",
-                "plugins_get_current_preset",
-                "plugins_inspect_pad_map",
-                "sound_selection_plan",
-                "fl_select_plugin_preset",
-                "plugins_get_current_preset",
-                "sound_selection_apply",
-                "postfader_validate_run",
-                "postfader_execute_run",
-                "postfader_get_run",
-                "postfader_continue_run",
-                "postfader_get_run",
+                "sound_get_inventory",
+                "plugin_list_presets",
+                "plugin_list_presets",
+                "plugin_get_pad_map",
+                "sound_plan_palette",
+                "plugin_select_preset",
+                "plugin_list_presets",
+                "sound_apply_palette",
+                "run_validate",
+                "run_execute",
+                "run_get",
+                "run_continue",
+                "run_get",
             ],
         )
         self.assertEqual(
@@ -361,7 +358,7 @@ class SoundSelectionMcpTests(unittest.TestCase):
         continuation = next(
             arguments
             for name, arguments in calls
-            if name == "postfader_continue_run"
+            if name == "run_continue"
         )
         self.assertEqual(
             continuation["delta"]["operations"][0]["palette"]["operation_id"],
@@ -393,12 +390,12 @@ class SoundSelectionMcpTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _arguments in calls],
             [
-                "sound_selection_inventory",
-                "plugins_list_presets",
-                "plugins_get_current_preset",
-                "plugins_inspect_pad_map",
-                "sound_selection_plan",
-                "fl_select_plugin_preset",
+                "sound_get_inventory",
+                "plugin_list_presets",
+                "plugin_list_presets",
+                "plugin_get_pad_map",
+                "sound_plan_palette",
+                "plugin_select_preset",
             ],
         )
 

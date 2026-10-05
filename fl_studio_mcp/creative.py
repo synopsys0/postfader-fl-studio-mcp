@@ -2243,8 +2243,8 @@ class _PianoRollRegistry:
             if not self._armed:
                 raise ValueError(
                     "Piano Roll auto-trigger is not armed for this MCP session; call "
-                    "piano_roll_bridge(action='prepare'), run the script once in FL, "
-                    "then call piano_roll_bridge(action='confirm', confirm_user_ran_script=true)"
+                    "piano_roll_setup(action='prepare'), run the script once in FL, "
+                    "then call piano_roll_setup(action='confirm', confirm_user_ran_script=true)"
                 )
 
     def record(

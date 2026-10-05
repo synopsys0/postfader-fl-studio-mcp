@@ -1,9 +1,10 @@
-"""Production-copilot workflows for diagnosis, metering, profiles, and plans.
+"""Production-copilot workflows for mix diagnosis, metering, and gain staging.
 
 Audio judgements in this module are derived from PostFader's real decoded-file
 measurements. Live peak watches use the documented mixer peak getters. Artistic
-recommendations are labelled as policy recommendations and are never applied by
-the read tools; mutations cross the same verified batch kernel as direct tools.
+recommendations are labelled as policy recommendations and are never applied
+here; a gain-staging proposal is applied by the caller through the same
+verified batch kernel as direct edits.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -25,19 +26,14 @@ from .advisory import (
     analyze_masking,
     compare_audio_files,
 )
-from .bridge_client import get_client
 from .readonly_inspector import IncompatibleFLStudio, ReadOnlyGateway, connection_from_ping
-from .track_b_contracts import MixerEffectTarget, PluginTarget, TargetedPluginSummary
-from .performance import TrackBInspector
 from .workflows import (
+    MAX_BATCH_OPERATIONS,
     BatchMixerVolumeDb,
     BatchOperation,
-    VerifiedBatchExecutor,
-    VerifiedBatchResult,
     validate_batch_operations,
 )
 from .contracts import ContractModel, SCHEMA_VERSION
-from .plugin_atlas import AtlasLoadError, load_bundled_registry
 
 
 MIX_POLICY_VERSION = "postfader-mix-policy-1"
@@ -737,439 +733,24 @@ PEAK_WATCHES = PeakWatchRegistry()
 
 
 # ---------------------------------------------------------------------------
-# Plug-in profiles and processing intents
+# Gain staging
 # ---------------------------------------------------------------------------
 
 
-class PluginParameterProfile(MixingModel):
-    role: str = Field(min_length=1, max_length=64)
-    name_candidates: tuple[str, ...]
-    display_unit: str = Field(min_length=1, max_length=32)
-    preferred_write_tool: Literal[
-        "fl_set_plugin_param_display", "fl_set_plugin_param_option", "fl_set_plugin_param"
-    ]
+class GainStagePlan(MixingModel):
+    """Proposed dB fader moves from one peak watch; nothing is applied."""
 
-
-class ProcessingRecipe(MixingModel):
-    recipe_id: str = Field(min_length=1, max_length=64)
-    intent: str = Field(min_length=1, max_length=64)
-    parameter_roles: tuple[str, ...]
-    guidance: str = Field(min_length=1, max_length=512)
-
-
-class PluginAdapterProfile(MixingModel):
-    profile_id: str = Field(min_length=1, max_length=64)
-    plugin_names: tuple[str, ...]
-    category: Literal["equalizer", "compressor", "limiter", "reverb", "delay", "multiband"]
-    supported_intents: tuple[str, ...]
-    parameters: tuple[PluginParameterProfile, ...]
-    recipes: tuple[ProcessingRecipe, ...]
-    provenance: Literal["bundled_postfader_profile"] = "bundled_postfader_profile"
-    exact_version_required: Literal[False] = False
-    warnings: tuple[str, ...] = ()
-
-
-def _profiles_from_atlas() -> tuple[PluginAdapterProfile, ...]:
-    """Adapt bundled Atlas records to the unchanged v0.20 mix contract."""
-
-    profiles: list[PluginAdapterProfile] = []
-    for adapter in load_bundled_registry().adapters:
-        if adapter.provenance != "bundled_postfader_profile":
-            continue
-        parameters: list[PluginParameterProfile] = []
-        for control in adapter.controls:
-            if (
-                control.role is None
-                or control.unit is None
-                or control.preferred_write_tool == "unknown"
-            ):
-                raise ValueError(
-                    f"Atlas adapter {adapter.adapter_id!r} lacks a complete mix-profile control"
-                )
-            parameters.append(
-                PluginParameterProfile(
-                    role=control.role,
-                    name_candidates=control.names,
-                    display_unit=control.unit,
-                    preferred_write_tool=cast(Any, control.preferred_write_tool),
-                )
-            )
-        profiles.append(
-            PluginAdapterProfile(
-                profile_id=adapter.adapter_id,
-                plugin_names=adapter.reported_names,
-                category=cast(Any, adapter.category),
-                supported_intents=adapter.supported_intents,
-                parameters=tuple(parameters),
-                recipes=tuple(
-                    ProcessingRecipe(
-                        recipe_id=recipe.recipe_id,
-                        intent=recipe.intent,
-                        parameter_roles=recipe.parameter_roles,
-                        guidance=recipe.guidance,
-                    )
-                    for recipe in adapter.recipes
-                ),
-                warnings=adapter.warnings,
-            )
-        )
-    return tuple(profiles)
-
-
-try:
-    PLUGIN_PROFILES: tuple[PluginAdapterProfile, ...] = _profiles_from_atlas()
-    _PLUGIN_PROFILE_LOAD_WARNING: str | None = None
-except (AtlasLoadError, TypeError, ValueError) as error:
-    # A catalog-data problem must not disable identity-independent plug-in
-    # inventory and parameter tools. The legacy profile surface degrades to an
-    # empty, explicit result while generic runtime discovery stays available.
-    PLUGIN_PROFILES = ()
-    _PLUGIN_PROFILE_LOAD_WARNING = f"Bundled plug-in profiles are unavailable: {error}"
-
-
-class PluginProfileCatalog(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    profiles: tuple[PluginAdapterProfile, ...]
-    profile_count: int = Field(ge=0)
-    warnings: list[str] = Field(default_factory=list)
-
-
-def list_plugin_profiles(category: str | None = None) -> PluginProfileCatalog:
-    if category is not None and category not in {profile.category for profile in PLUGIN_PROFILES}:
-        raise ValueError("unknown plug-in profile category")
-    profiles = tuple(
-        profile for profile in PLUGIN_PROFILES
-        if category is None or profile.category == category
-    )
-    warnings = [
-        "Profiles match reported plug-in names and parameter labels; FL exposes no exact plug-in version.",
-        "Factory preset names/current preset are not invented because FL exposes no authoritative current-preset getter.",
-    ]
-    if _PLUGIN_PROFILE_LOAD_WARNING is not None:
-        warnings.insert(0, _PLUGIN_PROFILE_LOAD_WARNING)
-    return PluginProfileCatalog(
-        profiles=profiles,
-        profile_count=len(profiles),
-        warnings=warnings,
-    )
-
-
-class LoadedPluginProfileMatch(MixingModel):
-    plugin: TargetedPluginSummary
-    profile_id: str | None = Field(default=None, max_length=64)
-    compatibility: Literal["profiled", "unprofiled"]
-    matched_reported_name: str | None = Field(default=None, max_length=256)
-
-
-class PluginCompatibilityReport(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    observed_at: datetime
-    matches: list[LoadedPluginProfileMatch]
-    profiled_count: int = Field(ge=0)
-    unprofiled_count: int = Field(ge=0)
-    warnings: list[str] = Field(default_factory=list)
-
-
-def _profile_for_name(name: str) -> PluginAdapterProfile | None:
-    folded = name.casefold().strip()
-    for profile in PLUGIN_PROFILES:
-        if any(folded == candidate.casefold() for candidate in profile.plugin_names):
-            return profile
-    return None
-
-
-def inspect_plugin_compatibility(*, only_used: bool = True) -> PluginCompatibilityReport:
-    inventory = TrackBInspector().scan_loaded_plugins(only_used=only_used)
-    matches: list[LoadedPluginProfileMatch] = []
-    for plugin in inventory.plugins:
-        profile = _profile_for_name(plugin.name)
-        matches.append(LoadedPluginProfileMatch(
-            plugin=plugin,
-            profile_id=None if profile is None else profile.profile_id,
-            compatibility="unprofiled" if profile is None else "profiled",
-            matched_reported_name=None if profile is None else plugin.name,
-        ))
-    profiled = sum(match.compatibility == "profiled" for match in matches)
-    return PluginCompatibilityReport(
-        observed_at=_now(),
-        matches=matches,
-        profiled_count=profiled,
-        unprofiled_count=len(matches) - profiled,
-        warnings=list(inventory.warnings) + [
-            "A profile means PostFader knows parameter roles; it does not prove the plug-in version or audible result."
-        ],
-    )
-
-
-ProcessingIntent = Literal[
-    "reduce_mud", "tame_harshness", "add_presence", "add_air",
-    "tighten_low_end", "control_dynamics", "add_punch", "level_vocal",
-    "limit_peaks", "add_depth", "shorten_space", "rhythmic_echo",
-]
-
-
-class ProcessingIntentStep(MixingModel):
-    order: int = Field(ge=1)
-    goal: str = Field(min_length=1, max_length=512)
-    category: str = Field(min_length=1, max_length=64)
-    compatible_profile_ids: tuple[str, ...]
-    loaded_targets: tuple[PluginTarget, ...]
-    parameter_roles: tuple[str, ...]
-    mutation_available: bool
-    verification_basis: str = Field(min_length=1, max_length=256)
-
-
-class ProcessingIntentResolution(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    resolved_at: datetime
-    intent: ProcessingIntent
-    track_index: int = Field(ge=0)
-    strength: float = Field(ge=0.0, le=1.0)
-    ready: bool
-    steps: list[ProcessingIntentStep]
-    missing_categories: tuple[str, ...]
-    mutations_applied: Literal[False] = False
-    warnings: list[str] = Field(default_factory=list)
-
-
-_INTENT_CATEGORIES: dict[str, tuple[str, ...]] = {
-    "reduce_mud": ("equalizer",),
-    "tame_harshness": ("equalizer",),
-    "add_presence": ("equalizer",),
-    "add_air": ("equalizer",),
-    "tighten_low_end": ("equalizer", "compressor"),
-    "control_dynamics": ("compressor",),
-    "add_punch": ("compressor",),
-    "level_vocal": ("compressor",),
-    "limit_peaks": ("limiter",),
-    "add_depth": ("reverb",),
-    "shorten_space": ("reverb",),
-    "rhythmic_echo": ("delay",),
-}
-
-
-def resolve_processing_intent(
-    intent: ProcessingIntent,
-    *,
-    track_index: int,
-    strength: float = 0.5,
-) -> ProcessingIntentResolution:
-    if intent not in _INTENT_CATEGORIES:
-        raise ValueError("unsupported processing intent")
-    if isinstance(track_index, bool) or not isinstance(track_index, int) or track_index < 0:
-        raise ValueError("track_index must be a non-negative integer")
-    if isinstance(strength, bool) or not isinstance(strength, (int, float)) or not 0.0 <= float(strength) <= 1.0:
-        raise ValueError("strength must be within 0..1")
-    inventory = TrackBInspector().scan_loaded_plugins(only_used=False)
-    loaded: dict[str, list[PluginTarget]] = {}
-    for plugin in inventory.plugins:
-        if not isinstance(plugin.target, MixerEffectTarget) or plugin.target.track_index != track_index:
-            continue
-        profile = _profile_for_name(plugin.name)
-        if profile is not None:
-            loaded.setdefault(profile.category, []).append(plugin.target)
-    steps: list[ProcessingIntentStep] = []
-    missing: list[str] = []
-    for order, category in enumerate(_INTENT_CATEGORIES[intent], start=1):
-        profiles = tuple(
-            profile for profile in PLUGIN_PROFILES
-            if profile.category == category and intent in profile.supported_intents
-        )
-        targets = tuple(loaded.get(category, []))
-        if not targets:
-            missing.append(category)
-        roles = tuple(dict.fromkeys(
-            parameter.role for profile in profiles for parameter in profile.parameters
-        ))
-        steps.append(ProcessingIntentStep(
-            order=order,
-            goal=f"Use {category} processing for {intent.replace('_', ' ')} at reviewed strength {float(strength):.2f}.",
-            category=category,
-            compatible_profile_ids=tuple(profile.profile_id for profile in profiles),
-            loaded_targets=targets,
-            parameter_roles=roles,
-            mutation_available=bool(targets),
-            verification_basis="parameter display/value readback on later FL idle ticks",
-        ))
-    return ProcessingIntentResolution(
-        resolved_at=_now(),
-        intent=intent,
-        track_index=track_index,
-        strength=float(strength),
-        ready=not missing,
-        steps=steps,
-        missing_categories=tuple(missing),
-        warnings=list(inventory.warnings) + [
-            "This resolves an artistic intent into profiled controls but does not choose thresholds from thin air or insert missing plug-ins.",
-            "Use a distinct reviewed plan/application call for mutations.",
-        ],
-    )
-
-
-# ---------------------------------------------------------------------------
-# Reviewable plans, gain staging, and finish workflow
-# ---------------------------------------------------------------------------
-
-
-PlanStatus = Literal["draft", "applied", "partial", "failed"]
-
-
-class MixPlan(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    plan_id: str = Field(pattern=r"^[0-9a-f]{32}$")
-    created_at: datetime
-    title: str = Field(min_length=1, max_length=128)
-    source: Literal["agent", "gain_stage"]
-    status: PlanStatus = "draft"
-    session_fingerprint: str = Field(pattern=r"^[0-9a-f]{32}$")
-    operations: list[BatchOperation]
-    rationale: list[str] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-
-
-class MixPlanApplication(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    applied_at: datetime
-    plan: MixPlan
-    batch: VerifiedBatchResult
-
-
-class MixPlanRegistry:
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._plans: dict[str, MixPlan] = {}
-        # A plan remains claimed for its entire lifetime after the first apply
-        # attempt.  Keeping this separate from the public status preserves the
-        # draft/applied/partial contract while closing the check-then-dispatch
-        # race between concurrent mix_apply_plan calls.
-        self._attempted: set[str] = set()
-
-    def create(
-        self,
-        *,
-        title: str,
-        operations: list[BatchOperation] | list[dict[str, Any]],
-        rationale: list[str] | None = None,
-        source: Literal["agent", "gain_stage"] = "agent",
-        session_fingerprint: str | None = None,
-    ) -> MixPlan:
-        if not isinstance(title, str) or not title.strip() or len(title) > 128:
-            raise ValueError("title must contain 1..128 characters")
-        parsed = validate_batch_operations(operations)
-        if rationale is None:
-            rationale = []
-        if not isinstance(rationale, list) or any(
-            not isinstance(item, str) or not item or len(item) > 512 for item in rationale
-        ):
-            raise ValueError("rationale must be a list of non-empty strings up to 512 characters")
-        client = get_client()
-        ping = client.ping()
-        connection = connection_from_ping(ping, getattr(client, "transport", "unknown"))
-        if not connection.connected or not connection.compatible:
-            raise IncompatibleFLStudio(connection.error or connection.compatibility_reason)
-        session = connection.session_fingerprint
-        if session is None:
-            raise ValueError("FL bridge did not report a plan session fingerprint")
-        if session_fingerprint is not None and session_fingerprint != session:
-            raise ValueError("plan session precondition failed")
-        plan = MixPlan(
-            plan_id=secrets.token_hex(16),
-            created_at=_now(),
-            title=title.strip(),
-            source=source,
-            session_fingerprint=session,
-            operations=parsed,
-            rationale=rationale,
-            warnings=[
-                "A plan is reviewable and process-local; it mutates nothing until mix_apply_plan.",
-                "Plans are session-bound and refuse after the FL bridge reloads.",
-            ],
-        )
-        with self._lock:
-            if len(self._plans) >= 128:
-                evictable = [
-                    item
-                    for item in self._plans.values()
-                    if not (
-                        item.status == "draft" and item.plan_id in self._attempted
-                    )
-                ]
-                if not evictable:
-                    raise ValueError(
-                        "mix plan registry is full while applications are in progress"
-                    )
-                oldest = min(evictable, key=lambda item: item.created_at)
-                del self._plans[oldest.plan_id]
-                self._attempted.discard(oldest.plan_id)
-            self._plans[plan.plan_id] = plan
-        return plan
-
-    def get(self, plan_id: str) -> MixPlan:
-        with self._lock:
-            plan = self._plans.get(plan_id)
-        if plan is None:
-            raise ValueError("unknown or expired mix plan ID")
-        return plan
-
-    def apply(self, plan_id: str, *, stop_on_unverified: bool = True) -> MixPlanApplication:
-        with self._lock:
-            plan = self._plans.get(plan_id)
-            if plan is None:
-                raise ValueError("unknown or expired mix plan ID")
-            if plan.status != "draft" or plan_id in self._attempted:
-                raise ValueError(
-                    "this mix plan has already been attempted; create a fresh plan to reapply"
-                )
-            # Claim before dispatch.  The executor may perform live mutations
-            # before returning an error, so a failed attempt must not become
-            # eligible for a second, potentially duplicating application.
-            self._attempted.add(plan_id)
-
-        try:
-            batch = VerifiedBatchExecutor().apply(
-                operations=plan.operations,
-                stop_on_unverified=stop_on_unverified,
-                session_fingerprint=plan.session_fingerprint,
-            )
-            status: PlanStatus = "applied" if batch.verified else "partial"
-            updated = plan.model_copy(update={"status": status})
-            application = MixPlanApplication(
-                applied_at=_now(), plan=updated, batch=batch
-            )
-        except Exception:
-            # There is no safe way to infer that an exception occurred before
-            # the first live mutation. Keep the public state terminal, but
-            # distinguish a missing batch receipt from a returned partial one.
-            with self._lock:
-                current = self._plans.get(plan_id)
-                if current is not None and current.status == "draft":
-                    self._plans[plan_id] = current.model_copy(
-                        update={
-                            "status": "failed",
-                            "warnings": [
-                                *current.warnings,
-                                "The apply attempt failed without a batch receipt; "
-                                "its outcome may be unknown, so this plan cannot be retried.",
-                            ],
-                        }
-                    )
-            raise
-
-        with self._lock:
-            self._plans[plan_id] = updated
-        return application
-
-
-MIX_PLANS = MixPlanRegistry()
-
-
-class GainStagePlanResult(MixingModel):
     schema_version: Literal["1.0"] = SCHEMA_VERSION
     generated_at: datetime
     watch: PeakWatchReport
     target_peak_dbfs: float = Field(ge=-30.0, le=-3.0)
-    plan: MixPlan | None = None
+    session_fingerprint: str = Field(pattern=r"^[0-9a-f]{32}$")
+    operations: list[BatchOperation] = Field(
+        default_factory=list, max_length=MAX_BATCH_OPERATIONS
+    )
+    rationale: list[str] = Field(default_factory=list)
     skipped_tracks: list[str] = Field(default_factory=list)
+    mutations_applied: Literal[False] = False
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -1179,7 +760,14 @@ def create_gain_stage_plan(
     target_peak_dbfs: float = -12.0,
     max_adjustment_db: float = 12.0,
     allow_master: bool = False,
-) -> GainStagePlanResult:
+) -> GainStagePlan:
+    """Propose guarded dB fader moves toward a target peak; apply nothing.
+
+    Each operation carries the watch's last fader reading as expected_before,
+    so applying the same proposal twice, or after the user moved a fader, is
+    refused by the bridge instead of moving the fader again.
+    """
+
     target = _finite_optional(target_peak_dbfs, "target_peak_dbfs", low=-30.0, high=-3.0)
     adjustment_cap = _finite_optional(max_adjustment_db, "max_adjustment_db", low=0.5, high=24.0)
     assert target is not None and adjustment_cap is not None
@@ -1223,72 +811,26 @@ def create_gain_stage_plan(
             f"{label}: watched peak {track.max_peak_dbfs:.2f} dBFS; "
             f"move fader {delta:+.2f} dB toward {target:.2f} dBFS."
         )
-    plan = None
-    if operations:
-        plan = MIX_PLANS.create(
-            title=f"Gain stage {len(operations)} mixer tracks",
-            operations=operations,
-            rationale=rationale,
-            source="gain_stage",
-            session_fingerprint=watch.session_fingerprint,
+    if len(operations) > MAX_BATCH_OPERATIONS:
+        raise ValueError(
+            f"{len(operations)} tracks need adjustment, more than one edit call "
+            f"applies ({MAX_BATCH_OPERATIONS}); watch fewer tracks with only_used "
+            "or max_tracks"
         )
-    return GainStagePlanResult(
+    if operations:
+        validate_batch_operations(operations)
+    return GainStagePlan(
         generated_at=_now(),
         watch=watch,
         target_peak_dbfs=target,
-        plan=plan,
+        session_fingerprint=watch.session_fingerprint,
+        operations=operations,
+        rationale=rationale,
         skipped_tracks=skipped,
         warnings=[
-            "Peak staging uses sampled post-fader peaks; inspect the plan and apply it separately.",
-            "The dB fader tool searches FL's live curve and verifies the getter; no normalized-curve guess is used.",
+            "Peak staging uses sampled post-fader peaks; review the operations, then "
+            "apply them with project_apply_edits and this session_fingerprint.",
+            "The dB fader write searches FL's live curve and verifies the getter; no normalized-curve guess is used.",
             "A fresh full-song watch and bounce analysis are required after application.",
         ],
-    )
-
-
-class FinishMixAssessment(MixingModel):
-    schema_version: Literal["1.0"] = SCHEMA_VERSION
-    assessed_at: datetime
-    doctor: MixDoctorReport
-    plugin_compatibility: PluginCompatibilityReport
-    next_steps: list[str]
-    stopping_boundary: Literal["user_exports_next_candidate"] = "user_exports_next_candidate"
-    render_available_through_fl_api: Literal[False] = False
-    mutations_applied: Literal[False] = False
-
-
-def finish_mix_assessment(
-    candidate_path: str,
-    *,
-    target: MixTarget = "balanced",
-    reference_path: str | None = None,
-    vocal_path: str | None = None,
-    instrumental_path: str | None = None,
-    max_seconds: float | None = None,
-) -> FinishMixAssessment:
-    doctor = run_mix_doctor(
-        candidate_path,
-        target=target,
-        reference_path=reference_path,
-        vocal_path=vocal_path,
-        instrumental_path=instrumental_path,
-        max_seconds=max_seconds,
-    )
-    compatibility = inspect_plugin_compatibility(only_used=True)
-    steps = [
-        "Review the measured issues and any ready reference/masking evidence.",
-        "Resolve relevant processing intents against the loaded profiled plug-ins.",
-        "Create and review a verified mix plan; apply it only through mix_apply_plan.",
-        "Export a new candidate manually from FL Studio, then rerun Mix Doctor/reference comparison.",
-    ]
-    if doctor.technical_export_ready:
-        steps = [
-            "The candidate passes this technical policy; perform the final artistic/listening review.",
-            "Export/finalize manually because FL's scripting API cannot render the project.",
-        ]
-    return FinishMixAssessment(
-        assessed_at=_now(),
-        doctor=doctor,
-        plugin_compatibility=compatibility,
-        next_steps=steps,
     )

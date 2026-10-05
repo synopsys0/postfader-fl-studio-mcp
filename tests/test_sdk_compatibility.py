@@ -59,15 +59,33 @@ class MCPCompatibilityTests(unittest.TestCase):
         # Clients load this listing into the model's context. Plans alone once
         # advertised about 240 KB each; keep the whole listing far below that.
         self.assertLess(max(sizes.values()), 40_000)
-        self.assertLess(sum(sizes.values()), 350_000)
+        self.assertLess(sum(sizes.values()), 250_000)
+
+    def test_advertised_output_schemas_are_valid_and_compact(self) -> None:
+        tools = asyncio.run(mcp.list_tools())
+        sizes = {}
+        for tool in tools:
+            schema = tool.output_schema
+            self.assertIsNotNone(schema, tool.name)
+            assert schema is not None
+            Draft202012Validator.check_schema(schema)
+            sizes[tool.name] = len(json.dumps(schema, separators=(",", ":")))
+            definitions = schema.get("$defs", {})
+            for node in _schema_nodes(schema):
+                reference = node.get("$ref")
+                if reference is not None:
+                    self.assertIn(reference.rsplit("/", 1)[-1], definitions, tool.name)
+                self.assertNotIsInstance(node.get("title"), str, tool.name)
+        # Before V12 the 135 output schemas totalled about 3.5 MB.
+        self.assertLess(sum(sizes.values()), 2_200_000)
 
     def test_operation_schemas_are_served_on_demand(self) -> None:
         tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
-        plan = tools["postfader_execute_run"].input_schema["$defs"]["ProductionRunPlan"]
+        plan = tools["run_execute"].input_schema["$defs"]["ProductionRunPlan"]
         advertised = plan["properties"]["operations"]["items"]["properties"]["operation"]["enum"]
 
         result = asyncio.run(
-            mcp.call_tool("postfader_describe_operations", {"operations": ["generate_melody"]})
+            mcp.call_tool("run_describe_operations", {"operations": ["generate_melody"]})
         )
         listed = {item["operation"]: item for item in result.structured_content["operations"]}
         self.assertEqual(sorted(listed), sorted(advertised))
@@ -130,14 +148,13 @@ class MCPCompatibilityTests(unittest.TestCase):
             },
         )
 
-    def test_mix_plan_examples_validate_through_exported_schema_and_batch_kernel(self) -> None:
-        tool = next(tool for tool in asyncio.run(mcp.list_tools()) if tool.name == "mix_create_plan")
+    def test_edit_examples_validate_through_exported_schema_and_batch_kernel(self) -> None:
+        tool = next(
+            tool for tool in asyncio.run(mcp.list_tools()) if tool.name == "project_apply_edits"
+        )
         schema = tool.input_schema
         properties = schema["properties"]
-        arguments = {
-            name: properties[name]["examples"][0]
-            for name in ("title", "operations", "rationale")
-        }
+        arguments = {"operations": properties["operations"]["examples"][0]}
         Draft202012Validator(schema).validate(arguments)
         operations = validate_batch_operations(arguments["operations"])
         self.assertEqual([item.operation_id for item in operations], [item["operation_id"] for item in arguments["operations"]])
@@ -153,7 +170,7 @@ class MCPCompatibilityTests(unittest.TestCase):
 
     def test_atlas_request_guidance_and_examples_survive_sdk_registration(self) -> None:
         tools = {tool.name: tool for tool in asyncio.run(mcp.list_tools())}
-        for name in ("plugins_atlas_search", "plugins_atlas_get_product", "plugins_atlas_recommend", "plugins_atlas_inspect_loaded"):
+        for name in ("atlas_search", "atlas_get_product", "atlas_recommend", "atlas_match_loaded"):
             with self.subTest(tool=name):
                 schema = tools[name].input_schema
                 request = schema["properties"]["request"]
@@ -165,24 +182,31 @@ class MCPCompatibilityTests(unittest.TestCase):
                     for example in field.get("examples", []):
                         Draft202012Validator({**field, "$defs": schema["$defs"]}).validate(example)
 
-        for name in ("plugins_atlas_search", "plugins_atlas_recommend", "plugins_atlas_inspect_loaded"):
+        for name in ("atlas_search", "atlas_recommend", "atlas_match_loaded"):
             Draft202012Validator(tools[name].input_schema).validate({"request": {}})
         invalid = {"request": {"only_used": False, "match_limit": 129}}
-        self.assertTrue(list(Draft202012Validator(tools["plugins_atlas_inspect_loaded"].input_schema).iter_errors(invalid)))
+        self.assertTrue(list(Draft202012Validator(tools["atlas_match_loaded"].input_schema).iter_errors(invalid)))
 
     def test_unknown_tool_arguments_still_fail_closed(self) -> None:
         cases = {
-            "read": ("fl_get_transport_state", {"unexpected": True}),
+            "read": ("project_get_summary", {"unexpected": True}),
             "guarded write": (
-                "fl_set_mixer_volume",
+                "mixer_set_track",
                 {
                     "track_index": 3,
                     "volume_normalized": 0.5,
                     "unexpected": True,
                 },
             ),
+            "per-target list item": (
+                "mixer_set_track",
+                {
+                    "track_index": 3,
+                    "sends": [{"destination_track_index": 4, "enabled": True, "unexpected": True}],
+                },
+            ),
             "batch": (
-                "fl_apply_verified_batch",
+                "project_apply_edits",
                 {
                     "operations": [
                         {
@@ -196,7 +220,7 @@ class MCPCompatibilityTests(unittest.TestCase):
                 },
             ),
             "nested batch operation": (
-                "fl_apply_verified_batch",
+                "project_apply_edits",
                 {
                     "operations": [
                         {
@@ -212,7 +236,7 @@ class MCPCompatibilityTests(unittest.TestCase):
             # The listing advertises plan operations by name only; the call is
             # still validated against each operation's full model.
             "Production Run operation": (
-                "postfader_validate_run",
+                "run_validate",
                 {
                     "request": {
                         "brief": "Write a melody.",
@@ -269,7 +293,7 @@ class MCPCompatibilityTests(unittest.TestCase):
                 with self.subTest(extra=extra), self.assertRaisesRegex(
                     Exception, "Extra inputs are not permitted"
                 ):
-                    asyncio.run(mcp.call_tool("postfader_render_saved_project", {
+                    asyncio.run(mcp.call_tool("render_start_job", {
                         "request": {
                             "project_path": "/unused/project.flp",
                             "output_directory": "/unused/renders",
@@ -283,7 +307,7 @@ class MCPCompatibilityTests(unittest.TestCase):
             server_module, "get_saved_project_render_jobs",
             side_effect=AssertionError("invalid job IDs must never reach the render registry"),
         ) as manager:
-            for tool_name in ("postfader_render_get_job", "postfader_render_cancel"):
+            for tool_name in ("render_get_job", "render_cancel_job"):
                 for job_id in ("", "a" * 31, "A" * 32, "../project.flp"):
                     with self.subTest(tool=tool_name, job_id=job_id), self.assertRaises(Exception):
                         asyncio.run(mcp.call_tool(tool_name, {"job_id": job_id}))
@@ -298,7 +322,7 @@ class MCPCompatibilityTests(unittest.TestCase):
                 {"name": "FLEX", "kind": "instrument", "menu_script": "unexpected"},
             ):
                 with self.subTest(request=request), self.assertRaises(Exception):
-                    asyncio.run(mcp.call_tool("plugins_load", {"request": request}))
+                    asyncio.run(mcp.call_tool("plugin_load", {"request": request}))
                 adapter.assert_not_called()
 
 

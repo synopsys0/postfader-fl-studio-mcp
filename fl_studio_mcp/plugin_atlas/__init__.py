@@ -31,6 +31,7 @@ from .matcher import (
 from .models import (
     ATLAS_DIGEST_ALGORITHM,
     ATLAS_SCHEMA_VERSION,
+    LEGACY_PARAMETER_WRITE_VALUES,
     MAX_ADAPTERS,
     MAX_CONTROLS,
     MAX_EVIDENCE,
@@ -72,6 +73,7 @@ from .models import (
     ModuleKnowledge,
     OwnershipInstallationState,
     ParameterMatchEvidence,
+    ParameterWriteValue,
     PluginFormat,
     PluginProduct,
     ProductKind,
@@ -90,6 +92,7 @@ from .models import (
     VendorKnowledge,
     WriteEvidence,
     WriteValidationEvidence,
+    current_parameter_write_value,
 )
 from .recommendation import (
     recommend,
@@ -158,7 +161,9 @@ __all__ = [
     "LoaderLimits",
     "ModuleKnowledge",
     "OwnershipInstallationState",
+    "LEGACY_PARAMETER_WRITE_VALUES",
     "ParameterMatchEvidence",
+    "ParameterWriteValue",
     "PluginFormat",
     "MAX_SEARCH_RESULTS",
     "PluginAtlasRegistry",
@@ -183,6 +188,7 @@ __all__ = [
     "catalog_name_digest",
     "catalog_snapshot_digest",
     "compatibility_join",
+    "current_parameter_write_value",
     "join_compatibility",
     "join_runtime_compatibility",
     "joins_for_runtime",

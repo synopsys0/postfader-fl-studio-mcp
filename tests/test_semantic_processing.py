@@ -55,7 +55,7 @@ class SemanticProcessingTests(unittest.TestCase):
         self.assertEqual({action.resolution.control.parameter_index for action in plans[0].actions}, {37, 38})
         self.assertGreater(plans[1].actions[0].control.display_value, plans[0].actions[0].control.display_value)
         self.assertNotEqual(plans[0].plan_id, plans[1].plan_id)
-        self.assertTrue(all(action.resolution.control.setter == "fl_set_plugin_param_display" for action in plans[0].actions))
+        self.assertTrue(all(action.resolution.control.setter == "display_value" for action in plans[0].actions))
 
     def test_goal_only_eq_requires_observed_named_band(self) -> None:
         registry = load_bundled_registry()
@@ -110,7 +110,7 @@ class SemanticProcessingTests(unittest.TestCase):
         def setter(**kwargs):
             writes.append(kwargs)
             return {"verified": True, "outcome_known": True}
-        receipt = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": setter})
+        receipt = apply_processing_plan(plan, setter_callbacks={"display_value": setter})
         self.assertTrue(receipt.completed)
         self.assertEqual(writes[0]["target_value"], 3000.0)
         self.assertEqual(writes[0]["display_unit"], "Hz")
@@ -125,7 +125,7 @@ class SemanticProcessingTests(unittest.TestCase):
         def legacy(parameter, target_value):
             writes.append((parameter, target_value))
             return {"verified": True, "outcome_known": True}
-        result = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": legacy})
+        result = apply_processing_plan(plan, setter_callbacks={"display_value": legacy})
         self.assertEqual(writes, [])
         self.assertEqual(result.attempted_count, 0)
         self.assertTrue(result.outcome_known)
@@ -133,12 +133,12 @@ class SemanticProcessingTests(unittest.TestCase):
         def modern(parameter, target_value, target_unit):
             writes.append(target_unit)
             return {"verified": True, "outcome_known": True}
-        result = apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": modern})
+        result = apply_processing_plan(plan, setter_callbacks={"display_value": modern})
         self.assertTrue(result.completed)
         self.assertEqual(writes, ["Hz", "dB"])
         def with_action(action):
             return {"verified": bool(action.resolution.control.display_unit), "outcome_known": True}
-        self.assertTrue(apply_processing_plan(plan, setter_callbacks={"fl_set_plugin_param_display": with_action}).completed)
+        self.assertTrue(apply_processing_plan(plan, setter_callbacks={"display_value": with_action}).completed)
 
     def test_explicit_controls_override_starting_recipe_and_dry_disables_actions(self) -> None:
         registry = load_bundled_registry()
@@ -179,7 +179,7 @@ class SemanticProcessingTests(unittest.TestCase):
             parameter_index=2,
             names=("Decay",),
             unit="s",
-            preferred_write_tool="fl_set_plugin_param_display",
+            preferred_write_value="display_value",
         )
         cls.option_control = AdapterControl(
             control_id="mode",
@@ -187,13 +187,13 @@ class SemanticProcessingTests(unittest.TestCase):
             parameter_index=3,
             kind="enumerated",
             options=("Plate", "Room"),
-            preferred_write_tool="fl_set_plugin_param_option",
+            preferred_write_value="option",
         )
         cls.normalized_control = AdapterControl(
             control_id="mix",
             role="reverb.mix",
             parameter_index=4,
-            preferred_write_tool="fl_set_plugin_param",
+            preferred_write_value="normalized_value",
         )
         cls.adapter = ControlAdapter(
             adapter_id="example.reverb.adapter",
@@ -241,7 +241,7 @@ class SemanticProcessingTests(unittest.TestCase):
         self,
         action_id: str,
         *,
-        setter: str = "fl_set_plugin_param_display",
+        setter: str = "display_value",
         depends_on: tuple[str, ...] = (),
         target_fingerprint: str | None = None,
         verified_resolution: bool = True,
@@ -254,9 +254,9 @@ class SemanticProcessingTests(unittest.TestCase):
             control_id="decay",
             parameter_index=2,
             setter=setter,  # type: ignore[arg-type]
-            display_value=1.8 if setter.endswith("display") else None,
-            option="Plate" if setter.endswith("option") else None,
-            normalized_value=0.5 if setter == "fl_set_plugin_param" else None,
+            display_value=1.8 if setter == "display_value" else None,
+            option="Plate" if setter == "option" else None,
+            normalized_value=0.5 if setter == "normalized_value" else None,
         )
         resolution = SemanticControlResolution(
             request=control,
@@ -345,7 +345,7 @@ class SemanticProcessingTests(unittest.TestCase):
         self.assertEqual(len(plan.actions), 1)
         self.assertEqual(plan.actions[0].plugin_name, "Example Reverb")
         self.assertNotIn("Atlas-only", {item.plugin_name for item in plan.candidates})
-        self.assertEqual(plan.actions[0].resolution.control.setter, "fl_set_plugin_param_display")
+        self.assertEqual(plan.actions[0].resolution.control.setter, "display_value")
 
     def test_standalone_processing_plan_requires_and_consumes_live_observations(
         self,
@@ -391,7 +391,7 @@ class SemanticProcessingTests(unittest.TestCase):
             ),
             adapter=self.adapter,
         )
-        self.assertEqual(display.control.setter, "fl_set_plugin_param_display")
+        self.assertEqual(display.control.setter, "display_value")
 
         option = resolve_semantic_control(
             SemanticControlValue(
@@ -402,7 +402,7 @@ class SemanticProcessingTests(unittest.TestCase):
             ),
             adapter=self.adapter,
         )
-        self.assertEqual(option.control.setter, "fl_set_plugin_param_option")
+        self.assertEqual(option.control.setter, "option")
         self.assertEqual(option.control.option, "Plate")
 
         normalized = resolve_semantic_control(
@@ -413,7 +413,7 @@ class SemanticProcessingTests(unittest.TestCase):
             ),
             adapter=self.adapter,
         )
-        self.assertEqual(normalized.control.setter, "fl_set_plugin_param")
+        self.assertEqual(normalized.control.setter, "normalized_value")
 
         with self.assertRaises(ValueError):
             SemanticControlValue(
@@ -534,6 +534,42 @@ class SemanticProcessingTests(unittest.TestCase):
         self.assertTrue(receipt.completed)
         self.assertTrue(receipt.verified)
 
+
+    def test_v11_setter_names_in_saved_data_load_as_value_arguments(self) -> None:
+        """Plans, runs, and adapters saved before V12 name the old setters."""
+
+        saved = ProcessingPlan(
+            plan_id="saved-plan",
+            request_id="test",
+            completion_target="restrained_first_pass",
+            actions=(self.action("first"),),
+        ).model_dump(mode="json")
+        saved["actions"][0]["resolution"]["control"]["setter"] = "fl_set_plugin_param_display"
+        # The same two steps the Production Run checkpoint loader uses.
+        loaded = ProcessingPlan.model_validate_json(json.dumps(saved), strict=False)
+        loaded = ProcessingPlan.model_validate(loaded.model_dump(mode="python"))
+        self.assertEqual(loaded.actions[0].resolution.control.setter, "display_value")
+        self.assertNotIn("fl_set_plugin_param", loaded.model_dump_json())
+        calls: list[dict[str, object]] = []
+
+        def writer(**kwargs: object) -> object:
+            calls.append(kwargs)
+            return {"verified": True}
+
+        receipt = apply_processing_plan(loaded, setter_callbacks={"fl_set_plugin_param_display": writer})
+        self.assertTrue(receipt.completed)
+        self.assertEqual(len(calls), 1)
+        for old, new in (
+            ("fl_set_plugin_param_display", "display_value"),
+            ("fl_set_plugin_param_option", "option"),
+            ("fl_set_plugin_param", "normalized_value"),
+        ):
+            control = AdapterControl.model_validate(
+                {"id": "control", "names": ["Control"], "preferred_write_tool": old}
+            )
+            self.assertEqual(control.preferred_write_value, new)
+        bundled = load_bundled_registry()
+        self.assertNotIn("fl_set_plugin_param", json.dumps([item.model_dump(mode="json") for item in bundled.adapters]))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
