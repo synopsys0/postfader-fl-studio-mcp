@@ -10,8 +10,8 @@ assets and SHA-256 checksums to GitHub.
 ## V12 publication
 
 V12 shipped as package version `12.0.0`; the current patch, `12.0.3`, supports
-MCP SDK 2.0 through 2.2 while preserving actionable refusal messages. It retains 85 tools and
-8 resources. Every tool
+MCP SDK 2.0 through 2.2 while preserving actionable refusal messages. It retains
+85 tools and 8 resources. Every tool
 was renamed in 12.0.0, so its release notes carry the full V11-to-V12 name
 table; keep it complete. Publish the reviewed dev feature set through a main pull
 request, then the matching version tag. The Universal Bridge script did not
