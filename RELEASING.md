@@ -222,6 +222,11 @@ git push origin vX.Y.Z
 For an SSH signing key, configure Git's SSH signing format and allowed signer
 file first, then use the same `git tag --sign --annotate` and verification flow:
 
+The dedicated PostFader release key configured for V12.0.2 uses Ed25519 with
+public fingerprint `SHA256:evub+lo9N8uZ3uu/b7AOq32XPq7qsQhm1sPDBsErIio`.
+Check that fingerprint when verifying its public key; never include private
+key material or a passphrase in a release record.
+
 ```bash
 git config gpg.format ssh
 git config user.signingkey ~/.ssh/release_signing_key
