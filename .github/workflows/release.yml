@@ -269,14 +269,14 @@ jobs:
             release-bundles/*.zip
 
       - name: Upload the release SBOM
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-software-bom
           path: sbom-dist/*.cdx.json
           if-no-files-found: error
 
       - name: Upload Python distributions for publishing
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-python-distributions
           path: |
@@ -285,14 +285,14 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Claude Desktop extension for the GitHub Release
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-desktop-extension
           path: mcpb-dist/*.mcpb
           if-no-files-found: error
 
       - name: Upload generic and Codex platform setup bundles for the GitHub Release
-        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-platform-bundles
           path: release-bundles/*.zip
