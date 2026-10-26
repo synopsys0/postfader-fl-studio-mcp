@@ -1624,7 +1624,11 @@ def _run():
         "observed_score_digest_sha256": observed_digest,
         "persistence_check_completed": True,
         "persistence_check_verified": verified,
-        "error": None if verified else "The persisted score does not match the apply receipt.",
+        "error": None if verified else (
+            "The persisted runtime-visible score does not match the apply receipt. "
+            "FL may expose only selected notes; a changed selection can limit this "
+            "readback. Deselect all notes and inspect before another mutation."
+        ),
     }})
 
 try:
@@ -2096,6 +2100,12 @@ def _copy(source):
 def _run():
     score = flp.score
     operation = REQUEST["operation"]
+    if (REQUEST["scope"] == "all" and operation != "clear"
+            and score.noteCount > 0 and bool(score.getNote(0).selected)):
+        raise ValueError(
+            "FL exposes the selected subset to Piano Roll scripts; deselect notes "
+            "and request a fresh all-score transform before continuing."
+        )
     if operation == "clear":
         if REQUEST["scope"] == "all":
             try:

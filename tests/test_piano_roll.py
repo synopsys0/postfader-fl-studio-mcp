@@ -205,6 +205,30 @@ class PianoRollTests(unittest.TestCase):
         self.assertEqual(last.notes, ())
         self.assertIsNone(last.next_offset)
 
+    def test_runtime_scope_disclosure_does_not_infer_complete_score_or_change_selection(self) -> None:
+        for notes in ((ObservedNote(selected=True),), (ObservedNote(selected=False),), ()):
+            with self.subTest(notes=notes):
+                score = ReadOnlyScore(notes)
+                result = self._read(score, selected_only=False)
+                self.assertEqual(result.status, "observed")
+                self.assertEqual(result.enumeration_scope, "fl_piano_roll_runtime")
+                self.assertTrue(result.scope_may_be_selection_limited)
+                self.assertEqual(result.total_note_count, len(notes))
+                self.assertEqual(result.warnings, (piano_roll.RUNTIME_ENUMERATION_WARNING,))
+                self.assertIn("deselect all notes", result.warnings[0])
+                self.assertIn("selected_only=False does not clear", result.warnings[0])
+                self.assertEqual(score.notes, notes)
+                self.assertFalse(result.notes_modified)
+                self.assertTrue(result.model_dump()["scope_may_be_selection_limited"])
+
+        properties = piano_roll.PianoRollNoteSnapshot.model_json_schema()["properties"]
+        self.assertEqual(properties["enumeration_scope"]["const"], "fl_piano_roll_runtime")
+        self.assertIs(properties["scope_may_be_selection_limited"]["const"], True)
+        self.assertIn("runtime-visible", properties["offset"]["description"])
+        self.assertIn("selected notes", properties["total_note_count"]["description"])
+        note_schema = piano_roll.PianoRollObservedNote.model_json_schema()
+        self.assertIn("runtime-visible", note_schema["properties"]["note_index"]["description"])
+
     def test_empty_or_exhausted_score_returns_an_observed_empty_page(self) -> None:
         for notes, offset in (((), 0), ((ObservedNote(),), 50)):
             with self.subTest(count=len(notes), offset=offset):

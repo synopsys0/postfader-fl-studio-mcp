@@ -36,6 +36,11 @@ MAX_NOTE_PAGE = 2048
 MAX_SNAPSHOT_BYTES = 1024 * 1024
 MAX_SCORE_NOTES = 1_000_000
 SNAPSHOT_RETRY_SECONDS = 600
+RUNTIME_ENUMERATION_WARNING = (
+    "FL's Piano Roll runtime can expose only selected notes. For a complete score, "
+    "deselect all notes in the intended Piano Roll before a fresh request. "
+    "selected_only=False does not clear FL's selection."
+)
 
 
 class PianoRollObservedNote(CreativeModel):
@@ -45,7 +50,8 @@ class PianoRollObservedNote(CreativeModel):
     # must advertise the computed beat values included by model_dump too.
     model_config = ConfigDict(json_schema_mode_override="serialization")
 
-    note_index: int = Field(ge=0, lt=MAX_SCORE_NOTES)
+    note_index: int = Field(ge=0, lt=MAX_SCORE_NOTES,
+        description="Index in the runtime-visible note enumeration, which may contain only selected notes.")
     pitch: int = Field(ge=0, le=131)
     start_ticks: int = Field(ge=-(2**31), le=2**31 - 1)
     length_ticks: int = Field(ge=0, le=2**31 - 1)
@@ -77,20 +83,24 @@ class PianoRollNoteSnapshot(CreativeModel):
     request_id: str = Field(pattern=r"^[0-9a-f]{32}$")
     channel_index: int = Field(ge=0)
     pattern_number: int = Field(ge=1, le=999)
-    offset: int = Field(ge=0, le=MAX_SCORE_NOTES)
+    offset: int = Field(ge=0, le=MAX_SCORE_NOTES,
+        description="Starting index in FL's runtime-visible note enumeration, which may be selection-limited.")
     limit: int = Field(ge=1, le=MAX_NOTE_PAGE)
     selected_only: bool
     status: Literal["observed", "prepared_for_manual_run", "not_dispatched", "receipt_unavailable", "target_changed"]
     retry_available: bool = False
     retry_window_seconds: int = Field(default=SNAPSHOT_RETRY_SECONDS,
         description="Retry lifetime measured from the initial request; collection does not extend it.")
-    total_note_count: int | None = Field(default=None, ge=0, le=MAX_SCORE_NOTES)
+    total_note_count: int | None = Field(default=None, ge=0, le=MAX_SCORE_NOTES,
+        description="Number of runtime-visible notes; FL may expose only selected notes, rather than the complete score.")
     ppq: int | None = Field(default=None, ge=1, le=1_000_000)
     notes: tuple[PianoRollObservedNote, ...] = Field(default=(), max_length=MAX_NOTE_PAGE)
     next_offset: int | None = Field(default=None, ge=1, le=MAX_SCORE_NOTES)
     target: PianoRollTargetReceipt
     trigger: HotkeyDispatch
     source: Literal["fl_piano_roll_script_runtime"] = "fl_piano_roll_script_runtime"
+    enumeration_scope: Literal["fl_piano_roll_runtime"] = "fl_piano_roll_runtime"
+    scope_may_be_selection_limited: Literal[True] = True
     notes_modified: Literal[False] = False
     project_saved: Literal[False] = False
     warnings: tuple[str, ...] = ()
@@ -411,4 +421,5 @@ def read_piano_roll_notes(
         next_offset = min(offset + limit, payload.total_note_count)
         return PianoRollNoteSnapshot(**base, status="observed", total_note_count=payload.total_note_count,
             ppq=payload.ppq, notes=payload.notes,
-            next_offset=next_offset if next_offset < payload.total_note_count else None)
+            next_offset=next_offset if next_offset < payload.total_note_count else None,
+            warnings=(RUNTIME_ENUMERATION_WARNING,))

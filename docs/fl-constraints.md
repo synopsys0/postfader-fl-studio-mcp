@@ -301,6 +301,21 @@ prove script execution; only the request's authenticated receipt does.
 The false `authoritative_fl_note_readback_available` setup field describes the
 controller API limitation. Piano Roll script-runtime note snapshots are supported.
 
+The runtime can enumerate only selected notes when FL has an active note
+selection. `selected_only=false` does not deselect notes or bypass that scope.
+Read results explicitly report `enumeration_scope=fl_piano_roll_runtime` and
+`scope_may_be_selection_limited=true`; counts, indices, and page offsets apply
+only to that view. Deselect all notes in the intended Piano Roll before a
+fresh request when you need the complete score. The read tool never changes
+selection for you.
+
+This was reproduced on FL Studio 26.1.7: two notes were visible, but only the
+selected note appeared in a script snapshot; deselecting returned both. An
+append that selects its added notes can therefore change what a later
+persistence check sees. Such checks remain unverified and explain this
+limitation. All-score transforms refuse a selected runtime subset before
+mutation, except clear-all, which uses the native `clearNotes(True)` override.
+
 A successful shortcut proves dispatch only. Note writes set
 `application_verified=true` only after matching application and persistence
 receipts arrive from the script runtime. Transforms remain dispatch-only and

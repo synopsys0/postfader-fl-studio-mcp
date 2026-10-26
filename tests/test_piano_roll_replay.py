@@ -29,7 +29,7 @@ class Note:
     slide: bool = False
     porta: bool = False
     muted: bool = False
-    selected: bool = True
+    selected: bool = False
 
 
 class Score:
@@ -99,8 +99,9 @@ class PianoRollReplayTests(unittest.TestCase):
         )
 
     def _transform_script(self, **arguments):
+        scope = arguments.pop("scope", "all")
         return creative._transform_script(
-            creative.PianoRollTransform(scope="all", **arguments), self.request_id,
+            creative.PianoRollTransform(scope=scope, **arguments), self.request_id,
             receipt_path=self.receipt_path,
         )
 
@@ -215,6 +216,42 @@ class PianoRollReplayTests(unittest.TestCase):
         self._execute(source, score)
         self.assertEqual(score.add_calls, 1)
         self.assertEqual(score.noteCount, 2)
+
+    def test_all_scope_transform_refuses_selected_runtime_subset_without_mutation(self):
+        for arguments in (
+            {"operation": "transpose", "semitones": 12},
+            {"operation": "duplicate", "offset_beats": 1},
+            {"operation": "quantize", "grid_beats": 1},
+            {"operation": "humanize", "velocity_amount": 0.5},
+            {"operation": "delete"},
+        ):
+            with self.subTest(arguments=arguments):
+                self.receipt_path.unlink(missing_ok=True)
+                source = self._transform_script(**arguments)
+                score = Score((Note(selected=True, time=12),))
+                with self.assertRaisesRegex(ValueError, "selected subset.*deselect notes"):
+                    self._execute(source, score)
+                self.assertEqual(score.notes, [Note(selected=True, time=12)])
+                self.assertEqual(score.add_calls, 0)
+                self.assertEqual(score.clear_calls, 0)
+
+    def test_selected_scope_transform_can_modify_selected_runtime_subset(self):
+        source = self._transform_script(operation="transpose", semitones=12, scope="selected")
+        score = Score((Note(selected=True), Note(selected=False)))
+        self._execute(source, score)
+        self.assertEqual([note.number for note in score.notes], [72, 60])
+
+    def test_all_scope_clear_uses_native_all_notes_override(self):
+        class ClearScore(Score):
+            def clearNotes(self, all_notes=False):
+                self.all_notes = all_notes
+                super().clearNotes(all_notes)
+
+        source = self._transform_script(operation="clear")
+        score = ClearScore((Note(selected=True), Note(selected=False)))
+        self._execute(source, score)
+        self.assertTrue(score.all_notes)
+        self.assertEqual(score.notes, [])
 
     def test_claim_creation_failure_prevents_mutation(self):
         for source in (
