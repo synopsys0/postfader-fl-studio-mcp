@@ -205,6 +205,30 @@ class PianoRollTests(unittest.TestCase):
         self.assertEqual(last.notes, ())
         self.assertIsNone(last.next_offset)
 
+    def test_runtime_scope_disclosure_does_not_infer_complete_score_or_change_selection(self) -> None:
+        for notes in ((ObservedNote(selected=True),), (ObservedNote(selected=False),), ()):
+            with self.subTest(notes=notes):
+                score = ReadOnlyScore(notes)
+                result = self._read(score, selected_only=False)
+                self.assertEqual(result.status, "observed")
+                self.assertEqual(result.enumeration_scope, "fl_piano_roll_runtime")
+                self.assertTrue(result.scope_may_be_selection_limited)
+                self.assertEqual(result.total_note_count, len(notes))
+                self.assertEqual(result.warnings, (piano_roll.RUNTIME_ENUMERATION_WARNING,))
+                self.assertIn("deselect all notes", result.warnings[0])
+                self.assertIn("selected_only=False does not clear", result.warnings[0])
+                self.assertEqual(score.notes, notes)
+                self.assertFalse(result.notes_modified)
+                self.assertTrue(result.model_dump()["scope_may_be_selection_limited"])
+
+        properties = piano_roll.PianoRollNoteSnapshot.model_json_schema()["properties"]
+        self.assertEqual(properties["enumeration_scope"]["const"], "fl_piano_roll_runtime")
+        self.assertIs(properties["scope_may_be_selection_limited"]["const"], True)
+        self.assertIn("runtime-visible", properties["offset"]["description"])
+        self.assertIn("selected notes", properties["total_note_count"]["description"])
+        note_schema = piano_roll.PianoRollObservedNote.model_json_schema()
+        self.assertIn("runtime-visible", note_schema["properties"]["note_index"]["description"])
+
     def test_empty_or_exhausted_score_returns_an_observed_empty_page(self) -> None:
         for notes, offset in (((), 0), ((ObservedNote(),), 50)):
             with self.subTest(count=len(notes), offset=offset):
@@ -252,6 +276,109 @@ class PianoRollTests(unittest.TestCase):
         receipt_reader.assert_not_called()
         self.assertEqual([command for command, _ in self.client.calls], ["creative.prepare_piano_roll"])
 
+    def _run_manual_snapshot(self) -> None:
+        module = types.ModuleType("flpianoroll")
+        module.score = ReadOnlyScore((ObservedNote(number=65, time=192),), ppq=96)
+        path = self.script_directory / PIANO_ROLL_SCRIPT_NAME
+        with mock.patch.dict(sys.modules, {"flpianoroll": module}):
+            exec(compile(path.read_text(encoding="ascii"), str(path), "exec"), {})
+
+    def test_manual_read_and_late_receipt_retry_never_rewrite_retrigger_or_navigate(self) -> None:
+        PIANO_ROLL._armed = False
+        with mock.patch.object(piano_roll, "_trigger_piano_roll_shortcut") as trigger:
+            pending = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                auto_trigger=False)
+            self.assertEqual(pending.status, "prepared_for_manual_run")
+            self.assertTrue(pending.retry_available)
+            path = self.script_directory / PIANO_ROLL_SCRIPT_NAME
+            original = path.read_bytes()
+            self._run_manual_snapshot()
+            calls = len(self.client.calls)
+            with mock.patch.object(piano_roll, "_atomic_text") as writer:
+                observed = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                    request_id=pending.request_id)
+            trigger.assert_not_called()
+            writer.assert_not_called()
+        self.assertEqual(path.read_bytes(), original)
+        self.assertEqual(observed.request_id, pending.request_id)
+        self.assertEqual(observed.status, "observed")
+        self.assertEqual(observed.notes[0].pitch, 65)
+        self.assertEqual(observed.notes[0].start_beats, 2)
+        self.assertEqual([command for command, _ in self.client.calls[calls:]],
+            ["creative.piano_roll_target", "creative.piano_roll_target"])
+        self.assertFalse(bridge.LEAN_WRITES_ENABLED)
+
+    def test_failed_automatic_dispatch_can_collect_late_manual_receipt(self) -> None:
+        pending = self._read(ReadOnlyScore(()), dispatched=False)
+        self._run_manual_snapshot()
+        with mock.patch.object(piano_roll, "_trigger_piano_roll_shortcut") as trigger:
+            result = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                request_id=pending.request_id)
+        self.assertEqual(result.status, "observed")
+        trigger.assert_not_called()
+
+    def test_missing_receipt_explains_manual_recovery_without_enoent(self) -> None:
+        with mock.patch.object(piano_roll, "_trigger_piano_roll_shortcut",
+            return_value=dispatch_receipt()):
+            pending = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3)
+        self.assertEqual(pending.status, "receipt_unavailable")
+        self.assertTrue(pending.retry_available)
+        self.assertIn("Postfader Apply manually", " ".join(pending.warnings))
+        self.assertNotIn("Errno 2", " ".join(pending.warnings))
+        self._run_manual_snapshot()
+        result = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+            request_id=pending.request_id)
+        self.assertEqual(result.status, "observed")
+
+    def test_resume_rejects_unknown_expired_superseded_and_modified_requests(self) -> None:
+        for failure in ("unknown", "expired", "superseded", "modified"):
+            with self.subTest(failure=failure):
+                pending = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                    auto_trigger=False)
+                request_id = pending.request_id
+                if failure == "unknown":
+                    request_id = "f" * 32
+                elif failure == "expired":
+                    from dataclasses import replace
+                    piano_roll._pending_snapshot = replace(piano_roll._pending_snapshot, expires_at=0)
+                elif failure == "superseded":
+                    PIANO_ROLL.record(request_id="f" * 32, operation="write_notes", count=1, digest=None)
+                else:
+                    (self.script_directory / PIANO_ROLL_SCRIPT_NAME).write_text("# replaced", encoding="ascii")
+                self.client.calls.clear()
+                with mock.patch.object(piano_roll, "_trigger_piano_roll_shortcut") as trigger:
+                    with self.assertRaises(ValueError):
+                        piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                            request_id=request_id)
+                    trigger.assert_not_called()
+                self.assertEqual(self.client.calls, [])
+
+    def test_resume_refuses_changed_arguments_without_bridge_effects(self) -> None:
+        pending = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+            auto_trigger=False)
+        self.client.calls.clear()
+        for change in ({"channel_index": 1}, {"pattern_number": 1}, {"offset": 1},
+            {"limit": 1}, {"selected_only": True}, {"session_fingerprint": "f" * 32}):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                piano_roll.read_piano_roll_notes(**{"channel_index": 2, "pattern_number": 3,
+                    "request_id": pending.request_id, **change})
+        self.assertEqual(self.client.calls, [])
+
+    def test_resume_does_not_hide_target_or_session_drift(self) -> None:
+        for change in ({"channel_indices": [1]}, {"pattern_number": 1},
+            {"session_fingerprint": "f" * 32}, {"piano_roll_visible": False}):
+            with self.subTest(change=change):
+                pending = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                    auto_trigger=False)
+                self._run_manual_snapshot()
+                self.client.observation_update = change
+                result = piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                    request_id=pending.request_id)
+                self.assertEqual(result.status, "target_changed")
+                self.assertEqual(result.notes, ())
+                self.assertFalse(result.retry_available)
+                self.client.observation_update = None
+
     def test_missing_or_malformed_receipt_is_reported_without_notes(self) -> None:
         for contents in (None, b"not-json", b'{"payload":{}}', b"\xff"):
             with self.subTest(contents=contents):
@@ -282,6 +409,11 @@ class PianoRollTests(unittest.TestCase):
         self.assertIsNone(result.total_note_count)
         self.assertIsNone(result.ppq)
         self.assertIn("unsupported PPQ", result.warnings[0])
+        self.assertFalse(result.retry_available)
+        self.assertIn("fresh snapshot", result.warnings[1])
+        with self.assertRaises(ValueError):
+            piano_roll.read_piano_roll_notes(channel_index=2, pattern_number=3,
+                request_id=result.request_id)
 
     def test_invalid_arguments_are_rejected_before_bridge_or_file_effects(self) -> None:
         invalid = (

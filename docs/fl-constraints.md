@@ -273,6 +273,49 @@ available while musical writes are disabled. `piano_roll_read_notes` obtains
 bounded note pages from the separate runtime and rechecks the target afterward;
 a missing receipt or changed target exposes no attributed notes.
 
+FL documents Ctrl+Alt+Y (Cmd+Opt+Y on macOS) as **run last script again**,
+not a binding to Postfader Apply. Running another Piano Roll script changes
+what that shortcut invokes. Setup's `automatic_trigger_supported` reports host
+support only; `automatic_trigger_verified` remains false. The bootstrap receipt
+proves a menu run, not the current shortcut binding.
+
+For a manual read, call `piano_roll_read_notes` with `auto_trigger=false`, run
+**Scripts > Postfader > Postfader Apply** in the requested score, then repeat
+the read with the returned `request_id` and identical target/page arguments.
+The same recovery works after an automatic read returns no receipt. The ID
+lasts ten minutes in the same server process and only while it owns the current
+generated script. Resuming only collects the authenticated receipt: it does not
+rewrite the script, send keys, or navigate back to a changed target. Keep that
+score open until collection. A later request, setup preparation, or mutation
+supersedes the pending read. `notes=[]` with a status other than `observed`
+does not establish that the score is empty.
+
+The isolated script runtime does not expose the channel or pattern identity.
+Target checks before and after collection cannot detect a switch to another
+score for the menu run and back again; the requested score must stay open.
+
+On Windows, PostFader verifies FL's executable and foreground window, detects
+higher-integrity FL processes that block input through UIPI, and checks the
+number of input events accepted by `SendInput`. Input acceptance still does not
+prove script execution; only the request's authenticated receipt does.
+The false `authoritative_fl_note_readback_available` setup field describes the
+controller API limitation. Piano Roll script-runtime note snapshots are supported.
+
+The runtime can enumerate only selected notes when FL has an active note
+selection. `selected_only=false` does not deselect notes or bypass that scope.
+Read results explicitly report `enumeration_scope=fl_piano_roll_runtime` and
+`scope_may_be_selection_limited=true`; counts, indices, and page offsets apply
+only to that view. Deselect all notes in the intended Piano Roll before a
+fresh request when you need the complete score. The read tool never changes
+selection for you.
+
+This was reproduced on FL Studio 26.1.7: two notes were visible, but only the
+selected note appeared in a script snapshot; deselecting returned both. An
+append that selects its added notes can therefore change what a later
+persistence check sees. Such checks remain unverified and explain this
+limitation. All-score transforms refuse a selected runtime subset before
+mutation, except clear-all, which uses the native `clearNotes(True)` override.
+
 A successful shortcut proves dispatch only. Note writes set
 `application_verified=true` only after matching application and persistence
 receipts arrive from the script runtime. Transforms remain dispatch-only and

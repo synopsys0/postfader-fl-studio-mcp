@@ -36,6 +36,15 @@ def _ready_doctor(**_kwargs):
 
 
 class SetupWizardTests(unittest.TestCase):
+    def setUp(self):
+        # Setup scenarios must depend on their fixture, not on a developer's
+        # open FL Studio session. Detection tests supply their own inventory.
+        self.process_inventory_patch = mock.patch.object(
+            setup_wizard, "_windows_running_fl_studio_process_ids", return_value=(),
+        )
+        self.process_inventory_patch.start()
+        self.addCleanup(self.process_inventory_patch.stop)
+
     def test_top_level_postfader_command_dispatches_setup(self):
         with mock.patch.object(setup_wizard, "main", return_value=7) as delegated:
             self.assertEqual(cli.main(["setup", "--dry-run"]), 7)
@@ -59,6 +68,9 @@ class SetupWizardTests(unittest.TestCase):
                 setup_wizard._python_version(Path(sys.executable))
 
     def test_windows_process_inventory_recognizes_fl_executables(self):
+        # Exercise the real parser against synthetic tasklist output while
+        # keeping every other setup test isolated from the host process list.
+        self.process_inventory_patch.stop()
         completed = CompletedProcess(
             args=[],
             returncode=0,

@@ -2949,25 +2949,40 @@ async def piano_roll_read_notes(
     channel_index: ChannelIndexArg,
     pattern_number: PianoRollPatternArg,
     offset: Annotated[
-        int, Field(ge=0, le=1_000_000, description="Raw note index to start this page at.")
+        int, Field(ge=0, le=1_000_000, description="Starting index in FL's runtime-visible notes, which may contain only selected notes.")
     ] = 0,
     limit: Annotated[int, Field(ge=1, le=2048, description="Raw note indices per page.")] = 512,
     selected_only: Annotated[
         bool, Field(description="Return only notes selected in FL within this page.")
     ] = False,
     session_fingerprint: SessionFingerprintArg = None,
+    auto_trigger: Annotated[
+        bool, Field(description="Try FL's run-last-script shortcut; false prepares a manual menu run.")
+    ] = True,
+    request_id: Annotated[
+        str | None, Field(pattern=r"^[0-9a-f]{32}$", description="Collect an earlier request's receipt without rewriting or triggering. Repeat its target and page arguments.")
+    ] = None,
 ) -> PianoRollNoteSnapshot:
     """Read the notes of one channel in one pattern: pitch, timing, and expression.
 
     Opens that score in FL's Piano Roll (which changes focus) but never changes
-    notes or enables writes. Needs the piano_roll_setup step done once. Read
+    notes or enables writes. Automatic triggering needs piano_roll_setup once.
+    The shortcut runs FL's last Piano Roll script, which may have changed. If
+    no receipt arrives, run Scripts > Postfader > Postfader Apply manually and
+    retry with the returned request_id and the same target/page within ten
+    minutes. auto_trigger=false prepares that manual flow without arming.
+    Retries never navigate, rewrite, or trigger the script. Read
     before composing around existing material or transforming it. Follow
     next_offset to page; a selected_only page can be empty and still have a
-    next_offset."""
+    next_offset. FL can expose only selected notes even with selected_only=false.
+    Deselect all notes before a fresh request when you need the complete score;
+    this tool does not change selection. Counts and indices describe only the
+    runtime-visible enumeration."""
     return await _mix(
         read_piano_roll_notes, channel_index=channel_index, pattern_number=pattern_number,
         offset=offset, limit=limit, selected_only=selected_only,
-        session_fingerprint=session_fingerprint,
+        session_fingerprint=session_fingerprint, auto_trigger=auto_trigger,
+        request_id=request_id,
     )
 
 
@@ -2999,6 +3014,8 @@ async def piano_roll_write_notes(
     persistence. A dispatch alone is not proof the notes landed: inspect the
     returned evidence, and treat a missing receipt as an unknown outcome, not a
     reason to retry. Use piano_roll_transform_notes to edit existing notes.
+    FL may expose only selected notes; selection changes can leave persistence
+    unverified even when notes landed. Deselect and inspect before another edit.
     Does not save the project."""
     return await _mix(
         write_piano_roll_notes,
@@ -3032,7 +3049,9 @@ async def piano_roll_transform_notes(
     pattern. Requires write mode and the one-time piano_roll_setup; read the
     notes first with piano_roll_read_notes. delete and clear remove notes in
     scope. Works like piano_roll_write_notes: a dispatch is not proof, so
-    inspect the evidence. Use piano_roll_write_notes to add new notes."""
+    inspect the evidence. Deselect notes before scope=all: FL can otherwise
+    expose only a selected subset, which the script refuses to treat as the
+    complete score. Use piano_roll_write_notes to add new notes."""
     return await _mix(
         transform_piano_roll,
         request,
