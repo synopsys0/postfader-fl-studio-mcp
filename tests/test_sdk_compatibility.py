@@ -8,6 +8,7 @@ import inspect
 import json
 import pkgutil
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 from jsonschema import Draft202012Validator
@@ -332,6 +333,75 @@ class MCPCompatibilityTests(unittest.TestCase):
                 with self.subTest(page=invalid_page), self.assertRaises(Exception):
                     asyncio.run(mcp.call_tool("piano_roll_read_notes", {
                         "channel_index": 0, "pattern_number": 1, **invalid_page,
+                    }))
+                adapter.assert_not_called()
+
+    def test_nonempty_note_result_matches_the_advertised_output_schema(self) -> None:
+        from fl_studio_mcp.creative import HotkeyDispatch, PianoRollTargetReceipt
+        from fl_studio_mcp.piano_roll import PianoRollNoteSnapshot, PianoRollObservedNote
+
+        note = PianoRollObservedNote(
+            note_index=0, pitch=60, start_ticks=-24, length_ticks=144, ppq=96,
+            velocity=0.8, pan=0.5, release=0.5, color=0, pitch_offset_tenths=0,
+            slide=False, portamento=False, muted=False, selected=False,
+        )
+        snapshot = PianoRollNoteSnapshot(
+            observed_at=datetime.now(timezone.utc), request_id="a" * 32,
+            channel_index=0, pattern_number=1, offset=0, limit=64, selected_only=False,
+            status="observed", total_note_count=1, ppq=96, notes=(note,),
+            target=PianoRollTargetReceipt(
+                command="creative.prepare_piano_roll", channel_index=0, pattern_number=1,
+                before_channel_indices=[0], after_channel_indices=[0],
+                before_pattern_number=1, after_pattern_number=1,
+                selected_target_verified=True, session_fingerprint="b" * 32,
+            ),
+            trigger=HotkeyDispatch(
+                platform="windows", shortcut="Ctrl+Alt+Y", fl_window_found=True,
+                fl_window_focused=True, hotkey_dispatched=True,
+            ),
+        )
+        tool = next(
+            tool for tool in asyncio.run(mcp.list_tools())
+            if tool.name == "piano_roll_read_notes"
+        )
+        with mock.patch.object(server_module, "read_piano_roll_notes", return_value=snapshot):
+            result = asyncio.run(mcp.call_tool("piano_roll_read_notes", {
+                "channel_index": 0, "pattern_number": 1, "limit": 64,
+            }))
+
+        # Exercise the schema clients actually receive and the SDK's actual
+        # structured serialization, including the formerly hidden beat fields.
+        Draft202012Validator(tool.output_schema).validate(result.structured_content)
+        observed = result.structured_content["notes"][0]
+        self.assertEqual(observed["start_beats"], -0.25)
+        self.assertEqual(observed["duration_beats"], 1.5)
+        properties = tool.output_schema["$defs"]["PianoRollObservedNote"]["properties"]
+        self.assertTrue(properties["start_beats"]["readOnly"])
+        self.assertTrue(properties["duration_beats"]["readOnly"])
+
+        # Schema correction must not loosen the client's strict result contract.
+        invalid = {**result.structured_content, "notes": [{**observed, "unexpected": True}]}
+        self.assertTrue(list(Draft202012Validator(tool.output_schema).iter_errors(invalid)))
+
+    def test_manual_note_retry_arguments_reach_the_adapter_and_bad_ids_do_not(self) -> None:
+        arguments = {
+            "channel_index": 2, "pattern_number": 3, "offset": 7, "limit": 64,
+            "selected_only": True, "auto_trigger": False, "request_id": "a" * 32,
+            "session_fingerprint": "b" * 32,
+        }
+        with mock.patch.object(
+            server_module, "read_piano_roll_notes",
+            side_effect=ValueError("stop before reaching FL"),
+        ) as adapter:
+            with self.assertRaises(ToolError):
+                asyncio.run(mcp.call_tool("piano_roll_read_notes", arguments))
+            adapter.assert_called_once_with(**arguments)
+            adapter.reset_mock()
+
+            for request_id in ("", "a" * 31, "A" * 32, "../receipt", 55):
+                with self.subTest(request_id=request_id), self.assertRaises(Exception):
+                    asyncio.run(mcp.call_tool("piano_roll_read_notes", {
+                        **arguments, "request_id": request_id,
                     }))
                 adapter.assert_not_called()
 

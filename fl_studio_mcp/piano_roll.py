@@ -7,11 +7,12 @@ import hmac
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, TypedDict
 
-from pydantic import Field, computed_field, model_validator
+from pydantic import ConfigDict, Field, computed_field, model_validator
 
 from .bridge_client import get_client
 from .creative import (
@@ -34,10 +35,15 @@ from .creative import (
 MAX_NOTE_PAGE = 2048
 MAX_SNAPSHOT_BYTES = 1024 * 1024
 MAX_SCORE_NOTES = 1_000_000
+SNAPSHOT_RETRY_SECONDS = 600
 
 
 class PianoRollObservedNote(CreativeModel):
     """One existing note; raw ticks preserve timing without composition limits."""
+
+    # MCP derives output schemas in validation mode. This read-only result
+    # must advertise the computed beat values included by model_dump too.
+    model_config = ConfigDict(json_schema_mode_override="serialization")
 
     note_index: int = Field(ge=0, lt=MAX_SCORE_NOTES)
     pitch: int = Field(ge=0, le=131)
@@ -74,7 +80,10 @@ class PianoRollNoteSnapshot(CreativeModel):
     offset: int = Field(ge=0, le=MAX_SCORE_NOTES)
     limit: int = Field(ge=1, le=MAX_NOTE_PAGE)
     selected_only: bool
-    status: Literal["observed", "not_dispatched", "receipt_unavailable", "target_changed"]
+    status: Literal["observed", "prepared_for_manual_run", "not_dispatched", "receipt_unavailable", "target_changed"]
+    retry_available: bool = False
+    retry_window_seconds: int = Field(default=SNAPSHOT_RETRY_SECONDS,
+        description="Retry lifetime measured from the initial request; collection does not extend it.")
     total_note_count: int | None = Field(default=None, ge=0, le=MAX_SCORE_NOTES)
     ppq: int | None = Field(default=None, ge=1, le=1_000_000)
     notes: tuple[PianoRollObservedNote, ...] = Field(default=(), max_length=MAX_NOTE_PAGE)
@@ -126,6 +135,41 @@ class _TargetObservation(CreativeModel):
     pattern_number: int
     piano_roll_visible: bool | None
     session_fingerprint: str
+
+
+@dataclass(frozen=True)
+class _PendingSnapshot:
+    base: _SnapshotArgs
+    receipt_path: Path
+    secret: str
+    script_path: Path
+    script_digest: str
+    expires_at: float
+
+
+# Only the latest request can own the fixed Postfader Apply script. Keep secrets
+# in this process, never in client arguments, and serialize access with dispatch.
+_pending_snapshot: _PendingSnapshot | None = None
+
+
+def _manual_instruction(request_id: str) -> str:
+    return (
+        "No authenticated note snapshot is available. Keep the requested Piano Roll open, "
+        "run Scripts > Postfader > Postfader Apply manually, then call "
+        f"piano_roll_read_notes with request_id='{request_id}' and the same target/page "
+        f"arguments within {SNAPSHOT_RETRY_SECONDS} seconds of the initial request. The retry only reads the "
+        "receipt; it does not run the script again. Ctrl+Alt+Y (Cmd+Opt+Y on macOS) "
+        "runs the last Piano Roll script, which may be another script."
+    )
+
+
+def _snapshot_target_unchanged(target: PianoRollTargetReceipt) -> bool:
+    after = _TargetObservation.model_validate(
+        get_client().call("creative.piano_roll_target"), strict=True)
+    return (after.channel_indices == [target.channel_index]
+        and after.pattern_number == target.pattern_number
+        and after.session_fingerprint == target.session_fingerprint
+        and after.piano_roll_visible is True)
 
 
 def _snapshot_script(
@@ -229,40 +273,104 @@ def _read_snapshot_receipt(
 def read_piano_roll_notes(
     *, channel_index: int, pattern_number: int, offset: int = 0, limit: int = 512,
     selected_only: bool = False, session_fingerprint: str | None = None,
+    auto_trigger: bool = True, request_id: str | None = None,
 ) -> PianoRollNoteSnapshot:
     """Focus the requested score and return a bounded page of existing notes.
 
     Editor navigation is transient and never enables the bridge's musical-write
-    mode. It uses the same one-time Piano Roll script setup as note writing.
+    mode. Automatic dispatch uses the one-time Piano Roll script setup. Manual
+    preparation needs no arming; resume the returned ID without another dispatch.
     """
+    global _pending_snapshot
+    if type(channel_index) is not int or channel_index < 0:
+        raise ValueError("channel_index must be a non-negative global index")
+    if type(pattern_number) is not int or not 1 <= pattern_number <= 999:
+        raise ValueError("pattern_number must be within 1..999")
     if type(offset) is not int or not 0 <= offset <= MAX_SCORE_NOTES:
         raise ValueError(f"offset must be within 0..{MAX_SCORE_NOTES}")
     if type(limit) is not int or not 1 <= limit <= MAX_NOTE_PAGE:
         raise ValueError(f"limit must be within 1..{MAX_NOTE_PAGE}")
     if type(selected_only) is not bool:
         raise ValueError("selected_only must be a boolean")
+    if type(auto_trigger) is not bool:
+        raise ValueError("auto_trigger must be a boolean")
+    if request_id is not None and (
+        type(request_id) is not str or len(request_id) != 32
+        or any(character not in "0123456789abcdef" for character in request_id)
+    ):
+        raise ValueError("request_id must be exactly 32 lowercase hexadecimal characters")
+    base: _SnapshotArgs
     with _PIANO_ROLL_DISPATCH_LOCK:
-        PIANO_ROLL.require_armed()
-        target = _target_piano_roll(channel_index, pattern_number,
-            session_fingerprint=session_fingerprint, navigation_only=True)
-        if not target.selected_target_verified or target.piano_roll_visibility_verified is not True:
-            raise ValueError("FL could not open the requested Piano Roll target")
-        request_id = os.urandom(16).hex()
-        secret = os.urandom(32).hex()
-        path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
-        receipt_path = _piano_roll_receipt_path(path, request_id, phase="inspect")
-        _atomic_text(path, _snapshot_script(request_id=request_id, receipt_path=receipt_path,
-            receipt_secret=secret, offset=offset, limit=limit, selected_only=selected_only))
-        PIANO_ROLL.record(request_id=request_id, operation="read_notes", count=None, digest=None)
-        trigger = _trigger_piano_roll_shortcut()
-        base: _SnapshotArgs = {
-            "observed_at": _now(), "request_id": request_id, "channel_index": channel_index,
-            "pattern_number": pattern_number, "offset": offset, "limit": limit,
-            "selected_only": selected_only, "target": target, "trigger": trigger,
-        }
-        if not trigger.hotkey_dispatched:
-            return PianoRollNoteSnapshot(**base, status="not_dispatched",
-                warnings=(trigger.error or "FL did not receive the Piano Roll shortcut.",))
+        if request_id is not None:
+            pending = _pending_snapshot
+            if (pending is None or pending.base["request_id"] != request_id
+                or time.monotonic() >= pending.expires_at
+                or PIANO_ROLL.status().last_request_id != request_id):
+                raise ValueError("The note request expired or was superseded; request a fresh snapshot.")
+            base = pending.base
+            if (channel_index, pattern_number, offset, limit, selected_only) != (
+                base["channel_index"], base["pattern_number"], base["offset"],
+                base["limit"], base["selected_only"],
+            ) or (session_fingerprint is not None
+                and session_fingerprint != base["target"].session_fingerprint):
+                raise ValueError("A receipt retry must use the original target, page, and session arguments.")
+            # A setup prepare may leave last_request_id unchanged. Check the
+            # actual script as well as registry ownership before trusting a retry.
+            try:
+                unchanged = hashlib.sha256(pending.script_path.read_bytes()).hexdigest() == pending.script_digest
+            except OSError:
+                unchanged = False
+            if not unchanged:
+                raise ValueError("Postfader Apply changed after this request; request a fresh snapshot.")
+            target = base["target"]
+            trigger = base["trigger"]
+            receipt_path, secret = pending.receipt_path, pending.secret
+            # Do not navigate here: it would hide target drift during a manual
+            # run and could attribute another score's notes to the requested one.
+            try:
+                unchanged = _snapshot_target_unchanged(target)
+            except (OSError, RuntimeError, ValueError):
+                unchanged = False
+            if not unchanged:
+                _pending_snapshot = None
+                return PianoRollNoteSnapshot(**base, status="target_changed",
+                    warnings=("The editor target or FL session changed; request a fresh snapshot.",))
+        else:
+            if auto_trigger:
+                PIANO_ROLL.require_armed()
+            target = _target_piano_roll(channel_index, pattern_number,
+                session_fingerprint=session_fingerprint, navigation_only=True)
+            if not target.selected_target_verified or target.piano_roll_visibility_verified is not True:
+                raise ValueError("FL could not open the requested Piano Roll target")
+            request_id = os.urandom(16).hex()
+            secret = os.urandom(32).hex()
+            path = piano_roll_scripts_directory() / PIANO_ROLL_SCRIPT_NAME
+            receipt_path = _piano_roll_receipt_path(path, request_id, phase="inspect")
+            script_digest = _atomic_text(path, _snapshot_script(request_id=request_id, receipt_path=receipt_path,
+                receipt_secret=secret, offset=offset, limit=limit, selected_only=selected_only))
+            PIANO_ROLL.record(request_id=request_id, operation="read_notes", count=None, digest=None)
+            if auto_trigger:
+                trigger = _trigger_piano_roll_shortcut()
+            else:
+                setup = PIANO_ROLL.status()
+                trigger = HotkeyDispatch(platform=setup.platform, shortcut=setup.shortcut,
+                    fl_window_found=False, fl_window_focused=False, hotkey_dispatched=False,
+                    error="Automatic triggering was disabled for this request.")
+            base = {
+                "observed_at": _now(), "request_id": request_id, "channel_index": channel_index,
+                "pattern_number": pattern_number, "offset": offset, "limit": limit,
+                "selected_only": selected_only, "target": target, "trigger": trigger,
+            }
+            _pending_snapshot = _PendingSnapshot(base=base, receipt_path=receipt_path,
+                secret=secret, script_path=path, script_digest=script_digest,
+                expires_at=time.monotonic() + SNAPSHOT_RETRY_SECONDS)
+            if not auto_trigger:
+                return PianoRollNoteSnapshot(**base, status="prepared_for_manual_run",
+                    retry_available=True, warnings=(_manual_instruction(request_id),))
+            if not trigger.hotkey_dispatched:
+                return PianoRollNoteSnapshot(**base, status="not_dispatched", retry_available=True,
+                    warnings=(trigger.error or "The Piano Roll shortcut was not dispatched.",
+                        _manual_instruction(request_id)))
         deadline = time.monotonic() + PIANO_ROLL_RECEIPT_WAIT_SECONDS
         payload = None
         last_error = "FL has not returned the note snapshot."
@@ -270,23 +378,34 @@ def read_piano_roll_notes(
             try:
                 payload = _read_snapshot_receipt(receipt_path, request_id=request_id,
                     receipt_secret=secret, offset=offset, limit=limit, selected_only=selected_only)
+            except FileNotFoundError:
+                last_error = "FL did not emit the authenticated Piano Roll snapshot receipt."
+                if time.monotonic() >= deadline:
+                    break
+                time.sleep(0.05)
             except (OSError, ValueError) as error:
                 last_error = str(error)
                 if time.monotonic() >= deadline:
                     break
                 time.sleep(0.05)
         if payload is None:
-            return PianoRollNoteSnapshot(**base, status="receipt_unavailable", warnings=(last_error,))
+            # A script cannot replace an existing exclusive receipt. Only a
+            # missing receipt can be recovered by running this same request.
+            if receipt_path.exists():
+                _pending_snapshot = None
+                return PianoRollNoteSnapshot(**base, status="receipt_unavailable",
+                    warnings=(last_error,
+                        "The existing receipt could not be verified. Request a fresh snapshot; "
+                        "rerunning this request cannot replace its receipt."))
+            return PianoRollNoteSnapshot(**base, status="receipt_unavailable", retry_available=True,
+                warnings=(last_error, _manual_instruction(request_id)))
         try:
-            after = _TargetObservation.model_validate(
-                get_client().call("creative.piano_roll_target"), strict=True)
-            unchanged = (after.channel_indices == [channel_index]
-                and after.pattern_number == pattern_number
-                and after.session_fingerprint == target.session_fingerprint
-                and after.piano_roll_visible is True)
+            unchanged = _snapshot_target_unchanged(target)
         except (OSError, RuntimeError, ValueError) as error:
+            _pending_snapshot = None
             return PianoRollNoteSnapshot(**base, status="target_changed", warnings=(str(error),))
         if not unchanged:
+            _pending_snapshot = None
             return PianoRollNoteSnapshot(**base, status="target_changed",
                 warnings=("The editor target changed during inspection; request a fresh snapshot.",))
         next_offset = min(offset + limit, payload.total_note_count)

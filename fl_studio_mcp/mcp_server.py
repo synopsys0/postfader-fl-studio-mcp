@@ -2956,18 +2956,30 @@ async def piano_roll_read_notes(
         bool, Field(description="Return only notes selected in FL within this page.")
     ] = False,
     session_fingerprint: SessionFingerprintArg = None,
+    auto_trigger: Annotated[
+        bool, Field(description="Try FL's run-last-script shortcut; false prepares a manual menu run.")
+    ] = True,
+    request_id: Annotated[
+        str | None, Field(pattern=r"^[0-9a-f]{32}$", description="Collect an earlier request's receipt without rewriting or triggering. Repeat its target and page arguments.")
+    ] = None,
 ) -> PianoRollNoteSnapshot:
     """Read the notes of one channel in one pattern: pitch, timing, and expression.
 
     Opens that score in FL's Piano Roll (which changes focus) but never changes
-    notes or enables writes. Needs the piano_roll_setup step done once. Read
+    notes or enables writes. Automatic triggering needs piano_roll_setup once.
+    The shortcut runs FL's last Piano Roll script, which may have changed. If
+    no receipt arrives, run Scripts > Postfader > Postfader Apply manually and
+    retry with the returned request_id and the same target/page within ten
+    minutes. auto_trigger=false prepares that manual flow without arming.
+    Retries never navigate, rewrite, or trigger the script. Read
     before composing around existing material or transforming it. Follow
     next_offset to page; a selected_only page can be empty and still have a
     next_offset."""
     return await _mix(
         read_piano_roll_notes, channel_index=channel_index, pattern_number=pattern_number,
         offset=offset, limit=limit, selected_only=selected_only,
-        session_fingerprint=session_fingerprint,
+        session_fingerprint=session_fingerprint, auto_trigger=auto_trigger,
+        request_id=request_id,
     )
 
 
